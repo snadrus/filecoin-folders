@@ -27,13 +27,23 @@ Trash is the `/.trash` folder. Restore uses the original path remembered in loca
 
 `.felarumi` and `.felanumio` files use their own icons and open in an app URL. Defaults are `https://felarumi.example` and `https://felanumio.example`. Override them in the account menu or with `VITE_FELARUMI_URL` and `VITE_FELANUMIO_URL`.
 
+New → Felarumi document writes a blank document and opens it. New → Felanumio spreadsheet does the same for a sheet. The bytes are JSON the editors load:
+
+```json
+{ "v": 1, "type": "doc", "title": "Notes", "content": [{ "type": "paragraph", "text": "" }] }
+```
+
+```json
+{ "v": 1, "type": "sheet", "title": "Budget", "sheets": [{ "name": "Sheet1", "cells": {} }] }
+```
+
 ## Static host
 
 ```bash
 pnpm --filter fifolders build
 ```
 
-Serve `apps/fifolders/dist`. `base` is `./`.
+Serve `apps/fifolders/dist`. `base` is `./`. Pushes to `main` also publish that directory to GitHub Pages for `fidrive.scionbase.ai` (`.github/workflows/pages.yml`).
 
 ## Tests
 

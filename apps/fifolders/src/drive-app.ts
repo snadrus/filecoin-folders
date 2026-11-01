@@ -1,3 +1,4 @@
+import { blankBytes, felFileName, felTitle } from "./blank.js";
 import {
   CasConflictError,
   NotFoundError,
@@ -14,6 +15,7 @@ import {
   copyName,
   defaultSortDir,
   felKind,
+  type FelKind,
   guessMime,
   isTrashPath,
   joinPath,
@@ -45,7 +47,7 @@ export interface DriveAppOptions {
 }
 
 interface DialogModel {
-  mode: "new-folder" | "rename" | "move";
+  mode: "new-folder" | "rename" | "move" | "new-felarumi" | "new-felanumio";
   title: string;
   submit: string;
   value: string;
@@ -355,6 +357,38 @@ export class DriveApp {
     }
   }
 
+  private async createBlank(kind: FelKind, rawName: string): Promise<void> {
+    const requested = felFileName(rawName, kind);
+    if (!requested) {
+      this.toast("Enter a file name.");
+      this.render();
+      return;
+    }
+    let opened: { pieceCid: string; name: string } | null = null;
+    const ok = await this.run(async () => {
+      const dir = this.destDir();
+      let taken = new Set<string>();
+      try {
+        taken = new Set((await this.volume!.ls(dir)).map((item) => item.name));
+      } catch (error) {
+        if (!(error instanceof NotFoundError)) throw error;
+      }
+      const name = uniqueName(requested, taken);
+      const stat = await this.volume!.put(joinPath(dir, name), blankBytes(kind, felTitle(name, kind)), {
+        mime: "application/json",
+      });
+      opened = { pieceCid: stat.pieceCid ?? "", name: stat.name };
+    });
+    if (ok && opened) {
+      const created = opened as { pieceCid: string; name: string };
+      const url = appLink(kind, created.pieceCid, created.name, {
+        felarumi: this.felarumiUrl,
+        felanumio: this.felanumioUrl,
+      });
+      window.open(url, "_blank", "noopener");
+    }
+  }
+
   private async createFolder(name: string): Promise<void> {
     const trimmed = name.trim();
     if (!trimmed) return;
@@ -654,6 +688,18 @@ export class DriveApp {
       this.render();
       return;
     }
+    if (action === "new-felarumi" || action === "new-felanumio") {
+      this.newMenu = false;
+      const sheet = action === "new-felanumio";
+      this.dialog = {
+        mode: action,
+        title: sheet ? "Felanumio spreadsheet" : "Felarumi document",
+        submit: "Create",
+        value: "",
+      };
+      this.render();
+      return;
+    }
     if (action === "close-dialog") {
       this.dialog = null;
       this.render();
@@ -881,6 +927,13 @@ export class DriveApp {
       const name = form.querySelector<HTMLInputElement>("[data-testid=dialog-input]")?.value ?? this.dialog.value;
       this.dialog = null;
       await this.createFolder(name);
+      return;
+    }
+    if (this.dialog.mode === "new-felarumi" || this.dialog.mode === "new-felanumio") {
+      const name = form.querySelector<HTMLInputElement>("[data-testid=dialog-input]")?.value ?? this.dialog.value;
+      const kind: FelKind = this.dialog.mode === "new-felarumi" ? "felarumi" : "felanumio";
+      this.dialog = null;
+      await this.createBlank(kind, name);
       return;
     }
     if (this.dialog.mode === "rename" && this.dialog.path) {

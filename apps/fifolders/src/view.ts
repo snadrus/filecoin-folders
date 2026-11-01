@@ -179,6 +179,8 @@ function renderNewMenu(): string {
     <button type="button" data-action="new-folder"><span class="material-symbols-outlined" aria-hidden="true">create_new_folder</span> New folder</button>
     <button type="button" data-action="upload-file"><span class="material-symbols-outlined" aria-hidden="true">upload_file</span> File upload</button>
     <button type="button" data-action="upload-folder"><span class="material-symbols-outlined" aria-hidden="true">drive_folder_upload</span> Folder upload</button>
+    <button type="button" data-action="new-felarumi">${felarumiSvg()} Felarumi document</button>
+    <button type="button" data-action="new-felanumio">${felanumioSvg()} Felanumio spreadsheet</button>
   </div>`;
 }
 

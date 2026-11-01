@@ -161,4 +161,43 @@ describe("DriveApp", () => {
     expect(root.textContent).toContain("Couldn't save");
     expect(root.textContent).toContain("/same.txt");
   });
+
+  it("creates a blank Felarumi document and Felanumio spreadsheet, then opens them", async () => {
+    const opened: string[] = [];
+    const previous = window.open;
+    window.open = ((url?: string | URL) => {
+      opened.push(String(url));
+      return null;
+    }) as typeof window.open;
+    try {
+      const { app, root, session } = await mountMock();
+      root.querySelector<HTMLButtonElement>("[data-testid=new-button]")!.click();
+      root.querySelector<HTMLButtonElement>("[data-action=new-felarumi]")!.click();
+      const input = root.querySelector<HTMLInputElement>("[data-testid=dialog-input]")!;
+      input.value = "Notes";
+      input.form?.requestSubmit();
+      await app.settled;
+      expect(entry(root, "Notes.felarumi")?.dataset.kind).toBe("felarumi");
+      const doc = JSON.parse(new TextDecoder().decode(await session.volume.get("/Notes.felarumi")));
+      expect(doc).toEqual({ v: 1, type: "doc", title: "Notes", content: [{ type: "paragraph", text: "" }] });
+      const docUrl = new URL(opened[0] ?? "");
+      expect(docUrl.origin).toBe("https://felarumi.example");
+      expect(docUrl.searchParams.get("name")).toBe("Notes.felarumi");
+      expect(docUrl.searchParams.get("pieceCid")).toMatch(/^mem:/);
+
+      root.querySelector<HTMLButtonElement>("[data-testid=new-button]")!.click();
+      root.querySelector<HTMLButtonElement>("[data-action=new-felanumio]")!.click();
+      const sheetInput = root.querySelector<HTMLInputElement>("[data-testid=dialog-input]")!;
+      sheetInput.value = "Budget.felanumio";
+      sheetInput.form?.requestSubmit();
+      await app.settled;
+      const sheet = JSON.parse(new TextDecoder().decode(await session.volume.get("/Budget.felanumio")));
+      expect(sheet).toEqual({ v: 1, type: "sheet", title: "Budget", sheets: [{ name: "Sheet1", cells: {} }] });
+      const sheetUrl = new URL(opened[1] ?? "");
+      expect(sheetUrl.origin).toBe("https://felanumio.example");
+      expect(sheetUrl.searchParams.get("name")).toBe("Budget.felanumio");
+    } finally {
+      window.open = previous;
+    }
+  });
 });
