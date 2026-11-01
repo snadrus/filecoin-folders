@@ -1,0 +1,44 @@
+{
+  "name": "fil-folders",
+  "version": "0.1.0",
+  "description": "Filecoin folder volumes: immutable piece manifests addressed by an FEVM compare-and-swap registry.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "sideEffects": false,
+  "files": [
+    "dist",
+    "src"
+  ],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run && tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "viem": "^2.38.3"
+  },
+  "peerDependencies": {
+    "@filoz/synapse-sdk": ">=0.37.0"
+  },
+  "peerDependenciesMeta": {
+    "@filoz/synapse-sdk": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.0",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  }
+}

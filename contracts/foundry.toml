@@ -1,0 +1,23 @@
+[profile.default]
+src = "src"
+out = "out"
+script = "script"
+test = "test"
+libs = ["lib"]
+solc = "0.8.28"
+evm_version = "shanghai"
+optimizer = true
+optimizer_runs = 200
+bytecode_hash = "ipfs"
+ffi = false
+via_ir = false
+remappings = ["forge-std/=lib/forge-std/src/"]
+
+[profile.default.fuzz]
+runs = 256
+
+# Filecoin FEVM accepts Paris opcodes plus PUSH0 (EIP-3855). Shanghai bytecode
+# is that set: PUSH0, and not Cancun's MCOPY / transient storage.
+[rpc_endpoints]
+calibration = "https://api.calibration.node.glif.io/rpc/v1"
+filecoin = "https://api.node.glif.io/rpc/v1"

@@ -1,0 +1,30 @@
+{
+  "name": "filecoin-folders",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "pnpm --filter fil-folders build",
+    "test": "forge test --root contracts -vv && pnpm --filter fil-folders test && pnpm --filter fil-folders build && tsc -p tsconfig.example.json",
+    "test:contracts": "forge test --root contracts -vv",
+    "example": "tsx examples/cli.ts",
+    "deploy:calibration": "forge script script/DeployCalibration.s.sol:DeployCalibration --root contracts --rpc-url calibration --broadcast",
+    "deploy:mainnet": "forge script script/DeployMainnet.s.sol:DeployMainnet --root contracts --rpc-url filecoin --broadcast"
+  },
+  "dependencies": {
+    "fil-folders": "workspace:*"
+  },
+  "devDependencies": {
+    "@filoz/synapse-core": "^0.4.1",
+    "@filoz/synapse-sdk": "^0.40.4",
+    "@types/node": "^22.19.0",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3",
+    "viem": "^2.38.3"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild"]
+  }
+}
