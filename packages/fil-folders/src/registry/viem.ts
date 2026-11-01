@@ -19,6 +19,10 @@ export interface ViemRegistryOptions {
   address: Address;
   publicClient: PublicClient;
   walletClient: WalletClient;
+  /** Default start block for `committed` log scans, e.g. the deployment block. Public FEVM RPCs reject `fromBlock: 0`. */
+  fromBlock?: bigint;
+  /** Max blocks per `eth_getLogs` request. Lotus/Glif cap ranges (2880 epochs). Default 2000. */
+  maxBlockRange?: bigint;
 }
 
 /**
@@ -33,8 +37,13 @@ class ViemRegistry implements Registry {
   readonly address: Address;
   readonly publicClient: PublicClient;
   readonly walletClient: WalletClient;
+  readonly fromBlock: bigint;
+  readonly maxBlockRange: bigint;
 
   constructor(options: ViemRegistryOptions) {
+    this.fromBlock = options.fromBlock ?? 0n;
+    this.maxBlockRange = options.maxBlockRange ?? 2000n;
+    if (this.maxBlockRange < 1n) throw new Error("maxBlockRange must be >= 1");
     this.address = options.address;
     this.publicClient = options.publicClient;
     this.walletClient = options.walletClient;
@@ -110,16 +119,18 @@ class ViemRegistry implements Registry {
 
   async committed(query: { owner: Address; ns: Hex; key?: Hex; fromBlock?: bigint }): Promise<CommittedRecord[]> {
     try {
-      const logs = await this.publicClient.getLogs({
-        address: this.address,
-        event: committedEvent,
-        args:
-          query.key === undefined
-            ? { owner: query.owner, ns: query.ns }
-            : { owner: query.owner, ns: query.ns, key: query.key },
-        fromBlock: query.fromBlock ?? 0n,
-        toBlock: "latest",
-      });
+      const args =
+        query.key === undefined
+          ? { owner: query.owner, ns: query.ns }
+          : { owner: query.owner, ns: query.ns, key: query.key };
+      const latest = await this.publicClient.getBlockNumber();
+      const logs = [];
+      for (let from = query.fromBlock ?? this.fromBlock; from <= latest; from += this.maxBlockRange) {
+        const to = from + this.maxBlockRange - 1n < latest ? from + this.maxBlockRange - 1n : latest;
+        logs.push(
+          ...(await this.publicClient.getLogs({ address: this.address, event: committedEvent, args, fromBlock: from, toBlock: to })),
+        );
+      }
       return logs.map((log) => {
         const args = log.args;
         if (

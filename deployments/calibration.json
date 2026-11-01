@@ -1,0 +1,12 @@
+{
+  "network": "filecoin-calibration",
+  "chainId": 314159,
+  "contract": "FolderRegistry",
+  "address": "0x4893FfF3611240fbB4Be68eFe4AA0Ec634279331",
+  "deployer": "0x2d633437f7E2138B400AF6882bee2d79C81CF401",
+  "txHash": "0xef268160e175111cb07ee1ed64bdd89445bb8716d4df503da95578d6ca2460f1",
+  "block": 4207373,
+  "gasUsed": 53779008,
+  "commit": "39451b0",
+  "date": "2026-11-01"
+}

@@ -171,3 +171,16 @@ pnpm test
 ## License
 
 MIT. `contracts/lib/forge-std` is vendored forge-std v1.9.6, also MIT.
+
+## Deployments
+
+| Network | Chain id | FolderRegistry | Deploy block |
+| --- | --- | --- | --- |
+| Filecoin Calibration | 314159 | `0x4893FfF3611240fbB4Be68eFe4AA0Ec634279331` | 4207373 |
+
+Details in [`deployments/calibration.json`](deployments/calibration.json). Pass the deploy block as
+`fromBlock` to `createViemRegistry` so `history()` does not scan from block 0 (Glif rejects that).
+
+FEVM gas note: deploying costs ~54M gas units, far above what `forge script`'s simulation estimates,
+so `forge script --broadcast` fails on chain. The deploy scripts use `forge create`, which takes the
+node's `eth_estimateGas`. The Calibration deployment above was sent with `cast send --create`.
