@@ -1,0 +1,28 @@
+{
+  "name": "fifolders",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -p tsconfig.json --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "e2e": "playwright test"
+  },
+  "dependencies": {
+    "@filoz/synapse-core": "^0.4.1",
+    "@filoz/synapse-sdk": "^0.40.4",
+    "@fontsource/roboto": "^5.2.6",
+    "fil-folders": "workspace:*",
+    "material-symbols": "^0.31.8",
+    "viem": "^2.38.3"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.56.1",
+    "happy-dom": "^18.0.1",
+    "typescript": "^5.9.3",
+    "vite": "^6.3.6",
+    "vitest": "^3.2.4"
+  }
+}

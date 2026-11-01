@@ -1,6 +1,6 @@
 # Filecoin Folders
 
-A standalone library for folder volumes on Filecoin. A later Filecoin Drive UI can sit on top of it. This repository is not an application.
+A library for folder volumes on Filecoin, plus FiFolders, a static file manager in `apps/fifolders`.
 
 The library stores an immutable JSON manifest as a [Synapse](https://docs.filecoin.cloud/) piece. A small FEVM contract, `FolderRegistry`, points at the current root with compare-and-swap.
 
@@ -22,6 +22,7 @@ flowchart LR
 | `contracts/` | Foundry project. `FolderRegistry` plus Calibration and mainnet deploy scripts. |
 | `packages/fil-folders` | TypeScript ESM package. Browser and Node.js 22+. |
 | `examples/cli.ts` | `ls` / `put` / `get` against Calibration. |
+| `apps/fifolders` | FiFolders, a static Vite file manager on `fil-folders`. |
 
 ## Registry
 
@@ -166,7 +167,7 @@ pnpm install
 pnpm test
 ```
 
-`pnpm test` runs `forge test`, the vitest suite (CRUD, mv/rm, history, conflict merge, encryption, and the anvil registry test), the package typecheck, and the example typecheck.
+`pnpm test` runs `forge test`, the fil-folders vitest suite (CRUD, mv/rm, history, conflict merge, encryption, and the anvil registry test), the package typecheck, the example typecheck, and the FiFolders unit tests. FiFolders browser tests are `pnpm --filter fifolders e2e`.
 
 ## License
 

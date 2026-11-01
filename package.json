@@ -7,7 +7,7 @@
   },
   "scripts": {
     "build": "pnpm --filter fil-folders build",
-    "test": "forge test --root contracts -vv && pnpm --filter fil-folders test && pnpm --filter fil-folders build && tsc -p tsconfig.example.json",
+    "test": "forge test --root contracts -vv && pnpm --filter fil-folders test && pnpm --filter fil-folders build && tsc -p tsconfig.example.json && pnpm --filter fifolders test",
     "test:contracts": "forge test --root contracts -vv",
     "example": "tsx examples/cli.ts",
     "deploy:calibration": "cd contracts && forge create src/FolderRegistry.sol:FolderRegistry --rpc-url calibration --broadcast --private-key $PRIVATE_KEY",

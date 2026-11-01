@@ -1,0 +1,164 @@
+import { MemoryRegistry, MemoryStorage, openVolume, type Registry } from "fil-folders";
+import { afterEach, describe, expect, it } from "vitest";
+import { DriveApp } from "../src/drive-app.js";
+import { observeRegistry, openMockSession } from "../src/session.js";
+
+const owner = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
+
+async function mountMock() {
+  const session = await openMockSession();
+  const root = document.createElement("div");
+  document.body.appendChild(root);
+  const app = new DriveApp({
+    volume: session.volume,
+    owner: session.owner,
+    chain: "calibration",
+    encrypted: false,
+    volumeName: session.volumeName,
+    cas: session.cas,
+    felarumiUrl: "https://felarumi.example",
+    felanumioUrl: "https://felanumio.example",
+  });
+  app.mount(root);
+  await app.settled;
+  return { app, root, session };
+}
+
+function entry(root: ParentNode, name: string): HTMLElement | undefined {
+  return [...root.querySelectorAll<HTMLElement>("[data-testid=entry]")].find((node) => node.textContent?.includes(name));
+}
+
+describe("DriveApp", () => {
+  afterEach(() => {
+    document.body.innerHTML = "";
+    localStorage.clear();
+  });
+
+  it("creates a folder, uploads two files in one commit, renames, trashes, and restores", async () => {
+    const { app, root, session } = await mountMock();
+    expect(root.querySelector("[data-testid=nav-drive]")).toBeTruthy();
+    root.querySelector<HTMLButtonElement>("[data-testid=new-button]")!.click();
+    root.querySelector<HTMLButtonElement>("[data-action=new-folder]")!.click();
+    const input = root.querySelector<HTMLInputElement>("[data-testid=dialog-input]")!;
+    input.value = "Photos";
+    input.form?.requestSubmit();
+    await app.settled;
+    expect(entry(root, "Photos")).toBeTruthy();
+
+    const before = session.registry.commits;
+    await app.uploadFiles([
+      new File(["one"], "one.txt", { type: "text/plain" }),
+      new File(["two"], "two.txt", { type: "text/plain" }),
+    ]);
+    expect(session.registry.commits).toBe(before + 1);
+    expect(entry(root, "one.txt")).toBeTruthy();
+    expect(root.querySelector("[data-testid=upload-panel]")).toBeTruthy();
+
+    entry(root, "one.txt")!.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 12, clientY: 12 }));
+    root.querySelector<HTMLButtonElement>("[data-action=rename]")!.click();
+    await app.settled;
+    const rename = root.querySelector<HTMLInputElement>("[data-testid=dialog-input]")!;
+    rename.value = "renamed.txt";
+    rename.form?.requestSubmit();
+    await app.settled;
+    expect(entry(root, "renamed.txt")).toBeTruthy();
+
+    entry(root, "renamed.txt")!.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 12, clientY: 12 }));
+    root.querySelector<HTMLButtonElement>("[data-action=trash]")!.click();
+    await app.settled;
+    expect(entry(root, "renamed.txt")).toBeUndefined();
+    root.querySelector<HTMLButtonElement>("[data-testid=nav-trash]")!.click();
+    await app.settled;
+    expect(entry(root, "renamed.txt")).toBeTruthy();
+    entry(root, "renamed.txt")!.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 12, clientY: 12 }));
+    root.querySelector<HTMLButtonElement>("[data-action=restore]")!.click();
+    await app.settled;
+    root.querySelector<HTMLButtonElement>("[data-testid=nav-drive]")!.click();
+    await app.settled;
+    expect(entry(root, "renamed.txt")).toBeTruthy();
+  });
+
+  it("toggles grid and list, previews text, and marks fel files", async () => {
+    const { app, root } = await mountMock();
+    root.querySelector<HTMLButtonElement>("[data-testid=view-grid]")!.click();
+    expect(root.querySelector("[data-testid=browser]")?.getAttribute("data-view")).toBe("grid");
+    root.querySelector<HTMLButtonElement>("[data-testid=view-list]")!.click();
+    expect(root.querySelector("[data-testid=browser]")?.getAttribute("data-view")).toBe("list");
+
+    await app.uploadFiles([
+      new File(["hello folder"], "hello.txt", { type: "text/plain" }),
+      new File(["{}"], "card.felarumi", { type: "application/octet-stream" }),
+    ]);
+    const fel = entry(root, "card.felarumi");
+    expect(fel?.dataset.kind).toBe("felarumi");
+    expect(fel?.querySelector(".fel-icon")).toBeTruthy();
+
+    entry(root, "hello.txt")!.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    await app.settled;
+    expect(root.querySelector("[data-testid=preview-text]")?.textContent).toContain("hello folder");
+  });
+
+  it("selects a shift range", async () => {
+    const { app, root } = await mountMock();
+    await app.uploadFiles([
+      new File(["a"], "a.txt", { type: "text/plain" }),
+      new File(["b"], "b.txt", { type: "text/plain" }),
+      new File(["c"], "c.txt", { type: "text/plain" }),
+    ]);
+    const clickRow = (index: number, shift = false) => {
+      const rows = [...root.querySelectorAll<HTMLElement>("[data-testid=entry]")];
+      rows[index]!.dispatchEvent(new MouseEvent("click", { bubbles: true, shiftKey: shift }));
+    };
+    clickRow(0);
+    clickRow(2, true);
+    const selected = [...root.querySelectorAll<HTMLElement>("[data-selected=true]")];
+    expect(selected).toHaveLength(3);
+  });
+
+  it("toasts a merged conflict and a real conflict", async () => {
+    const storage = new MemoryStorage();
+    const raw = new MemoryRegistry(owner);
+    const observed = observeRegistry(raw);
+    let interleave: (() => Promise<void>) | null = null;
+    const registry: Registry = {
+      head: (o, ns, key) => raw.head(o, ns, key),
+      commit: async (input) => {
+        if (interleave) {
+          const run = interleave;
+          interleave = null;
+          await run();
+        }
+        return observed.registry.commit(input);
+      },
+      setWriter: (ns, writer, allowed) => raw.setWriter(ns, writer, allowed),
+      isWriter: (o, ns, writer) => raw.isWriter(o, ns, writer),
+      committed: (query) => raw.committed(query),
+    };
+    const other = await openVolume({ storage, registry: raw, owner, name: "Vol" });
+    const volume = await openVolume({ storage, registry, owner, name: "Vol" });
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const app = new DriveApp({
+      volume,
+      owner,
+      chain: "calibration",
+      encrypted: false,
+      volumeName: "Vol",
+      cas: observed.cas,
+      felarumiUrl: "https://felarumi.example",
+      felanumioUrl: "https://felanumio.example",
+    });
+    app.mount(root);
+    await app.settled;
+    interleave = () => other.put("/from-a.txt", new TextEncoder().encode("a")).then(() => undefined);
+    await app.uploadFiles([new File(["b"], "from-b.txt", { type: "text/plain" })]);
+    expect(root.textContent).toContain("Changes merged");
+    expect(entry(root, "from-a.txt")).toBeTruthy();
+    expect(entry(root, "from-b.txt")).toBeTruthy();
+
+    interleave = () => other.put("/same.txt", new TextEncoder().encode("theirs")).then(() => undefined);
+    await app.uploadFiles([new File(["ours"], "same.txt", { type: "text/plain" })]);
+    expect(root.textContent).toContain("Couldn't save");
+    expect(root.textContent).toContain("/same.txt");
+  });
+});
