@@ -101,12 +101,15 @@ describe("mocked wallet and SessionKeyRegistry", () => {
     root.querySelector("form")?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
     await settle(app);
     expect(root.querySelector("[data-testid=setup]")).toBeTruthy();
-    expect(root.querySelector("[data-testid=wallet-signatures]")?.textContent).toContain("Wallet signatures 1");
-    expect(root.querySelector("[data-testid=session-status]")?.textContent).toContain("Session key ready");
+    // Storage payment is asked for up front, before the session key.
+    expect(root.querySelector("[data-testid=fix-payments]")).toBeTruthy();
+    expect(root.querySelector("[data-testid=wallet-signatures]")?.textContent).toContain("Wallet signatures 0");
 
     root.querySelector<HTMLButtonElement>("[data-testid=fix-payments]")?.click();
     await settle(app);
+    // Session-key authorization starts on its own once payment is enabled.
     expect(root.querySelector("[data-testid=wallet-signatures]")?.textContent).toContain("Wallet signatures 3");
+    expect(root.querySelector("[data-testid=session-status]")?.textContent).toContain("Session key ready");
 
     root.querySelector<HTMLButtonElement>("[data-testid=create-dataset]")?.click();
     await settle(app);
@@ -287,3 +290,15 @@ async function until(ready: () => boolean): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
 }
+
+describe("storage-payment approval check (matches synapse-core isFwssMaxApproved)", () => {
+  it("treats a plain approval as missing and a max approval as ready", async () => {
+    const { isMaxApproved } = await import("../src/live-onboarding.js");
+    const max = 2n ** 256n - 1n;
+    expect(isMaxApproved({ isApproved: true, rateAllowance: 10n, lockupAllowance: 10n, maxLockupPeriod: 86400n })).toBe(false);
+    expect(isMaxApproved({ isApproved: true, rateAllowance: max, lockupAllowance: max, maxLockupPeriod: 86400n })).toBe(true);
+    expect(isMaxApproved({ isApproved: true, rateAllowance: max, lockupAllowance: max, maxLockupPeriod: 100n })).toBe(false);
+    expect(isMaxApproved([true, max, max, 0n, 0n, 86400n])).toBe(true);
+    expect(isMaxApproved(null)).toBe(false);
+  });
+});

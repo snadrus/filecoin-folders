@@ -15,13 +15,14 @@ test("missing payment and dataset take one fix and no extra signature to create"
   await page.goto("/?onboard=1");
   await page.getByTestId("connect-wallet").click();
   await expect(page.getByTestId("setup")).toBeVisible();
-  await expect(page.getByTestId("session-status")).toContainText("Session key ready");
+  await expect(page.getByTestId("fix-payments")).toBeVisible();
   await expect(page.getByTestId("balances")).toContainText("FIL");
   await expect(page.getByTestId("balances")).toContainText("USDFC");
-  await expect(page.getByTestId("wallet-signatures")).toContainText("Wallet signatures 1");
+  await expect(page.getByTestId("wallet-signatures")).toContainText("Wallet signatures 0");
 
   await page.getByTestId("fix-payments").click();
   await expect(page.getByTestId("wallet-signatures")).toContainText("Wallet signatures 3");
+  await expect(page.getByTestId("session-status")).toContainText("Session key ready");
   await page.getByTestId("create-dataset").click();
   await expect(page.getByTestId("nav-drive")).toBeVisible();
   await expect(page.getByTestId("wallet-signatures")).toHaveText("3");

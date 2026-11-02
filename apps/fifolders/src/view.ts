@@ -216,7 +216,7 @@ function renderSetupShell(model: ViewModel): string {
   const panel = model.panel;
   if (!panel) return "";
   const picked = panel.datasets.find((dataset) => dataset.id === panel.selectedDatasetId);
-  const ready = Boolean(panel.selectedDatasetId && panel.paymentsReady && (panel.sessionReady || panel.legacyRegistry));
+  const ready = Boolean(panel.selectedDatasetId && panel.paymentsReady && panel.sessionReady);
   const needsUser = !ready || Boolean(model.setupError);
   return `<div class="shell">
     ${renderTop(model)}
@@ -254,7 +254,7 @@ function renderSetup(model: ViewModel): string {
   const create = `<button class="${panel.createPrimary ? "primary" : ""}" type="button" data-testid="create-dataset" data-action="create-dataset">Create new dataset</button>
         <p class="note">${escapeHtml(model.costs.datasetNote)}</p>`;
   const open =
-    panel.selectedDatasetId && panel.paymentsReady && (panel.sessionReady || panel.legacyRegistry)
+    panel.selectedDatasetId && panel.paymentsReady && panel.sessionReady
       ? `<button class="primary" type="button" data-testid="open-drive" data-action="open-drive">Open drive</button>`
       : "";
   const legacy = panel.legacyRegistry

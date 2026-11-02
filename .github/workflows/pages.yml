@@ -55,6 +55,9 @@ jobs:
           fi
           npm install --ignore-scripts
           node scripts/install-fil-folders.mjs
+          # FiPen/FiGrid must use this commit's fil-folders (e.g. 360-block log scans), not the older pin.
+          rm -rf node_modules/fil-folders/dist
+          cp -R ../packages/fil-folders/dist node_modules/fil-folders/dist
           BUILD_ONLY=1 node --disable-warning=ExperimentalWarning --experimental-strip-types p2p/serve.ts
       - run: node scripts/stage-editors.mjs collab-edit/p2p/dist
       - run: printf '%s\n' 'fifolder.scionbase.ai' > apps/fifolders/dist/CNAME

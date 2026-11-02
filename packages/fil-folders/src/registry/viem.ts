@@ -27,8 +27,22 @@ export interface ViemRegistryOptions {
   signer?: "auto" | "session-key";
   /** Default start block for `committed` log scans, e.g. the deployment block. Public FEVM RPCs reject `fromBlock: 0`. */
   fromBlock?: bigint;
-  /** Max blocks per `eth_getLogs` request. Lotus/Glif cap ranges (2880 epochs). Default 2000. */
+  /** Max blocks per `eth_getLogs` request. Glif Calibration rejects more than 360. Default 360. */
   maxBlockRange?: bigint;
+  /**
+   * Where scanned `Committed` logs and the last scanned block are kept, so a reload only scans new blocks.
+   * Defaults to `globalThis.localStorage` when present; pass `null` to disable.
+   */
+  scanCache?: Pick<Storage, "getItem" | "setItem"> | null;
+}
+
+/** Glif's public Calibration endpoint caps `eth_getLogs` at 360 blocks. */
+export const DEFAULT_MAX_BLOCK_RANGE = 360n;
+
+interface CachedScan {
+  v: 1;
+  to: string;
+  records: { owner: Address; ns: Hex; key: Hex; pieceCid: Hex; prevPieceCid: Hex; version: string; timestamp: string; txHash?: Hex; blockNumber?: string }[];
 }
 
 /**
@@ -46,10 +60,17 @@ class ViemRegistry implements Registry {
   readonly signer: "auto" | "session-key";
   readonly fromBlock: bigint;
   readonly maxBlockRange: bigint;
+  readonly scanCache: Pick<Storage, "getItem" | "setItem"> | null;
 
   constructor(options: ViemRegistryOptions) {
     this.fromBlock = options.fromBlock ?? 0n;
-    this.maxBlockRange = options.maxBlockRange ?? 2000n;
+    this.maxBlockRange = options.maxBlockRange ?? DEFAULT_MAX_BLOCK_RANGE;
+    this.scanCache =
+      options.scanCache !== undefined
+        ? options.scanCache
+        : typeof globalThis !== "undefined" && "localStorage" in globalThis
+          ? (globalThis as { localStorage: Pick<Storage, "getItem" | "setItem"> }).localStorage
+          : null;
     if (this.maxBlockRange < 1n) throw new Error("maxBlockRange must be >= 1");
     this.address = options.address;
     this.publicClient = options.publicClient;
@@ -132,13 +153,50 @@ class ViemRegistry implements Registry {
           ? { owner: query.owner, ns: query.ns }
           : { owner: query.owner, ns: query.ns, key: query.key };
       const latest = await this.publicClient.getBlockNumber();
+      const start = query.fromBlock ?? this.fromBlock;
+      const cacheKey = `fil-folders:committed:${this.address.toLowerCase()}:${query.owner.toLowerCase()}:${query.ns}:${query.key ?? "*"}:${start}`;
+      const cached = this.#readCache(cacheKey);
       const logs = [];
-      for (let from = query.fromBlock ?? this.fromBlock; from <= latest; from += this.maxBlockRange) {
+      let scannedTo = start - 1n;
+      if (cached && BigInt(cached.to) <= latest) scannedTo = BigInt(cached.to);
+      for (let from = scannedTo + 1n; from <= latest; from += this.maxBlockRange) {
         const to = from + this.maxBlockRange - 1n < latest ? from + this.maxBlockRange - 1n : latest;
         logs.push(
           ...(await this.publicClient.getLogs({ address: this.address, event: committedEvent, args, fromBlock: from, toBlock: to })),
         );
+        scannedTo = to;
       }
+      const fresh = this.#toRecords(logs);
+      const records = [...(cached && BigInt(cached.to) <= latest ? cached.records.map(fromCached) : []), ...fresh];
+      this.#writeCache(cacheKey, scannedTo, records);
+      return records;
+    } catch (error) {
+      rethrowRegistry(error);
+    }
+  }
+
+  #readCache(key: string): CachedScan | null {
+    if (!this.scanCache) return null;
+    try {
+      const parsed = JSON.parse(this.scanCache.getItem(key) || "null") as CachedScan | null;
+      return parsed && parsed.v === 1 && typeof parsed.to === "string" && Array.isArray(parsed.records) ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+
+  #writeCache(key: string, to: bigint, records: CommittedRecord[]): void {
+    if (!this.scanCache) return;
+    try {
+      const value: CachedScan = { v: 1, to: to.toString(), records: records.map(toCached) };
+      this.scanCache.setItem(key, JSON.stringify(value));
+    } catch {
+      // Quota or a blocked store: next load scans again.
+    }
+  }
+
+  #toRecords(logs: readonly { args: { owner?: Address; ns?: Hex; key?: Hex; pieceCid?: Hex; prevPieceCid?: Hex; version?: bigint; timestamp?: bigint }; transactionHash?: Hex | null; blockNumber?: bigint | null }[]): CommittedRecord[] {
+    {
       return logs.map((log) => {
         const args = log.args;
         if (
@@ -165,8 +223,6 @@ class ViemRegistry implements Registry {
         if (log.blockNumber != null) record.blockNumber = log.blockNumber;
         return record;
       });
-    } catch (error) {
-      rethrowRegistry(error);
     }
   }
 
@@ -247,4 +303,33 @@ function decodeRegistryError(error: unknown): { errorName: string; args?: readon
     }
   }
   return null;
+}
+
+function toCached(record: CommittedRecord): CachedScan["records"][number] {
+  return {
+    owner: record.owner,
+    ns: record.ns,
+    key: record.key,
+    pieceCid: toHex(record.pieceCid),
+    prevPieceCid: toHex(record.prevPieceCid),
+    version: record.version.toString(),
+    timestamp: record.timestamp.toString(),
+    ...(record.txHash ? { txHash: record.txHash } : {}),
+    ...(record.blockNumber != null ? { blockNumber: record.blockNumber.toString() } : {}),
+  };
+}
+
+function fromCached(item: CachedScan["records"][number]): CommittedRecord {
+  const record: CommittedRecord = {
+    owner: item.owner,
+    ns: item.ns,
+    key: item.key,
+    pieceCid: hexToBytes(item.pieceCid),
+    prevPieceCid: hexToBytes(item.prevPieceCid),
+    version: BigInt(item.version),
+    timestamp: BigInt(item.timestamp),
+  };
+  if (item.txHash) record.txHash = item.txHash;
+  if (item.blockNumber) record.blockNumber = BigInt(item.blockNumber);
+  return record;
 }
