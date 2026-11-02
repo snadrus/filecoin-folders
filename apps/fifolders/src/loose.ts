@@ -1,4 +1,4 @@
-import { unpadPiece } from "fil-folders";
+import { isCar, unpadPiece } from "fil-folders";
 
 export interface PieceBlob {
   pieceCid: string;
@@ -86,6 +86,7 @@ export function loosePieces(pieces: readonly PieceBlob[], referenced: ReadonlySe
 }
 
 function looksLikeManifest(bytes: Uint8Array): boolean {
+  if (isCar(bytes)) return true;
   if (bytes.byteLength > 2_000_000 || bytes.includes(0)) return false;
   try {
     const parsed = JSON.parse(new TextDecoder().decode(bytes)) as { entries?: unknown; v?: unknown };

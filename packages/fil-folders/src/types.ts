@@ -9,7 +9,13 @@ export interface ContentEnc {
 export interface FileNode {
   type: "file";
   name: string;
+  /** Content CID inside a CAR, or a legacy piece that is the file itself. */
   pieceCid: string;
+  /**
+   * Storage piece that contains `pieceCid` when the bytes live in a CAR.
+   * Absent for a legacy per-file piece.
+   */
+  located?: string;
   size: number;
   mtime: number;
   mime?: string;
@@ -49,6 +55,8 @@ export interface Manifest {
   v: 1;
   mtime: number;
   entries: ManifestEntry[];
+  /** Content CID → storage piece that holds that block. Omitted for blocks in the current CAR and for legacy pieces. */
+  located?: Record<string, string>;
 }
 
 export interface Stat {

@@ -1,4 +1,5 @@
 import { isAddress, type Address, type Hex } from "viem";
+import { contentCid, decodeCar, encodeCar, isCar } from "./car.js";
 import { bytesToPieceCid, decodeUtf8, isByteStream, pieceCidToBytes, readStream, utf8, bytesToBase64Url, base64UrlToBytes } from "./bytes.js";
 import { manifestBytes, parseManifest } from "./codec.js";
 import { deriveVolumeKey, decryptBytes, encryptBytes, FILE_AAD, NAME_AAD, signVolumeKey, volumeKeyInfo } from "./crypto.js";
@@ -51,7 +52,7 @@ export interface OpenVolumeOptions {
   /** Volume name. The registry key is `keccak256(utf8(name))`. */
   name: string;
   encryption?: EncryptionOptions;
-  /** Spill a subdirectory into its own piece once its JSON is larger than this. Default 24 KiB. */
+  /** Spill a subdirectory into its own manifest block once its JSON is larger than this. Default 24 KiB. */
   dirThreshold?: number;
   /** Compare-and-swap attempts, including the first. Default 5. */
   maxRetries?: number;
@@ -63,8 +64,11 @@ export interface OpenVolumeOptions {
  * `(owner, keccak256("fil-folders"), keccak256(name))` is the root manifest PieceCID.
  *
  * Calls outside {@link Volume.tx} rebase on the latest head and commit immediately.
- * `tx` keeps one draft and commits it once. Piece uploads happen during `put`;
- * the registry commit is the atomic snapshot.
+ * `tx` keeps one draft and commits it once.
+ * Each commit uploads one CARv1 piece: the new manifest plus any new or changed
+ * file bytes. Unchanged files stay in the piece that already holds them.
+ * The registry head is that piece. Older heads that are raw manifest JSON,
+ * and files that are their own pieces, still load.
  */
 export async function openVolume(options: OpenVolumeOptions): Promise<Volume> {
   if (!options.registry) throw new Error("openVolume requires registry");
@@ -100,6 +104,12 @@ export class Volume {
   #txBasePiece = "";
   #txBaseTree: DirNode = emptyDir();
   #cache = new Map<string, DirNode>();
+  /** File bytes waiting for the next CAR. Keyed by content CID. */
+  #blobs = new Map<string, Uint8Array>();
+  /** Parsed CAR blocks and legacy directory pieces, keyed by content or piece CID. */
+  #blockIndex = new Map<string, Uint8Array>();
+  #pieceBytes = new Map<string, Uint8Array>();
+  #ranges = new Map<string, Map<string, { offset: number; length: number }>>();
 
   constructor(options: OpenVolumeOptions, storage: Storage) {
     this.owner = options.owner;
@@ -167,7 +177,7 @@ export class Volume {
     const node = find(await this.#read(), norm);
     if (!node) throw new NotFoundError(norm);
     if (node.type !== "file") throw new IsADirectoryError(norm);
-    const bytes = await this.storage.get(node.pieceCid);
+    const bytes = await this.#readFile(node);
     if (!node.enc) return bytes;
     if (!this.#cryptoKey) throw new Error("volume is encrypted; pass encryption to openVolume");
     return decryptBytes(this.#cryptoKey, bytes, node.enc.iv, FILE_AAD);
@@ -239,15 +249,58 @@ export class Volume {
     this.#txBaseTree = this.#baseTree;
     this.#pending = this.#baseTree;
     this.#txDepth = 1;
+    const blobsBefore = new Set(this.#blobs.keys());
     try {
       const result = await fn(this);
       const pending = this.#pending ?? this.#txBaseTree;
       if (!sameTree(this.#txBaseTree, pending)) await this.#commitTree(this.#txBasePiece, this.#txBaseTree, pending);
       return result;
+    } catch (error) {
+      for (const cid of this.#blobs.keys()) {
+        if (!blobsBefore.has(cid)) this.#blobs.delete(cid);
+      }
+      throw error;
     } finally {
       this.#txDepth = 0;
       this.#pending = null;
     }
+  }
+
+  async #readFile(node: FileNode): Promise<Uint8Array> {
+    const staged = this.#blobs.get(node.pieceCid);
+    if (staged) return staged;
+    const cached = this.#blockIndex.get(node.pieceCid);
+    if (cached && node.located) return cached;
+    if (node.located) {
+      await this.#ensurePiece(node.located);
+      const block = await this.#blockFromPiece(node.located, node.pieceCid);
+      if (block) return block;
+    }
+    const inline = this.#blockIndex.get(node.pieceCid);
+    if (inline) return inline;
+    return this.storage.get(node.pieceCid);
+  }
+
+  async #blockFromPiece(piece: string, cid: string): Promise<Uint8Array | undefined> {
+    const cached = this.#blockIndex.get(cid);
+    if (cached) return cached;
+    const range = this.#ranges.get(piece)?.get(cid);
+    if (range && this.storage.getRange) {
+      const slice = await this.storage.getRange(piece, range.offset, range.length);
+      this.#blockIndex.set(cid, slice);
+      return slice;
+    }
+    return undefined;
+  }
+
+  async #ensurePiece(piece: string): Promise<void> {
+    if (this.#pieceBytes.has(piece)) return;
+    const bytes = await this.storage.get(piece);
+    this.#pieceBytes.set(piece, bytes);
+    if (!isCar(bytes)) return;
+    const car = decodeCar(bytes);
+    this.#ranges.set(piece, car.ranges);
+    for (const [cid, block] of car.blocks) this.#blockIndex.set(cid, block);
   }
 
   async #upload(
@@ -256,12 +309,13 @@ export class Volume {
     mtime: number,
   ): Promise<Omit<FileNode, "type" | "name">> {
     const mime = opts?.mime;
+    const plain = isByteStream(data) ? await readStream(data) : data;
     if (this.#cryptoKey) {
-      const plain = isByteStream(data) ? await readStream(data) : data;
       const sealed = await encryptBytes(this.#cryptoKey, plain, FILE_AAD);
-      const stored = await this.storage.put(sealed.ciphertext);
+      const pieceCid = await contentCid(sealed.ciphertext);
+      this.#blobs.set(pieceCid, sealed.ciphertext);
       const file: Omit<FileNode, "type" | "name"> = {
-        pieceCid: stored.pieceCid,
+        pieceCid,
         size: plain.byteLength,
         mtime,
         enc: { alg: "A256GCM", iv: sealed.iv },
@@ -269,9 +323,9 @@ export class Volume {
       if (mime) file.mime = mime;
       return file;
     }
-    const stored = await this.storage.put(data);
-    if (!Number.isSafeInteger(stored.size) || stored.size < 0) throw new Error("storage.put did not return a size");
-    const file: Omit<FileNode, "type" | "name"> = { pieceCid: stored.pieceCid, size: stored.size, mtime };
+    const pieceCid = await contentCid(plain);
+    this.#blobs.set(pieceCid, plain);
+    const file: Omit<FileNode, "type" | "name"> = { pieceCid, size: plain.byteLength, mtime };
     if (mime) file.mime = mime;
     return file;
   }
@@ -324,6 +378,7 @@ export class Volume {
         this.#baseVersion = record.version;
         this.#baseTree = ours;
         this.#loaded = true;
+        this.#cache.set(pieceCid, ours);
         return;
       } catch (error) {
         if (!(error instanceof RegistryCasConflict)) throw error;
@@ -339,22 +394,34 @@ export class Volume {
 
   async #storeRoot(dir: DirNode): Promise<string> {
     const stored = await this.#persistDir(dir, true);
-    if (!stored.pieceCid) throw new Error("root manifest was not stored");
-    return stored.pieceCid;
+    if (!stored.root) throw new Error("root manifest was not stored");
+    const car = encodeCar(stored.root, stored.blocks);
+    const uploaded = await this.storage.put(car);
+    const decoded = decodeCar(car);
+    this.#pieceBytes.set(uploaded.pieceCid, car);
+    this.#ranges.set(uploaded.pieceCid, decoded.ranges);
+    for (const [cid, block] of stored.blocks) this.#blockIndex.set(cid, block);
+    stampLocated(dir, uploaded.pieceCid, stored.blocks);
+    for (const cid of stored.blocks.keys()) this.#blobs.delete(cid);
+    return uploaded.pieceCid;
   }
 
-  async #persistDir(dir: DirNode, isRoot: boolean): Promise<{ pieceCid?: string; entries: ManifestEntry[]; size: number }> {
+  async #persistDir(dir: DirNode, isRoot: boolean): Promise<{ root?: string; entries: ManifestEntry[]; size: number; blocks: Map<string, Uint8Array> }> {
     const entries: ManifestEntry[] = [];
+    const blocks = new Map<string, Uint8Array>();
     let size = 0;
     const children = [...dir.entries].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
     for (const child of children) {
       const sealed = await this.#sealName(child.name);
       if (child.type === "file") {
         size += child.size;
+        const blob = this.#blobs.get(child.pieceCid);
+        if (blob) blocks.set(child.pieceCid, blob);
         entries.push(fileEntry(child, sealed));
       } else {
         const nested = await this.#persistDir(child, false);
         size += nested.size;
+        for (const [cid, block] of nested.blocks) blocks.set(cid, block);
         const entry: ManifestEntry = {
           name: sealed.name,
           type: "dir",
@@ -363,32 +430,63 @@ export class Volume {
         };
         const enc = packEnc(undefined, sealed.nameIv);
         if (enc) entry.enc = enc;
-        if (nested.pieceCid) entry.pieceCid = nested.pieceCid;
+        if (nested.root) entry.pieceCid = nested.root;
         else entry.entries = nested.entries;
         entries.push(entry);
       }
     }
+    const located = isRoot ? locatedIndex(dir, blocks) : undefined;
     const manifest: Manifest = { v: 1, mtime: dir.mtime, entries };
+    if (located && Object.keys(located).length > 0) manifest.located = located;
     const bytes = manifestBytes(manifest);
     if (isRoot || bytes.byteLength > this.dirThreshold) {
-      const uploaded = await this.storage.put(bytes);
-      return { pieceCid: uploaded.pieceCid, entries, size };
+      const root = await contentCid(bytes);
+      blocks.set(root, bytes);
+      return { root, entries, size, blocks };
     }
-    return { entries, size };
+    return { entries, size, blocks };
   }
 
-  async #load(pieceCid: string): Promise<DirNode> {
+  async #load(pieceCid: string, ctx?: HydrateCtx): Promise<DirNode> {
     const cached = this.#cache.get(pieceCid);
     if (cached) return cached;
-    const manifest = parseManifest(await this.storage.get(pieceCid));
-    const tree = await this.#hydrate(manifest);
+    const inline = this.#blockIndex.get(pieceCid);
+    if (inline && ctx) {
+      const tree = await this.#hydrate(parseManifest(inline), ctx);
+      this.#cache.set(pieceCid, tree);
+      return tree;
+    }
+    const bytes = await this.#fetchPiece(pieceCid);
+    if (isCar(bytes)) {
+      const car = decodeCar(bytes);
+      this.#ranges.set(pieceCid, car.ranges);
+      for (const [cid, block] of car.blocks) this.#blockIndex.set(cid, block);
+      const root = car.blocks.get(car.root);
+      if (!root) throw new Error("CAR root block is missing");
+      const manifest = parseManifest(root);
+      const tree = await this.#hydrate(manifest, { piece: pieceCid, located: manifest.located });
+      this.#cache.set(pieceCid, tree);
+      return tree;
+    }
+    const manifest = parseManifest(bytes);
+    const tree = await this.#hydrate(manifest, ctx ?? { piece: pieceCid, located: manifest.located });
     this.#cache.set(pieceCid, tree);
     return tree;
   }
 
-  async #hydrate(manifest: Manifest): Promise<DirNode> {
+  async #fetchPiece(piece: string): Promise<Uint8Array> {
+    const cached = this.#pieceBytes.get(piece);
+    if (cached) return cached;
+    const bytes = await this.storage.get(piece);
+    this.#pieceBytes.set(piece, bytes);
+    return bytes;
+  }
+
+  async #hydrate(manifest: Manifest, ctx?: HydrateCtx): Promise<DirNode> {
     const entries: Node[] = [];
     const seen = new Set<string>();
+    const located = ctx?.located ?? manifest.located;
+    const nextCtx: HydrateCtx | undefined = ctx ? { piece: ctx.piece, located } : undefined;
     for (const entry of manifest.entries) {
       const name = await this.#openName(entry.name, entry.enc?.nameIv);
       if (seen.has(name)) throw new Error(`duplicate manifest name: ${name}`);
@@ -402,15 +500,18 @@ export class Volume {
           size: entry.size,
           mtime: entry.mtime,
         };
+        if (ctx && this.#blockIndex.has(entry.pieceCid)) file.located = ctx.piece;
+        else if (located?.[entry.pieceCid]) file.located = located[entry.pieceCid];
         if (entry.mime !== undefined) file.mime = entry.mime;
         if (entry.enc?.iv) file.enc = { alg: "A256GCM", iv: entry.enc.iv };
         entries.push(file);
       } else if (entry.entries) {
-        const child = await this.#hydrate({ v: 1, mtime: entry.mtime, entries: entry.entries });
+        const child = await this.#hydrate({ v: 1, mtime: entry.mtime, entries: entry.entries }, nextCtx);
         child.name = name;
+        child.mtime = entry.mtime;
         entries.push(child);
       } else if (entry.pieceCid) {
-        const child = structuredClone(await this.#load(entry.pieceCid));
+        const child = structuredClone(await this.#load(entry.pieceCid, nextCtx));
         child.name = name;
         child.mtime = entry.mtime;
         entries.push(child);
@@ -443,6 +544,30 @@ export class Volume {
     };
     if (event.txHash) entry.txHash = event.txHash;
     return entry;
+  }
+}
+
+interface HydrateCtx {
+  piece: string;
+  located?: Record<string, string>;
+}
+
+function locatedIndex(dir: DirNode, blocks: ReadonlyMap<string, Uint8Array>): Record<string, string> {
+  const located: Record<string, string> = {};
+  const walk = (node: DirNode): void => {
+    for (const child of node.entries) {
+      if (child.type === "dir") walk(child);
+      else if (child.located && !blocks.has(child.pieceCid)) located[child.pieceCid] = child.located;
+    }
+  };
+  walk(dir);
+  return located;
+}
+
+function stampLocated(dir: DirNode, piece: string, blocks: ReadonlyMap<string, Uint8Array>): void {
+  for (const child of dir.entries) {
+    if (child.type === "dir") stampLocated(child, piece, blocks);
+    else if (blocks.has(child.pieceCid)) child.located = piece;
   }
 }
 

@@ -1,3 +1,6 @@
+export { contentCid, decodeCar, encodeCar, isCar } from "./car.js";
+export { manifestBytes } from "./codec.js";
+export type { CarBlockRange, DecodedCar } from "./car.js";
 export { bytesToPieceCid, pieceCidToBytes } from "./bytes.js";
 export { VOLUME_KEY_PURPOSE } from "./crypto.js";
 export {

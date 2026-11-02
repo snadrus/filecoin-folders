@@ -45,6 +45,17 @@ import {
   type CostQuote,
 } from "./pricing.js";
 import type { CasObserver, ChainChoice } from "./session.js";
+import {
+  autoSaveUploads,
+  bytesToB64,
+  forkVolume,
+  loadStaged,
+  replayStaged,
+  restoreLabel,
+  saveLabel,
+  saveStaged,
+  type StagedOp,
+} from "./staged.js";
 import { loadSavedView, persistMemoryVolume, saveView } from "./volume-persist.js";
 import { renderApp, type ActivityRow, type DialogState, type UploadRow, type ViewModel } from "./view.js";
 
@@ -138,6 +149,9 @@ export class DriveApp {
   recentDone: ActivityRow[] = [];
   looseRows: LoosePiece[] = [];
   quote: CostQuote = fallbackQuote();
+  staged: StagedOp[] = [];
+  restoreNote = "";
+  autoSaveUploads = true;
 
   root: HTMLElement | null = null;
   #tail: Promise<void> = Promise.resolve();
@@ -145,6 +159,10 @@ export class DriveApp {
   #opSeq = 0;
   #opsAdopted = false;
   #opsListening = false;
+  #draft: Volume | null = null;
+  #draftReady = false;
+  #restoredFromDisk = false;
+  #baseline: { origins: Record<string, string>; stars: string[] } | null = null;
 
   constructor(options: DriveAppOptions) {
     this.volume = options.volume;
@@ -161,9 +179,13 @@ export class DriveApp {
     this.onDisconnect = options.onDisconnect;
     this.panel = options.panel ?? null;
     this.view = localStorage.getItem("fifolders:view") === "grid" ? "grid" : "list";
+    this.autoSaveUploads = autoSaveUploads();
     this.mainnetBlocked = options.chain === "mainnet";
     this.costsOpen = !options.volume;
-    if (options.volume) this.loadPrefs();
+    if (options.volume) {
+      this.loadPrefs();
+      this.#restoredFromDisk = loadStaged(this.owner, this.volumeName).ops.length > 0;
+    }
     if (!skipLivePricing()) void this.loadQuote();
   }
 
@@ -186,7 +208,13 @@ export class DriveApp {
     if (options.onSetupAction) this.onSetupAction = options.onSetupAction;
     if (options.onDisconnect) this.onDisconnect = options.onDisconnect;
     this.costsOpen = false;
+    this.#draft = null;
+    this.#draftReady = false;
+    this.staged = [];
+    this.#baseline = null;
+    this.restoreNote = "";
     this.loadPrefs();
+    this.#restoredFromDisk = loadStaged(this.owner, this.volumeName).ops.length > 0;
     if (this.root) void this.enqueue(() => this.refresh());
   }
 
@@ -291,6 +319,10 @@ export class DriveApp {
     return "/";
   }
 
+  private viewVolume(): Volume | null {
+    return this.#draft ?? this.volume;
+  }
+
   private async refresh(): Promise<void> {
     if (!this.volume) {
       this.entries = [];
@@ -299,6 +331,7 @@ export class DriveApp {
     }
     try {
       await this.reconcileOps();
+      await this.ensureDraft();
       const tree = await this.walk("/");
       this.storageUsed = sumSizes(tree);
       if (this.nav === "loose") {
@@ -323,7 +356,7 @@ export class DriveApp {
   }
 
   private async loadListing(): Promise<Stat[]> {
-    const volume = this.volume;
+    const volume = this.viewVolume();
     if (!volume) return [];
     if (this.nav === "recent") {
       const files = (await this.walk("/")).filter((entry) => entry.type === "file" && !isTrashPath(entry.path));
@@ -366,7 +399,7 @@ export class DriveApp {
   }
 
   private async walk(dir: string): Promise<Stat[]> {
-    const volume = this.volume;
+    const volume = this.viewVolume();
     if (!volume) return [];
     let entries: Stat[];
     try {
@@ -418,7 +451,7 @@ export class DriveApp {
   }
 
   private async uploadList(files: File[], dest: string): Promise<void> {
-    if (!files.length) return;
+    if (!files.length || !this.volume) return;
     const payloads = await Promise.all(
       files.map(async (file) => ({
         name: file.name,
@@ -427,62 +460,41 @@ export class DriveApp {
         bytes: new Uint8Array(await file.arrayBuffer()),
       })),
     );
-    const rows: UploadRow[] = payloads.map((file) => ({
-      id: `${Date.now()}-${file.rel}`,
-      name: file.rel,
-      progress: 8,
-      status: "uploading",
-    }));
-    const staged = payloads.map((file, index) => {
-      const path = joinPath(dest, file.rel);
-      const id = this.beginOp({
-        kind: "upload",
-        label: `Upload ${baseName(path)}`,
-        path,
-        name: baseName(path),
-        size: file.bytes.byteLength,
-        mime: guessMime(file.name, file.type),
-        stage: "uploading",
-      });
-      rows[index]!.id = id;
-      return { ...file, path, id };
-    });
-    this.uploads = [...this.uploads, ...rows];
-    this.entries = this.mergePending(this.entries);
-    this.render();
-    const ok = await this.run(async () => {
-      await this.volume!.tx(async (draft) => {
-        for (let index = 0; index < staged.length; index += 1) {
-          const file = staged[index]!;
-          const parent = parentPath(file.path);
-          if (parent !== "/") await draft.mkdir(parent);
-          const siblings = await draft.ls(parent);
-          const name = uniqueName(baseName(file.path), new Set(siblings.map((item) => item.name)));
-          const path = joinPath(parent, name);
-          rows[index]!.progress = 55;
-          this.render();
-          const stat = await draft.put(path, file.bytes, { mime: guessMime(file.name, file.type) });
-          patchOp(file.id, { pieceCid: stat.pieceCid, path, name, stage: "uploaded" });
-          if (stat.pieceCid) {
-            rememberPiece({ pieceCid: stat.pieceCid, name, mime: guessMime(file.name, file.type), size: file.bytes.byteLength, uploaded: Date.now(), path });
-          }
-          rows[index]!.progress = 100;
-          rows[index]!.status = "done";
-          this.render();
+    const view = await this.editingVolume();
+    const reserved = new Map<string, Set<string>>();
+    const ops: StagedOp[] = [];
+    const rows: UploadRow[] = [];
+    for (const file of payloads) {
+      const parent = parentPath(joinPath(dest, file.rel));
+      let taken = reserved.get(parent);
+      if (!taken) {
+        taken = new Set<string>();
+        try {
+          for (const item of await view.ls(parent)) taken.add(item.name);
+        } catch (error) {
+          if (!(error instanceof NotFoundError)) throw error;
         }
-      });
-    });
-    if (ok) {
-      for (const file of staged) {
-        const op = loadOps().find((item) => item.id === file.id);
-        if (op) this.rememberDone(op);
-        dropOp(file.id);
+        reserved.set(parent, taken);
       }
-    } else {
+      const name = uniqueName(baseName(file.rel), taken);
+      taken.add(name);
+      const path = joinPath(parent, name);
+      const mime = guessMime(file.name, file.type);
+      ops.push({ op: "put", path, bytes: bytesToB64(file.bytes), mime });
+      rows.push({ id: path, name: file.rel, progress: 40, status: "uploading" });
+    }
+    this.uploads = [...this.uploads, ...rows];
+    this.render();
+    try {
+      await this.stage(ops, { autosave: true });
+      const failed = this.autoSaveUploads && ops.some((op) => op.op === "put" && this.staged.some((item) => item.op === "put" && item.path === op.path));
       for (const row of rows) {
-        row.status = "error";
-        patchOp(row.id, { status: "error", stage: "error", error: "Upload failed" });
+        row.progress = 100;
+        row.status = failed ? "error" : "done";
       }
+    } catch (error) {
+      for (const row of rows) row.status = "error";
+      this.toast(errorText(error));
     }
     this.render();
   }
@@ -529,7 +541,7 @@ export class DriveApp {
   private async createFolder(name: string): Promise<void> {
     const trimmed = name.trim();
     if (!trimmed) return;
-    await this.run(() => this.volume!.mkdir(joinPath(this.destDir(), trimmed)));
+    await this.stage([{ op: "mkdir", path: joinPath(this.destDir(), trimmed) }]);
   }
 
   private async rename(path: string, name: string): Promise<void> {
@@ -537,105 +549,129 @@ export class DriveApp {
     if (!trimmed) return;
     const next = joinPath(parentPath(path), trimmed);
     if (next === path) return;
-    await this.run(async () => {
-      await this.volume!.mv(path, next);
-      this.moveStarPrefix(path, next);
-      this.mapOrigins(path, next);
-      this.selected = this.selected.map((item) => remap(item, path, next));
-    });
+    await this.stage([{ op: "mv", from: path, to: next }]);
+    this.moveStarPrefix(path, next);
+    this.mapOrigins(path, next);
+    this.selected = this.selected.map((item) => remap(item, path, next));
+    this.render();
   }
 
   private async makeCopies(paths: string[]): Promise<void> {
-    await this.run(async () => {
-      await this.volume!.tx(async (draft) => {
-        for (const path of paths) {
-          const parent = parentPath(path);
-          const siblings = await draft.ls(parent);
-          const name = uniqueName(copyName(baseName(path)), new Set(siblings.map((item) => item.name)));
-          await draft.cp(path, joinPath(parent, name));
-        }
-      });
-    });
+    const view = await this.editingVolume();
+    const reserved = new Map<string, Set<string>>();
+    const ops: StagedOp[] = [];
+    for (const path of paths) {
+      const parent = parentPath(path);
+      let taken = reserved.get(parent);
+      if (!taken) {
+        taken = new Set((await view.ls(parent)).map((item) => item.name));
+        reserved.set(parent, taken);
+      }
+      const name = uniqueName(copyName(baseName(path)), taken);
+      taken.add(name);
+      ops.push({ op: "cp", from: path, to: joinPath(parent, name) });
+    }
+    await this.stage(ops);
   }
 
   private async movePaths(paths: string[], dest: string): Promise<void> {
-    await this.run(async () => {
-      await this.volume!.tx(async (draft) => {
-        if (dest !== "/") await draft.mkdir(dest);
-        for (const path of paths) {
-          if (path === dest || dest.startsWith(`${path}/`)) throw new Error("Can't move a folder into itself.");
-          const siblings = await draft.ls(dest);
-          const name = uniqueName(baseName(path), new Set(siblings.map((item) => item.name)));
-          const next = joinPath(dest, name);
-          if (next === path) continue;
-          await draft.mv(path, next);
-          this.moveStarPrefix(path, next);
-          this.mapOrigins(path, next);
-          this.selected = this.selected.map((item) => remap(item, path, next));
-        }
-      });
-    });
+    const view = await this.editingVolume();
+    const ops: StagedOp[] = [];
+    if (dest !== "/") ops.push({ op: "mkdir", path: dest });
+    const taken = new Set<string>();
+    try {
+      for (const item of await view.ls(dest)) taken.add(item.name);
+    } catch (error) {
+      if (!(error instanceof NotFoundError)) throw error;
+    }
+    const moves: { from: string; to: string }[] = [];
+    for (const path of paths) {
+      if (path === dest || dest.startsWith(`${path}/`)) throw new Error("Can't move a folder into itself.");
+      const name = uniqueName(baseName(path), taken);
+      taken.add(name);
+      const next = joinPath(dest, name);
+      if (next === path) continue;
+      ops.push({ op: "mv", from: path, to: next });
+      moves.push({ from: path, to: next });
+    }
+    await this.stage(ops);
+    for (const move of moves) {
+      this.moveStarPrefix(move.from, move.to);
+      this.mapOrigins(move.from, move.to);
+      this.selected = this.selected.map((item) => remap(item, move.from, move.to));
+    }
+    this.render();
   }
 
   private async trashPaths(paths: string[]): Promise<void> {
-    await this.run(async () => {
-      await this.volume!.tx(async (draft) => {
-        await draft.mkdir(TRASH_PATH);
-        const taken = new Set((await draft.ls(TRASH_PATH)).map((item) => item.name));
-        for (const path of paths) {
-          if (isTrashPath(path)) continue;
-          const name = uniqueName(baseName(path), taken);
-          taken.add(name);
-          const dest = `${TRASH_PATH}/${name}`;
-          await draft.mv(path, dest);
-          this.origins[dest] = path;
-          this.moveStarPrefix(path, dest);
-          this.selected = this.selected.map((item) => (item === path ? dest : item));
-        }
-        this.writeOrigins();
-      });
-    });
+    const view = await this.editingVolume();
+    const ops: StagedOp[] = [{ op: "mkdir", path: TRASH_PATH }];
+    const taken = new Set<string>();
+    try {
+      for (const item of await view.ls(TRASH_PATH)) taken.add(item.name);
+    } catch (error) {
+      if (!(error instanceof NotFoundError)) throw error;
+    }
+    const moves: { from: string; to: string }[] = [];
+    for (const path of paths) {
+      if (isTrashPath(path)) continue;
+      const name = uniqueName(baseName(path), taken);
+      taken.add(name);
+      const dest = `${TRASH_PATH}/${name}`;
+      ops.push({ op: "mv", from: path, to: dest });
+      moves.push({ from: path, to: dest });
+    }
+    if (!moves.length) return;
+    await this.stage(ops);
+    for (const move of moves) {
+      this.origins[move.to] = move.from;
+      this.moveStarPrefix(move.from, move.to);
+      this.selected = this.selected.map((item) => (item === move.from ? move.to : item));
+    }
+    this.writeOrigins();
+    this.render();
   }
 
   private async restorePaths(paths: string[]): Promise<void> {
-    await this.run(async () => {
-      await this.volume!.tx(async (draft) => {
-        for (const path of paths) {
-          const origin = this.origins[path] ?? joinPath("/", baseName(path));
-          const parent = parentPath(origin);
-          if (parent !== "/") await draft.mkdir(parent);
-          let dest = origin;
-          try {
-            await draft.stat(dest);
-            const siblings = await draft.ls(parent);
-            dest = joinPath(parent, uniqueName(baseName(origin), new Set(siblings.map((item) => item.name))));
-          } catch (error) {
-            if (!(error instanceof NotFoundError)) throw error;
-          }
-          await draft.mv(path, dest);
-          delete this.origins[path];
-          this.moveStarPrefix(path, dest);
-        }
-        this.writeOrigins();
-      });
-    });
+    const view = await this.editingVolume();
+    const ops: StagedOp[] = [];
+    const moves: { from: string; to: string }[] = [];
+    for (const path of paths) {
+      const origin = this.origins[path] ?? joinPath("/", baseName(path));
+      const parent = parentPath(origin);
+      if (parent !== "/") ops.push({ op: "mkdir", path: parent });
+      let dest = origin;
+      try {
+        await view.stat(dest);
+        const siblings = await view.ls(parent);
+        dest = joinPath(parent, uniqueName(baseName(origin), new Set(siblings.map((item) => item.name))));
+      } catch (error) {
+        if (!(error instanceof NotFoundError)) throw error;
+      }
+      ops.push({ op: "mv", from: path, to: dest });
+      moves.push({ from: path, to: dest });
+    }
+    await this.stage(ops);
+    for (const move of moves) {
+      delete this.origins[move.from];
+      this.moveStarPrefix(move.from, move.to);
+    }
+    this.writeOrigins();
+    this.render();
   }
 
   private async deleteForever(paths: string[]): Promise<void> {
-    await this.run(async () => {
-      await this.volume!.tx(async (draft) => {
-        for (const path of paths) await draft.rm(path, { recursive: true });
-      });
-      for (const path of paths) {
-        delete this.origins[path];
-        for (const star of [...this.stars]) {
-          if (star === path || star.startsWith(`${path}/`)) this.stars.delete(star);
-        }
+    await this.stage(paths.map((path) => ({ op: "rm" as const, path })));
+    for (const path of paths) {
+      delete this.origins[path];
+      for (const star of [...this.stars]) {
+        if (star === path || star.startsWith(`${path}/`)) this.stars.delete(star);
       }
-      this.writeOrigins();
-      this.writeStars();
-      this.selected = [];
-    });
+    }
+    this.writeOrigins();
+    this.writeStars();
+    this.selected = [];
+    this.render();
   }
 
   private moveStarPrefix(from: string, to: string): void {
@@ -653,7 +689,7 @@ export class DriveApp {
   }
 
   private async openPath(path: string): Promise<void> {
-    const volume = this.volume;
+    const volume = this.viewVolume();
     if (!volume) return;
     const stat = await volume.stat(path);
     if (stat.type === "dir") {
@@ -680,7 +716,7 @@ export class DriveApp {
   }
 
   private async downloadPath(path: string): Promise<void> {
-    const volume = this.volume;
+    const volume = this.viewVolume();
     if (!volume) return;
     const stat = await volume.stat(path);
     if (stat.type === "dir") return;
@@ -697,14 +733,15 @@ export class DriveApp {
   }
 
   private async showDetails(path: string): Promise<void> {
-    const volume = this.volume;
-    if (!volume) return;
+    const volume = this.viewVolume();
+    const real = this.volume;
+    if (!volume || !real) return;
     const stat = await volume.stat(path);
-    const history = await volume.history(path);
-    const head = await volume.registry.head(volume.owner, volume.ns, volume.key);
+    const history = await real.history(path);
+    const head = await real.registry.head(real.owner, real.ns, real.key);
     let pieceCid = stat.pieceCid ?? "";
     if (!pieceCid) {
-      const commits = await volume.history();
+      const commits = await real.history();
       pieceCid = commits.at(-1)?.pieceCid ?? "";
     }
     this.details = { stat, history, version: head.version, pieceCid };
@@ -899,6 +936,14 @@ export class DriveApp {
       this.render();
       return;
     }
+    if (action === "save-changes") {
+      void this.enqueue(() => this.saveStaged());
+      return;
+    }
+    if (action === "discard-changes") {
+      void this.enqueue(() => this.discardStaged());
+      return;
+    }
     if (action === "disconnect") {
       this.volume = null;
       this.owner = "";
@@ -1053,6 +1098,11 @@ export class DriveApp {
     }
     if (target instanceof HTMLSelectElement && target.dataset.testid === "move-dest") {
       if (this.dialog?.mode === "move") this.dialog.dest = decodeURIComponent(target.value);
+      return;
+    }
+    if (target instanceof HTMLInputElement && target.dataset.testid === "autosave-uploads") {
+      this.autoSaveUploads = target.checked;
+      localStorage.setItem("fifolders:autosave-uploads", target.checked ? "1" : "0");
       return;
     }
     if (!(target instanceof HTMLInputElement) || target.type !== "file" || !target.files) return;
@@ -1316,7 +1366,7 @@ export class DriveApp {
     if (this.#opsListening || typeof window === "undefined") return;
     this.#opsListening = true;
     window.addEventListener("beforeunload", (event) => {
-      const pending = loadOps().some((op) => op.status === "pending") || this.busy;
+      const pending = loadOps().some((op) => op.status === "pending") || this.busy || this.staged.length > 0;
       if (!pending) return;
       event.preventDefault();
       event.returnValue = "";
@@ -1432,6 +1482,7 @@ export class DriveApp {
     }
     const volume = this.volume;
     if (!volume) return;
+    let edited = false;
     for (const op of loadOps()) {
       if ((op.kind === "upload" || op.kind === "commit") && op.path && op.pieceCid) {
         try {
@@ -1451,13 +1502,19 @@ export class DriveApp {
         dropOp(op.id);
       } catch (error) {
         if (!(error instanceof NotFoundError)) throw error;
-        const parent = parentPath(op.path);
-        if (parent !== "/") await volume.mkdir(parent);
-        const stat = await volume.put(op.path, new TextEncoder().encode(op.content), { mime: "application/json" });
+        const path = op.path;
+        const content = op.content;
+        const stat = await volume.tx(async (draft) => {
+          const parent = parentPath(path);
+          if (parent !== "/") await draft.mkdir(parent);
+          return draft.put(path, new TextEncoder().encode(content), { mime: "application/json" });
+        });
         this.rememberDone({ ...op, pieceCid: stat.pieceCid, stage: "saved" });
         dropOp(op.id);
+        edited = true;
       }
     }
+    if (edited && this.#draft) await this.rebuildDraft();
   }
 
   private async retryOp(id: string): Promise<void> {
@@ -1643,7 +1700,116 @@ export class DriveApp {
       walletRdns: this.walletRdns,
       panel: this.panel,
       setupError: this.setupError,
+      stagedCount: this.staged.length,
+      restoreNote: this.restoreNote,
+      autoSaveUploads: this.autoSaveUploads,
     };
+  }
+
+  private async editingVolume(): Promise<Volume> {
+    await this.ensureDraft();
+    const volume = this.viewVolume();
+    if (!volume) throw new Error("Open a volume first.");
+    return volume;
+  }
+
+  private async ensureDraft(): Promise<void> {
+    if (this.#draftReady || !this.volume) return;
+    this.#draftReady = true;
+    const saved = loadStaged(this.owner, this.volumeName);
+    this.staged = saved.ops;
+    if (!saved.ops.length) return;
+    this.#baseline = { origins: saved.origins, stars: saved.stars };
+    this.#draft = await forkVolume(this.volume);
+    await replayStaged(this.#draft, saved.ops);
+    if (this.#restoredFromDisk) {
+      this.restoreNote = restoreLabel(saved.ops.length);
+      this.#restoredFromDisk = false;
+    }
+  }
+
+  private async rebuildDraft(): Promise<void> {
+    if (!this.volume || !this.staged.length) {
+      this.#draft = null;
+      return;
+    }
+    this.#draft = await forkVolume(this.volume);
+    await replayStaged(this.#draft, this.staged);
+  }
+
+  private persistStaged(): void {
+    saveStaged(this.owner, this.volumeName, {
+      ops: this.staged,
+      origins: this.#baseline?.origins ?? this.origins,
+      stars: this.#baseline?.stars ?? [...this.stars],
+    });
+  }
+
+  private async stage(ops: StagedOp[], opts?: { autosave?: boolean }): Promise<void> {
+    if (!this.volume || !ops.length) return;
+    await this.ensureDraft();
+    if (!this.#baseline) this.#baseline = { origins: { ...this.origins }, stars: [...this.stars] };
+    if (!this.#draft) {
+      this.#draft = await forkVolume(this.volume);
+      if (this.staged.length) await replayStaged(this.#draft, this.staged);
+    }
+    await replayStaged(this.#draft, ops);
+    this.staged = [...this.staged, ...ops];
+    this.persistStaged();
+    if (opts?.autosave && this.autoSaveUploads) await this.saveStaged();
+    else await this.refresh();
+  }
+
+  private async saveStaged(): Promise<void> {
+    if (!this.volume || !this.staged.length) return;
+    const ops = this.staged.slice();
+    const label = saveLabel(ops.length);
+    const id = this.beginOp({ kind: "commit", label, stage: "saving" });
+    const ok = await this.run(async () => {
+      await this.volume!.tx(async (draft) => {
+        await replayStaged(draft, ops);
+      });
+      for (const op of ops) {
+        if (op.op !== "put") continue;
+        try {
+          const stat = await this.volume!.stat(op.path);
+          if (stat.pieceCid) {
+            rememberPiece({
+              pieceCid: stat.pieceCid,
+              name: baseName(op.path),
+              mime: op.mime,
+              size: stat.size,
+              uploaded: Date.now(),
+              path: op.path,
+            });
+          }
+        } catch (error) {
+          if (!(error instanceof NotFoundError)) throw error;
+        }
+      }
+      this.staged = [];
+      this.#draft = null;
+      this.#baseline = null;
+      this.restoreNote = "";
+      this.persistStaged();
+    });
+    if (ok) this.finishOp(id);
+    else this.failOp(id, "Couldn't save");
+  }
+
+  private async discardStaged(): Promise<void> {
+    if (this.#baseline) {
+      this.origins = { ...this.#baseline.origins };
+      this.stars = new Set(this.#baseline.stars);
+      this.writeOrigins();
+      this.writeStars();
+    }
+    this.staged = [];
+    this.#draft = null;
+    this.#baseline = null;
+    this.restoreNote = "";
+    this.persistStaged();
+    await this.refresh();
   }
 }
 

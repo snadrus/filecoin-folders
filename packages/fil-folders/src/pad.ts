@@ -96,6 +96,11 @@ export function withPiecePadding(inner: Storage): Storage & { inner: Storage } {
     async get(pieceCid) {
       return unpadPiece(await inner.get(pieceCid));
     },
+    async getRange(pieceCid, offset, length) {
+      const bytes = unpadPiece(await inner.get(pieceCid));
+      if (offset < 0 || length < 0 || offset + length > bytes.byteLength) throw new Error("piece range is outside the payload");
+      return bytes.subarray(offset, offset + length);
+    },
   };
 }
 

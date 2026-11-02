@@ -98,7 +98,9 @@ A manifest is JSON:
 }
 ```
 
-Directory entries are inlined until their canonical JSON exceeds `dirThreshold` (default 24 KiB). Past that, the directory is uploaded as its own manifest piece and the parent keeps `pieceCid` instead of `entries`. The root manifest is always its own piece. File `pieceCid` values point at content. `size` is the plaintext byte length.
+Each commit uploads one CARv1 piece. The root block is the volume manifest. New or changed file bytes are other blocks in that same CAR, and the registry head is the piece CID. A `located` map on the manifest records content CID to piece for bytes that still live in an older piece. Reads fetch that piece (a byte range when the store supports it, otherwise the whole piece), parse the CAR, and cache the blocks. A metadata-only commit is a manifest-only CAR, padded to at least 127 bytes. Heads that are still raw manifest JSON, with one piece per file, still open.
+
+Directory entries are inlined until their canonical JSON exceeds `dirThreshold` (default 24 KiB). Past that, the directory manifest is another block in the same CAR. File `pieceCid` values are content CIDs. `size` is the plaintext byte length.
 
 ```ts
 import { createSynapseStorage, createViemRegistry, openVolume } from "fil-folders";
