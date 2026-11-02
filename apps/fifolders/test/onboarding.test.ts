@@ -34,7 +34,8 @@ describe("onboarding choices", () => {
   it("selects the last-used dataset, otherwise the only one", () => {
     expect(chooseDataset([{ id: "a" }, { id: "b" }], "b")).toEqual({ selectedId: "b", auto: true });
     expect(chooseDataset([{ id: "a" }], null)).toEqual({ selectedId: "a", auto: true });
-    expect(chooseDataset([{ id: "a" }, { id: "b" }], null)).toEqual({ selectedId: null, auto: false });
+    expect(chooseDataset([{ id: "a" }, { id: "b" }], null)).toEqual({ selectedId: "b", auto: true });
+    expect(chooseDataset([{ id: "12" }, { id: "9" }, { id: "provider:3" }], null)).toEqual({ selectedId: "12", auto: true });
     expect(chooseDataset([], "a")).toEqual({ selectedId: null, auto: false });
   });
 

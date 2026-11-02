@@ -89,6 +89,9 @@ export interface ViewModel {
   activityPending: boolean;
   runway: Runway;
   loose: LooseRow[];
+  /** "N pieces: X in folders, Y manifests, Z loose" so the dataset count reconciles. */
+  looseSummary: string;
+  txlogOpen: boolean;
   badges: Record<string, string>;
   chain: "calibration" | "mainnet";
   mainnetBlocked: boolean;
@@ -149,7 +152,7 @@ export interface ViewModel {
 }
 
 export function renderApp(model: ViewModel): string {
-  if (!model.connected) return model.panel ? renderSetup(model) : renderConnect(model);
+  if (!model.connected) return model.panel ? renderSetupShell(model) : renderConnect(model);
   return `<div class="shell">
     ${renderTop(model)}
     ${renderNav(model)}
@@ -160,6 +163,7 @@ export function renderApp(model: ViewModel): string {
     </main>
     ${model.newMenu ? renderNewMenu() : ""}
     ${model.costsOpen ? renderCosts() : ""}
+    ${model.txlogOpen ? renderTxlog(model) : ""}
     ${model.accountMenu ? renderAccount(model) : ""}
     ${model.context ? renderContext(model.context) : ""}
     ${model.dialog ? renderDialog(model.dialog) : ""}
@@ -205,6 +209,28 @@ function walletPicker(model: ViewModel): string {
   </label>`;
 }
 
+/** Connected wallet, drive not open yet: the drive frame with setup as a pop-up only when it needs the user. */
+function renderSetupShell(model: ViewModel): string {
+  const panel = model.panel;
+  if (!panel) return "";
+  const picked = panel.datasets.find((dataset) => dataset.id === panel.selectedDatasetId);
+  const ready = Boolean(panel.selectedDatasetId && panel.paymentsReady && (panel.sessionReady || panel.legacyRegistry));
+  const needsUser = !ready || Boolean(model.setupError);
+  return `<div class="shell">
+    ${renderTop(model)}
+    ${renderNav(model)}
+    <main class="workspace">
+      ${renderSessionBanner(model)}
+      <div class="empty" data-testid="drive-pending">${picked ? `Opening ${escapeHtml(datasetLabel(picked))}…` : "Pick a dataset to open your drive."}</div>
+    </main>
+    ${needsUser ? `<div class="costs-backdrop setup-backdrop">${renderSetup(model)}</div>` : ""}
+    ${model.costsOpen ? renderCosts() : ""}
+    ${model.txlogOpen ? renderTxlog(model) : ""}
+    ${model.accountMenu ? renderAccount(model) : ""}
+    ${renderToasts(model.toasts)}
+  </div>`;
+}
+
 function renderSetup(model: ViewModel): string {
   const panel = model.panel;
   if (!panel) return "";
@@ -232,14 +258,15 @@ function renderSetup(model: ViewModel): string {
   const legacy = panel.legacyRegistry
     ? `<p class="note" data-testid="legacy-registry">This FolderRegistry has no session-key entry. Commits still ask the wallet until you deploy the new contract and set VITE_FOLDER_REGISTRY.</p>`
     : "";
-  return `<div class="connect">
-    <div class="connect-card setup-card" data-testid="setup">
+  const failed = Boolean(model.setupError);
+  return `<div class="costs-modal setup-modal" role="dialog" aria-modal="true">
+    <div class="setup-card" data-testid="setup">
       ${logoSvg(56)}
       <h1>FiFolders</h1>
       <p class="account-line" data-testid="setup-address">${escapeHtml(panel.address)}</p>
       <p class="balances" data-testid="balances"><span>${escapeHtml(panel.fil)} FIL</span><span>${escapeHtml(panel.usdfc)} USDFC</span></p>
       ${legacy}
-      ${renderChainSteps(model.chainSteps)}
+      ${failed ? renderChainSteps(model.chainSteps) : ""}
       ${renderSessionBanner(model)}
       ${payment}
       ${session}
@@ -281,8 +308,7 @@ function renderTop(model: ViewModel): string {
     ${model.activityPending ? `<span class="activity-dot" data-testid="activity-indicator" title="Saving"></span>` : ""}
     ${renderStaged(model)}
     <button class="account" data-action="account" data-testid="account" type="button">${identiconSvg(model.owner)}<span data-testid="account-label">${escapeHtml(label)}</span></button>
-    <span class="sr-only" data-testid="wallet-signatures">${model.panel?.signatures ?? 0}</span>
-    ${renderChainSteps(model.chainSteps)}
+    ${model.connected ? `<span class="sr-only" data-testid="wallet-signatures">${model.panel?.signatures ?? 0}</span>` : ""}
   </header>`;
 }
 
@@ -310,6 +336,11 @@ function renderChainSteps(steps: ChainStepView[]): string {
 
 function renderNav(model: ViewModel): string {
   const runway = model.runway;
+  const txlog = model.chainSteps.length
+    ? `<button type="button" class="place txlog-toggle ${model.txlogOpen ? "on" : ""}" data-action="toggle-txlog" data-testid="txlog-toggle">
+        <span class="material-symbols-outlined" aria-hidden="true">receipt_long</span> Transaction log (${model.chainSteps.length})
+      </button>`
+    : "";
   const activity = model.activity.length
     ? `<section class="activity" data-testid="activity">${model.activity
         .map(
@@ -332,6 +363,7 @@ function renderNav(model: ViewModel): string {
       ${navItem("loose", "inventory_2", "Loose pieces", model.nav)}
       ${navItem("trash", "delete", "Trash", model.nav)}
     </nav>
+    ${txlog}
     ${activity}
     <div class="storage storage-open ${runway.low ? "low" : ""}" data-testid="storage-runway" data-action="show-costs" role="button" tabindex="0" title="What it costs">
       <p class="runway-headline" data-testid="runway-headline">${runwayHtml(runway.headline, runway.datasetLabel)}</p>
@@ -411,6 +443,7 @@ function renderBrowser(model: ViewModel): string {
           </div>`
         : `<div class="grid">${rows}</div>`
     }
+    ${model.nav === "loose" && model.looseSummary && filled ? `<p class="note" data-testid="loose-summary">${escapeHtml(model.looseSummary)}</p>` : ""}
     ${empty}
   </section>`;
 }
@@ -467,7 +500,7 @@ function emptyCopy(model: ViewModel): string {
   if (model.nav === "trash") return "Trash is empty";
   if (model.nav === "starred") return "No starred items";
   if (model.nav === "recent") return "Nothing recent";
-  if (model.nav === "loose") return "No loose pieces";
+  if (model.nav === "loose") return model.looseSummary ? `No loose pieces (${model.looseSummary})` : "No loose pieces";
   return "This folder is empty";
 }
 
@@ -622,6 +655,13 @@ function renderAccount(model: ViewModel): string {
     </details>
     <button type="button" data-action="disconnect" data-testid="disconnect">Disconnect</button>
   </div>`;
+}
+
+function renderTxlog(model: ViewModel): string {
+  return `<section class="txlog" data-testid="txlog" aria-label="Transaction log">
+    <header>Transaction log<button type="button" class="close" data-action="toggle-txlog" aria-label="Close">×</button></header>
+    ${renderChainSteps(model.chainSteps) || `<p class="note">No transactions yet.</p>`}
+  </section>`;
 }
 
 function renderCosts(): string {

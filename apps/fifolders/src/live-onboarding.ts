@@ -82,7 +82,10 @@ interface StoredWallet {
  * Synapse uploads sign locally. The payment fix is one guided action:
  * permit + `depositWithPermitAndApproveOperator` (two signatures).
  */
+const FRESH_LOGIN_MS = 10 * 60 * 1000;
+
 export function createLiveOnboarding(): OnboardingIO {
+  const confirmedLogins = new Map<string, number>();
   let wallets: AnnouncedWallet[] = [];
   let provider: Eip1193Provider | null = null;
   let root: Address | null = null;
@@ -193,7 +196,8 @@ export function createLiveOnboarding(): OnboardingIO {
     try {
       const expiries = await onchainExpiries(choice, stored.sessionAddress);
       rememberSoonest(stored, expiries);
-      return sessionGateFromExpiries(expiries, now);
+      const gate = sessionGateFromExpiries(expiries, now);
+      return gate === "expired" && justAuthorized(stored, now) ? "ok" : gate;
     } catch {
       return sessionUsable(stored, now) ? "ok" : "expired";
     }
@@ -283,6 +287,8 @@ export function createLiveOnboarding(): OnboardingIO {
           const expiries = await onchainExpiries(input.chain, stored.sessionAddress);
           rememberSoonest(stored, expiries);
           gate = sessionGateFromExpiries(expiries, now);
+          // RPC nodes can lag the block that confirmed loginAndFund; trust our own fresh receipt.
+          if (gate === "expired" && justAuthorized(stored, now)) gate = "ok";
           if (expiries.length) soonest = expiries.reduce((min, value) => (value < min ? value : min));
         } catch {
           gate = sessionUsable(stored, now) ? "ok" : "expired";
@@ -351,6 +357,7 @@ export function createLiveOnboarding(): OnboardingIO {
         expiry: expiresAt.toString(),
       };
       saveSession(stored);
+      confirmedLogins.set(sessionKey.address.toLowerCase(), Date.now());
     },
     sessionGate(choice) {
       return gateFor(choice);
@@ -502,6 +509,12 @@ export function createLiveOnboarding(): OnboardingIO {
     },
   };
 
+  /** Session keys whose loginAndFund receipt succeeded in this tab, by address. */
+  function justAuthorized(stored: StoredSession, nowSec: bigint): boolean {
+    const at = confirmedLogins.get(stored.sessionAddress.toLowerCase());
+    return Boolean(at && Date.now() - at < FRESH_LOGIN_MS && sessionUsable(stored, nowSec));
+  }
+
   async function sessionFor(choice: ChainChoice, address: Address) {
     const chain = chainOf(choice);
     const stored = loadSession(chain.id, address);
@@ -520,12 +533,14 @@ export function createLiveOnboarding(): OnboardingIO {
         [folderCommitPermission()]: expiry,
       },
     });
+    const now = BigInt(Math.floor(Date.now() / 1000));
+    // Right after login the RPC may still read zero expiries; keep the stored ones instead.
+    if (justAuthorized(stored, now)) return sessionKey;
     try {
       await sessionKey.syncExpirations(fifoldersPermissions());
     } catch {
       // A failed read keeps the stored expirations. Synapse.create still rejects a dead key.
     }
-    const now = BigInt(Math.floor(Date.now() / 1000));
     const expiries = fifoldersPermissions().map((permission) => sessionKey.expirations[permission] ?? 0n);
     if (sessionGateFromExpiries(expiries, now) === "expired") throw new Error(SESSION_PERMISSION_ERROR);
     return sessionKey;

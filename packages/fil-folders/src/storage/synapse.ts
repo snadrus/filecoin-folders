@@ -150,6 +150,18 @@ export function createSynapseStorage(synapse: SynapseLike, options: SynapseStora
         throw error;
       }
     },
+    async list() {
+      if (options.dataSetId == null) return [];
+      const storage = synapse.storage as unknown as {
+        createContext?: (options: unknown) => Promise<{ getPieces?: () => AsyncIterable<{ pieceCid: { toString(): string } | string }> }>;
+      };
+      if (!storage.createContext) return [];
+      const context = await storage.createContext({ dataSetId: options.dataSetId, withCDN: false });
+      if (!context.getPieces) return [];
+      const cids: string[] = [];
+      for await (const piece of context.getPieces()) cids.push(pieceCidString(piece.pieceCid));
+      return cids;
+    },
     async get(pieceCid) {
       const bytes = await synapse.storage.download({ pieceCid });
       return bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);

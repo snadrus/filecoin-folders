@@ -270,7 +270,32 @@ export class DriveApp {
     if (this.root && !this.volume) this.render();
   }
 
+  /** Keep the clicked dataset through any re-render while the snapshot reloads (polls used to reset it). */
+  private pickDataset(id: string): void {
+    this.pickedDataset = id;
+    this.onPickDataset?.(id);
+    if (this.panel) this.panel = { ...this.panel, selectedDatasetId: id };
+    if (this.root) this.render();
+  }
+
+  /** Last dataset the user clicked; wins over a snapshot that was read before the click. */
+  pickedDataset = "";
+  /** Saves the pick as the preferred dataset right away, not after queued wallet work. */
+  onPickDataset?: (id: string) => void;
+
+  /** Boot or uncaught failure: keep the UI on screen and say what went wrong. */
+  showBootError(message: string): void {
+    if (this.volume) this.toast(message);
+    else if (this.panel) this.setupError = message;
+    else this.connectError = message;
+    if (this.root) this.render();
+  }
+
   showPanel(panel: WalletPanel, error = ""): void {
+    const picked = this.pickedDataset;
+    if (picked && picked !== panel.selectedDatasetId && panel.datasets.some((dataset) => dataset.id === picked)) {
+      panel = { ...panel, selectedDatasetId: picked };
+    }
     this.panel = panel;
     this.owner = panel.address;
     this.setupError = error;
@@ -288,6 +313,7 @@ export class DriveApp {
   }
 
   detachToConnect(): void {
+    this.pickedDataset = "";
     this.volume = null;
     this.panel = null;
     this.owner = "";
@@ -390,7 +416,7 @@ export class DriveApp {
       const tree = await this.walk("/");
       this.storageUsed = sumSizes(tree);
       if (this.nav === "loose") {
-        this.looseRows = this.collectLoose(tree);
+        this.looseRows = await this.collectLoose(tree);
         this.entries = [];
       } else {
         this.entries = await this.loadListing();
@@ -1033,6 +1059,11 @@ export class DriveApp {
       this.render();
       return;
     }
+    if (action === "toggle-txlog") {
+      this.txlogOpen = !this.txlogOpen;
+      this.render();
+      return;
+    }
     if (action === "show-costs") {
       this.accountMenu = false;
       this.newMenu = false;
@@ -1283,6 +1314,7 @@ export class DriveApp {
     const target = event.target as HTMLInputElement | HTMLSelectElement | null;
     if (!target) return;
     if (target instanceof HTMLInputElement && target.name === "dataset") {
+      this.pickDataset(target.value);
       void this.enqueue(async () => {
         try {
           await this.onSetupAction?.("select-dataset", target.value);
@@ -1295,6 +1327,7 @@ export class DriveApp {
     }
     if (target instanceof HTMLSelectElement && target.dataset.testid === "dataset-select") {
       const id = target.value;
+      this.pickDataset(id);
       void this.enqueue(async () => {
         try {
           await this.onSetupAction?.("select-dataset", id);
@@ -1744,16 +1777,40 @@ export class DriveApp {
     this.render();
   }
 
-  private collectLoose(tree: Stat[]): LoosePiece[] {
+  /**
+   * Live datasets have no in-memory piece map, so this used to return nothing on Synapse.
+   * List the dataset's piece CIDs, then read only the ones no folder entry points at.
+   */
+  private async collectLoose(tree: Stat[]): Promise<LoosePiece[]> {
     const referenced = new Set(tree.flatMap((entry) => (entry.pieceCid ? [entry.pieceCid] : [])));
-    const storage = this.volume?.storage as { inner?: { pieces?: Map<string, Uint8Array> } } | undefined;
-    const pieces = storage?.inner?.pieces;
-    if (!pieces) return loosePieces([], referenced);
-    return loosePieces(
-      [...pieces.entries()].map(([pieceCid, bytes]) => ({ pieceCid, bytes })),
-      referenced,
-    );
+    const storage = this.volume?.storage as
+      | { inner?: { pieces?: Map<string, Uint8Array>; list?: () => Promise<string[]>; get?: (cid: string) => Promise<Uint8Array> } }
+      | undefined;
+    const inner = storage?.inner;
+    let cids: string[] = [];
+    try {
+      cids = inner?.pieces ? [...inner.pieces.keys()] : inner?.list ? await inner.list() : [];
+    } catch (error) {
+      this.toast(`Could not list dataset pieces: ${errorText(error)}`);
+    }
+    const blobs: { pieceCid: string; bytes: Uint8Array }[] = [];
+    for (const pieceCid of cids) {
+      if (referenced.has(pieceCid) || !inner?.get) continue;
+      try {
+        blobs.push({ pieceCid, bytes: await inner.get(pieceCid) });
+      } catch {
+        // Unreachable piece: still list it so the count reconciles.
+        blobs.push({ pieceCid, bytes: new Uint8Array() });
+      }
+    }
+    const rows = loosePieces(blobs, referenced);
+    const inFolders = cids.filter((cid) => referenced.has(cid)).length;
+    this.looseSummary = `${cids.length} pieces: ${inFolders} in folders, ${blobs.length - rows.length} manifests, ${rows.length} loose`;
+    return rows;
   }
+
+  looseSummary = "";
+  txlogOpen = false;
 
   private openFel(stat: Pick<Stat, "name" | "path" | "pieceCid">): void {
     const kind = felKind(stat.name);
@@ -1860,6 +1917,8 @@ export class DriveApp {
       activity,
       activityPending: pending.some((op) => op.status === "pending") || this.busy,
       runway,
+      looseSummary: this.looseSummary,
+      txlogOpen: this.txlogOpen,
       loose: this.looseRows.map((piece) => ({
         pieceCid: piece.pieceCid,
         name: piece.name,

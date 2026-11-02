@@ -18,6 +18,10 @@ export class MemoryStorage implements Storage {
     return bytes;
   }
 
+  async list(): Promise<string[]> {
+    return [...this.pieces.keys()];
+  }
+
   async getRange(pieceCid: string, offset: number, length: number): Promise<Uint8Array> {
     const bytes = await this.get(pieceCid);
     if (offset < 0 || length < 0 || offset + length > bytes.byteLength) throw new Error("piece range is outside the payload");
