@@ -20,6 +20,9 @@ import {
 } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { discoverWallets, type AnnouncedWallet } from "./eip6963.js";
+import { REGISTRY_NOT_DEPLOYED, registryReady } from "./network.js";
+import { WALLETCONNECT_RDNS, connectWalletConnect, walletChoices, walletConnectConfig, type WalletConnectLike } from "./wallets.js";
+import { saveCheckpoint, type UploadCheckpoint } from "./copies.js";
 import type { ChainReporter, OnboardingIO } from "./onboarding-io.js";
 import {
   PAYMENT_DEPOSIT,
@@ -117,7 +120,7 @@ export function createLiveOnboarding(): OnboardingIO {
     const env = import.meta.env;
     if (choice === "mainnet") {
       const address = env.VITE_FOLDER_REGISTRY_MAINNET;
-      if (!address) throw new Error("Mainnet has no FolderRegistry yet. Use Calibration.");
+      if (!address) throw new Error(REGISTRY_NOT_DEPLOYED);
       const from = env.VITE_REGISTRY_FROM_BLOCK_MAINNET;
       if (!from) throw new Error("Set VITE_REGISTRY_FROM_BLOCK_MAINNET to the deployment block.");
       return { address: getAddress(address), fromBlock: BigInt(from) };
@@ -189,9 +192,22 @@ export function createLiveOnboarding(): OnboardingIO {
   return {
     async discover() {
       wallets = await discoverWallets();
-      return wallets.map((wallet) => ({ rdns: wallet.rdns, name: wallet.name }));
+      return walletChoices(wallets.map((wallet) => ({ rdns: wallet.rdns, name: wallet.name })));
     },
     async connect(input) {
+      if (!registryReady(input.chain)) throw new Error(REGISTRY_NOT_DEPLOYED);
+      if (input.rdns === WALLETCONNECT_RDNS) {
+        const connected = await connectWalletConnect({
+          network: input.chain,
+          origin: window.location.origin,
+          init: initWalletConnect,
+        });
+        provider = connected.provider as Eip1193Provider;
+        root = getAddress(connected.address);
+        await ensureChain(provider, input.chain);
+        rememberWallet(input.chain, WALLETCONNECT_RDNS);
+        return;
+      }
       await bindProvider(input.rdns);
       const ethereum = requireProvider();
       const accounts = (await ethereum.request({ method: "eth_requestAccounts" })) as string[];
@@ -375,14 +391,26 @@ export function createLiveOnboarding(): OnboardingIO {
         sessionKey: session,
       });
       const datasetId = selectedDataset || loadLastDataset(chain.id, address) || "";
-      const storage = createSynapseStorage(
-        synapse,
-        datasetId.startsWith("provider:")
-          ? { providerId: BigInt(datasetId.slice("provider:".length) || "0") }
-          : datasetId
-            ? { dataSetId: BigInt(datasetId) }
-            : {},
-      );
+      const storageOptions = datasetId.startsWith("provider:")
+        ? { providerId: BigInt(datasetId.slice("provider:".length) || "0") }
+        : datasetId
+          ? { dataSetId: BigInt(datasetId) }
+          : {};
+      const storage = createSynapseStorage(synapse, {
+        ...storageOptions,
+        copies: 2,
+        onReplication: (notice) => {
+          const checkpoint: UploadCheckpoint = {
+            phase: notice.phase,
+            expectedCopies: notice.expectedCopies,
+            providers: notice.providers,
+            checks: 0,
+            nextCheckAt: 0,
+            ...(notice.error ? { error: notice.error } : {}),
+          };
+          saveCheckpoint(`${address.toLowerCase()}:${input.volumeName}`, checkpoint);
+        },
+      });
       const registryWallet = legacy
         ? await walletClient(input.chain)
         : createWalletClient({
@@ -575,6 +603,11 @@ function savePending(choice: ChainChoice, root: Address, record: DatasetRecord):
   const list = loadPending(choice, root).filter((item) => item.id !== record.id);
   list.push(record);
   localStorage.setItem(pendingKey(choice, root), JSON.stringify(list));
+}
+
+async function initWalletConnect(config: ReturnType<typeof walletConnectConfig>): Promise<WalletConnectLike> {
+  const { EthereumProvider } = await import("@walletconnect/ethereum-provider");
+  return EthereumProvider.init(config) as Promise<WalletConnectLike>;
 }
 
 function readMeta(choice: ChainChoice, id: string): { created?: string; size?: string } | null {

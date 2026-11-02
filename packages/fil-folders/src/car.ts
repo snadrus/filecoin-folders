@@ -194,7 +194,7 @@ function concat(parts: Uint8Array[]): Uint8Array {
 class Reader {
   offset = 0;
 
-  constructor(private readonly bytes: Uint8Array) {}
+  constructor(readonly bytes: Uint8Array) {}
 
   get done(): boolean {
     return this.offset >= this.bytes.byteLength;
@@ -232,4 +232,122 @@ class Reader {
     if ((major & 0xe0) !== 0x60 || length >= 24) throw new Error("CAR text is invalid");
     return new TextDecoder().decode(this.take(length));
   }
+}
+
+/** A CAR that declares roots but does not contain them. */
+export class CarArchiveError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "CarArchiveError";
+  }
+}
+
+/**
+ * Read CARv1 roots and confirm each root block is present.
+ * Returns the original bytes' root CIDs. Does not re-encode the archive.
+ */
+export function readCarRoots(bytes: Uint8Array): string[] {
+  const reader = new Reader(bytes);
+  let headerLen: number;
+  try {
+    headerLen = reader.varint();
+  } catch {
+    throw new Error("not a CAR");
+  }
+  const header = reader.take(headerLen);
+  const decoded = decodeCbor(header);
+  if (!decoded || typeof decoded !== "object" || decoded instanceof Uint8Array || !("roots" in (decoded as object))) {
+    throw new Error("not a CAR");
+  }
+  const record = decoded as { roots?: unknown; version?: unknown };
+  if (record.version !== 1) throw new CarArchiveError("CAR header version is invalid");
+  if (!Array.isArray(record.roots) || record.roots.length === 0) {
+    throw new CarArchiveError("The CAR archive needs at least one root CID for Drive to track and retrieve it.");
+  }
+  const roots = record.roots.map((root) => {
+    if (!(root instanceof Uint8Array) || root.byteLength === 0) throw new CarArchiveError("CAR root CID is invalid");
+    return root;
+  });
+  const present = new Set<string>();
+  while (!reader.done) {
+    const len = reader.varint();
+    const start = reader.offset;
+    const cid = takeCid(reader);
+    const consumed = reader.offset - start;
+    const dataLen = len - consumed;
+    if (dataLen < 0) throw new CarArchiveError("CAR block is shorter than a CID");
+    reader.take(dataLen);
+    present.add(cidToString(cid));
+  }
+  return roots.map((root) => {
+    const cid = cidToString(root);
+    if (!present.has(cid)) throw new CarArchiveError(`The CAR archive is missing its root block: ${cid}`);
+    return cid;
+  });
+}
+
+function takeCid(reader: Reader): Uint8Array {
+  const start = reader.offset;
+  const marker = reader.bytes[reader.offset];
+  if (marker === 0x12 && reader.bytes[reader.offset + 1] === 0x20) return reader.take(34);
+  if (marker !== 0x01) throw new CarArchiveError("CAR block CID is invalid");
+  reader.byte();
+  reader.varint();
+  reader.varint();
+  const digestLen = reader.varint();
+  reader.take(digestLen);
+  return reader.bytes.subarray(start, reader.offset);
+}
+
+function decodeCbor(bytes: Uint8Array): unknown {
+  const reader = new Reader(bytes);
+  const value = readCbor(reader);
+  if (!reader.done) throw new Error("CAR header has trailing bytes");
+  return value;
+}
+
+function readCbor(reader: Reader): unknown {
+  const major = reader.byte();
+  const type = major >> 5;
+  const info = major & 0x1f;
+  if (type === 0) return readArg(reader, info);
+  if (type === 2) return reader.take(readArg(reader, info));
+  if (type === 3) return new TextDecoder().decode(reader.take(readArg(reader, info)));
+  if (type === 4) {
+    const count = readArg(reader, info);
+    const items: unknown[] = [];
+    for (let i = 0; i < count; i += 1) items.push(readCbor(reader));
+    return items;
+  }
+  if (type === 5) {
+    const count = readArg(reader, info);
+    const map: Record<string, unknown> = {};
+    for (let i = 0; i < count; i += 1) {
+      const key = readCbor(reader);
+      const value = readCbor(reader);
+      if (typeof key === "string") map[key] = value;
+    }
+    return map;
+  }
+  if (type === 6) {
+    const tag = readArg(reader, info);
+    const value = readCbor(reader);
+    if (tag === 42 && value instanceof Uint8Array) {
+      if (value[0] !== 0x00) throw new CarArchiveError("CAR root CID identity prefix is missing");
+      return value.subarray(1);
+    }
+    return value;
+  }
+  if (type === 7 && info === 20) return false;
+  if (type === 7 && info === 21) return true;
+  if (type === 7 && info === 22) return null;
+  throw new Error("CAR header is not a map");
+}
+
+function readArg(reader: Reader, info: number): number {
+  if (info < 24) return info;
+  if (info === 24) return reader.byte();
+  if (info === 25) return (reader.byte() << 8) | reader.byte();
+  if (info === 26) return reader.byte() * 2 ** 24 + (reader.byte() << 16) + (reader.byte() << 8) + reader.byte();
+  throw new Error("CAR header length is invalid");
 }

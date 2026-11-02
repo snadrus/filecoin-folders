@@ -8,6 +8,7 @@ import {
   type Registry,
   type Volume,
 } from "fil-folders";
+import { mainnetRegistryAddress } from "./network.js";
 import { restoreMemoryVolume } from "./volume-persist.js";
 import { createPublicClient, createWalletClient, custom, http, type Address, type Hex } from "viem";
 import { filecoinCalibration } from "viem/chains";
@@ -124,8 +125,8 @@ export async function connectInjected(options: {
   volumeName: string;
   encrypt: boolean;
 }): Promise<Session> {
-  if (options.chain === "mainnet") {
-    throw new Error("Mainnet has no FolderRegistry yet. Use Calibration.");
+  if (options.chain === "mainnet" && !mainnetRegistryAddress()) {
+    throw new Error("Registry not deployed");
   }
   const accounts = (await options.ethereum.request({ method: "eth_requestAccounts" })) as string[];
   const owner = accounts[0];

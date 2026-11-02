@@ -114,7 +114,24 @@ export interface ViewModel {
   accountMenu: boolean;
   context: ContextState | null;
   dialog: DialogState | null;
-  details: { stat: Stat; history: HistoryEntry[]; version: bigint; pieceCid: string } | null;
+  details: {
+    stat: Stat;
+    history: HistoryEntry[];
+    version: bigint;
+    pieceCid: string;
+    shareUrl?: string;
+    qr?: string;
+    copies: number;
+    providers: string[];
+    indexing?: string;
+    previewable: boolean;
+  } | null;
+  downloads: {
+    active: { id: string; name: string; stage: string } | null;
+    pending: { id: string; name: string }[];
+    error: string | null;
+    finished: string[];
+  };
   preview: PreviewState | null;
   uploads: UploadRow[];
   toasts: ToastRow[];
@@ -149,6 +166,7 @@ export function renderApp(model: ViewModel): string {
     ${model.preview ? renderPreview(model.preview) : ""}
     ${renderToasts(model.toasts)}
     ${renderUploads(model.uploads)}
+    ${renderDownloads(model)}
   </div>`;
 }
 
@@ -168,7 +186,7 @@ function renderConnect(model: ViewModel): string {
       ${walletPicker(model)}
       <label class="check"><input data-testid="encrypt" name="encrypt" type="checkbox" ${model.encrypt ? "checked" : ""}/> Encrypt this volume</label>
       <button class="primary" data-testid="connect-wallet" type="submit">Connect wallet</button>
-      <p class="note" data-testid="mainnet-note" ${model.chain === "mainnet" ? "" : "hidden"}>Mainnet has no FolderRegistry yet. Calibration is the network with a deployed registry.</p>
+      <p class="note" data-testid="mainnet-note" ${model.mainnetBlocked ? "" : "hidden"}>Registry not deployed</p>
       ${model.connectError ? `<p class="error" data-testid="connect-error">${escapeHtml(model.connectError)}</p>` : ""}
     </form>
   </div>`;
@@ -348,7 +366,7 @@ function renderBrowser(model: ViewModel): string {
   const filled = model.nav === "loose" ? model.loose.length : model.entries.length;
   const empty = filled ? "" : `<p class="empty" data-testid="empty">${escapeHtml(emptyCopy(model))}</p>`;
   const blocked = model.mainnetBlocked
-    ? `<p class="banner" data-testid="mainnet-banner">Mainnet has no FolderRegistry yet. Switch back to Calibration to keep working in this volume.</p>`
+    ? `<p class="banner" data-testid="mainnet-banner">Registry not deployed</p>`
     : "";
   const restored = model.restoreNote ? `<p class="restore-banner" data-testid="staged-restore">${escapeHtml(model.restoreNote)}</p>` : "";
   return `<section class="browser ${model.dragging ? "dragover" : ""}" data-testid="browser" data-view="${model.view}">
@@ -480,9 +498,40 @@ function renderDetails(details: ViewModel["details"] & object): string {
     </div>
     <label>Version</label>
     <p data-testid="volume-version">${details.version.toString()}</p>
+    ${details.stat.ipfs ? `<label>IPFS root</label><code data-testid="ipfs-cid">${escapeHtml(details.stat.ipfs)}</code>` : ""}
+    ${details.stat.importedCar ? `<p data-testid="imported-car">Imported CAR · stored unchanged</p>` : ""}
+    <label>Copies</label>
+    <p data-testid="copy-count">${details.copies}</p>
+    ${details.providers.length ? `<p data-testid="copy-providers">${escapeHtml(details.providers.join(", "))}</p>` : ""}
+    ${details.indexing ? `<label>Indexing</label><p data-testid="indexing-status">${escapeHtml(details.indexing)}</p>${details.stat.ipfs ? `<button type="button" data-testid="check-indexing" data-action="check-indexing" data-cid="${escapeHtml(details.stat.ipfs)}">Check indexing</button>` : ""}` : ""}
+    ${
+      details.shareUrl
+        ? `<label>${details.previewable && !details.stat.importedCar ? "Share" : "Piece link"}</label>
+      <a data-testid="share-link" href="${escapeHtml(details.shareUrl)}">${escapeHtml(details.shareUrl)}</a>
+      ${details.previewable && !details.stat.importedCar ? `<a data-testid="gateway-preview" href="${escapeHtml(details.shareUrl)}" target="_blank" rel="noreferrer">Gateway preview</a>` : ""}
+      <div class="qr" data-testid="share-qr">${details.qr ?? ""}</div>`
+        : ""
+    }
     <label>History</label>
     <ul class="history" data-testid="history">${rows}</ul>
   </aside>`;
+}
+
+function renderDownloads(model: ViewModel): string {
+  const queue = model.downloads;
+  if (!queue.active && !queue.pending.length && !queue.error && !queue.finished.length) return "";
+  const active = queue.active
+    ? `<p data-testid="download-active">${escapeHtml(queue.active.name)} · ${escapeHtml(queue.active.stage)}</p>`
+    : "";
+  const finished = queue.finished.map((name) => `<p data-testid="download-finished">${escapeHtml(name)}</p>`).join("");
+  const pending = queue.pending
+    .map(
+      (item) =>
+        `<li data-testid="download-queued">${escapeHtml(item.name)} <button type="button" data-testid="cancel-download" data-action="cancel-download" data-id="${encodeURIComponent(item.id)}">Cancel</button></li>`,
+    )
+    .join("");
+  const error = queue.error ? `<p class="error" data-testid="download-error">${escapeHtml(queue.error)}</p>` : "";
+  return `<section class="download-queue" data-testid="download-queue">${active}${finished}${error}<ul>${pending}</ul></section>`;
 }
 
 function renderDialog(dialog: DialogState): string {

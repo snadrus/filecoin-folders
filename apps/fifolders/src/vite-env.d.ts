@@ -8,6 +8,7 @@ interface ImportMetaEnv {
   readonly VITE_REGISTRY_FROM_BLOCK?: string;
   readonly VITE_FOLDER_REGISTRY_MAINNET?: string;
   readonly VITE_REGISTRY_FROM_BLOCK_MAINNET?: string;
+  readonly VITE_WALLETCONNECT_PROJECT_ID?: string;
 }
 
 interface Window {

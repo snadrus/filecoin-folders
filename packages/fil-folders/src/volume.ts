@@ -244,6 +244,28 @@ export class Volume {
     return out;
   }
 
+  /**
+   * Storage piece ids the live tree still needs: the registry head, each
+   * file's `located` piece, and a legacy per-file piece when it has no locator.
+   * A piece absent from this set is safe to schedule for removal.
+   */
+  async referencedPieces(): Promise<string[]> {
+    const head = await this.registry.head(this.owner, this.ns, this.key);
+    const ids = new Set<string>();
+    const headCid = bytesToPieceCid(head.pieceCid);
+    if (head.version > 0n && headCid) ids.add(headCid);
+    const walk = (node: Node): void => {
+      if (node.type === "dir") {
+        for (const child of node.entries) walk(child);
+        return;
+      }
+      if (node.located) ids.add(node.located);
+      else if (node.pieceCid) ids.add(node.pieceCid);
+    };
+    walk(await this.#read());
+    return [...ids];
+  }
+
   /** Apply several edits, then compare-and-swap the root once. */
   async tx<T>(fn: (volume: Volume) => Promise<T>): Promise<T> {
     if (this.#txDepth > 0) return fn(this);
@@ -324,12 +346,14 @@ export class Volume {
         enc: { alg: "A256GCM", iv: sealed.iv },
       };
       if (mime) file.mime = mime;
+      stampShare(file, opts);
       return file;
     }
     const pieceCid = await contentCid(plain);
     this.#blobs.set(pieceCid, plain);
     const file: Omit<FileNode, "type" | "name"> = { pieceCid, size: plain.byteLength, mtime };
     if (mime) file.mime = mime;
+    stampShare(file, opts);
     return file;
   }
 
@@ -506,6 +530,8 @@ export class Volume {
         if (ctx && this.#blockIndex.has(entry.pieceCid)) file.located = ctx.piece;
         else if (located?.[entry.pieceCid]) file.located = located[entry.pieceCid];
         if (entry.mime !== undefined) file.mime = entry.mime;
+        if (entry.ipfs !== undefined) file.ipfs = entry.ipfs;
+        if (entry.importedCar) file.importedCar = true;
         if (entry.enc?.iv) file.enc = { alg: "A256GCM", iv: entry.enc.iv };
         entries.push(file);
       } else if (entry.entries) {
@@ -583,9 +609,16 @@ function fileEntry(file: FileNode, sealed: { name: string; nameIv?: string }): M
     pieceCid: file.pieceCid,
   };
   if (file.mime !== undefined) entry.mime = file.mime;
+  if (file.ipfs !== undefined) entry.ipfs = file.ipfs;
+  if (file.importedCar) entry.importedCar = true;
   const enc = packEnc(file.enc?.iv, sealed.nameIv);
   if (enc) entry.enc = enc;
   return entry;
+}
+
+function stampShare(file: Omit<FileNode, "type" | "name">, opts: PutOptions | undefined): void {
+  if (opts?.ipfs) file.ipfs = opts.ipfs;
+  if (opts?.importedCar) file.importedCar = true;
 }
 
 function packEnc(iv: string | undefined, nameIv: string | undefined): ManifestEnc | undefined {
