@@ -14,7 +14,7 @@ pnpm --filter fifolders dev
 
 Connect is one button. FiFolders discovers EIP-6963 wallets and falls back to `window.ethereum`, switches or adds Calibration (or mainnet when that network is selected), and reconnects on reload with `eth_accounts` when the site is already permitted.
 
-A browser-local secp256k1 session key is authorized once with `SessionKeyRegistry.loginAndFund` (origin `fifolders`, one hour, 0.05 FIL for gas). The permission set is Synapse's default upload permissions plus `keccak256("fil-folders.commit")`. The key is stored in `localStorage` with its expiry. Refresh in the account menu replaces it. While it is valid, dataset creation, uploads, and `FolderRegistry.commitFor` are signed locally.
+A browser-local secp256k1 session key is authorized once with `SessionKeyRegistry.loginAndFund` (origin `fifolders`, seven days, 0.05 FIL for gas). The permission set is Synapse's default upload permissions plus `keccak256("fil-folders.commit")`. The key is stored in `localStorage` with its expiry. Refresh in the account menu replaces it. While it is valid, dataset creation, uploads, and `FolderRegistry.commitFor` are signed locally. The authorize and deposit buttons show each phase: waiting for the signature, the transaction hash on Filfox, confirming, then authorized.
 
 Storage payment is a separate row. If the USDFC deposit or the Warm Storage operator approval is missing, one button runs an ERC-2612 permit and `depositWithPermitAndApproveOperator` (5 USDFC).
 
@@ -46,9 +46,11 @@ Encryption is optional per volume. The choice is stored in the browser and appli
 
 Trash is the `/.trash` folder. Restore uses the original path remembered in localStorage.
 
-`.felarumi` and `.felanumio` files use their own icons and open in an app URL. Defaults are `https://felarumi.example` and `https://felanumio.example`. Override them in the account menu or with `VITE_FELARUMI_URL` and `VITE_FELANUMIO_URL`.
+`.felarumi` and `.felanumio` files use their own icons and open in a new tab. The default URLs are `./felarumi/` and `./felanumio/` on this same site, so the editor and FiFolders share `localStorage` and a `BroadcastChannel` named `fifolders-ops`. A developer can override those URLs from Advanced in the account menu, or with `VITE_FELARUMI_URL` and `VITE_FELANUMIO_URL`.
 
-New → Felarumi document writes a blank document and opens it. New → Felanumio spreadsheet does the same for a sheet. The bytes are JSON the editors load:
+New → Felarumi document opens a blank editor at `/Felarumi/<name>.felarumi` and leaves a Save pending row. New → Felanumio spreadsheet does the same under `/Felanumio`. Nothing is uploaded until the editor writes real content into the shared ops record. The row then shows Saving… and, once the piece is in the volume, Saved.
+
+The empty templates the editors start from are:
 
 ```json
 { "v": 1, "type": "doc", "title": "Notes", "content": [{ "type": "paragraph", "text": "" }] }
@@ -64,7 +66,9 @@ New → Felarumi document writes a blank document and opens it. New → Felanumi
 pnpm --filter fifolders build
 ```
 
-Serve `apps/fifolders/dist`. `base` is `./`. Pushes to `main` also publish that directory to GitHub Pages for `fidrive.scionbase.ai` (`.github/workflows/pages.yml`).
+Serve `apps/fifolders/dist`. `base` is `./`. Pushes to `main` publish that directory to GitHub Pages for `fidrive.scionbase.ai` (`.github/workflows/pages.yml`). The workflow also checks out `snadrus/collab-edit` at the `p2p` ref (`workflow_dispatch` input `collab_ref`, or `repository_dispatch` client payload `ref`), applies `scripts/collab-edit-p2p.patch` when that branch does not already contain it, and copies the static editors to `dist/felarumi/` and `dist/felanumio/`. This token cannot push that patch to `collab-edit`; the Pages build applies it locally.
+
+Small pieces are padded to at least 127 bytes before PDP upload and restored on read. The left bar shows the dataset total and how long the Filecoin Pay balance covers the current per-epoch rate. In-flight uploads, saves, deposits, and registry commits stay in `localStorage` under `fifolders:ops` so a refresh can show them again and drop them once the chain has the piece.
 
 ## Tests
 

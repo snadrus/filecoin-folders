@@ -1,3 +1,4 @@
+import type { ChainReport } from "./chain-step.js";
 import type { DriveApp } from "./drive-app.js";
 import { canEnter, type WalletPanel } from "./onboarding-logic.js";
 import type { OnboardingIO } from "./onboarding-io.js";
@@ -17,9 +18,24 @@ export async function prepareOnboarding(app: DriveApp, io: OnboardingIO): Promis
     const chain = app.chain;
     const volumeName = app.volumeName;
     const encrypt = app.encryptPref;
-    if (action === "authorize" || action === "refresh-session") await io.authorize(chain, action === "refresh-session");
-    else if (action === "fix-payments") await io.fixPayments(chain);
-    else if (action === "create-dataset") await io.createDataset({ chain, volumeName });
+    const report = (step: ChainReport) => app.noteChain(step);
+    if (action === "authorize" || action === "refresh-session") await io.authorize(chain, action === "refresh-session", report);
+    else if (action === "fix-payments") await io.fixPayments(chain, report, false);
+    else if (action === "add-funds") {
+      await io.fixPayments(chain, report, true);
+      app.showPanel(await io.snapshot({ chain, volumeName }));
+      return;
+    }
+    else if (action === "create-dataset") {
+      const op = app.beginOp({ kind: "dataset", label: "Create dataset", stage: "pending" });
+      try {
+        await io.createDataset({ chain, volumeName });
+        app.finishOp(op);
+      } catch (error) {
+        app.failOp(op, error instanceof Error ? error.message : "Dataset was not created.");
+        throw error;
+      }
+    }
     else if (action === "select-dataset" && value) {
       io.selectDataset(value, chain);
       const picked = await io.snapshot({ chain, volumeName });
@@ -31,6 +47,10 @@ export async function prepareOnboarding(app: DriveApp, io: OnboardingIO): Promis
       return;
     }
     const panel = await io.snapshot({ chain, volumeName });
+    if (app.volume) {
+      app.showPanel(panel);
+      return;
+    }
     if (canEnter(panel) && action !== "select-dataset") await openDrive(app, io, { chain, volumeName, encrypt });
     else app.showPanel(panel);
   };
@@ -64,7 +84,7 @@ async function continueOnboarding(
   let panel = await io.snapshot(input);
   if (autoAuthorize && !panel.sessionReady && !panel.legacyRegistry) {
     try {
-      await io.authorize(input.chain);
+      await io.authorize(input.chain, false, (step) => app.noteChain(step));
       panel = await io.snapshot(input);
     } catch (error) {
       app.showPanel(panel, error instanceof Error ? error.message : "The session key was not authorized.");

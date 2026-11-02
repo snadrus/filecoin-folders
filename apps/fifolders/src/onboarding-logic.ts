@@ -16,7 +16,8 @@ import type { Address, Hex } from "viem";
  * by piece CID, so pieces the provider still serves remain readable.
  */
 export const SESSION_ORIGIN = "fifolders";
-export const SESSION_TTL_SEC = 60 * 60;
+/** Seven days. The session key is refreshed from the account menu. */
+export const SESSION_TTL_SEC = 7 * 24 * 60 * 60;
 /** Native FIL sent to the session key so later commits pay their own gas. */
 export const SESSION_FUND_WEI = 50_000_000_000_000_000n;
 /** USDFC deposited when storage payment is not ready. 18 decimals. */
@@ -61,6 +62,13 @@ export interface WalletPanel {
   address: string;
   fil: string;
   usdfc: string;
+  /** Payments-contract deposit, formatted. */
+  deposit: string;
+  /** Raw atto-USDFC available in Filecoin Pay. Empty before the wallet is connected. */
+  availableFunds: string;
+  /** Raw atto-USDFC per epoch across the wallet's rails. */
+  lockupRate: string;
+  ens?: string;
   paymentsReady: boolean;
   sessionReady: boolean;
   sessionExpiry: string;
