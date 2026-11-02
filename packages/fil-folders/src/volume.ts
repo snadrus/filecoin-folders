@@ -66,7 +66,10 @@ export interface OpenVolumeOptions {
  * Calls outside {@link Volume.tx} rebase on the latest head and commit immediately.
  * `tx` keeps one draft and commits it once.
  * Each commit uploads one CARv1 piece: the new manifest plus any new or changed
- * file bytes. Unchanged files stay in the piece that already holds them.
+ * file bytes. Creating a parent directory and a file in one `tx` is still one
+ * piece; the manifest entry and the file bytes are both in it. A commit with
+ * no new file bytes is manifest-only. Unchanged files stay in the piece that
+ * already holds them.
  * The registry head is that piece. Older heads that are raw manifest JSON,
  * and files that are their own pieces, still load.
  */

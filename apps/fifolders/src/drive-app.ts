@@ -1496,23 +1496,27 @@ export class DriveApp {
         }
       }
       if (op.kind !== "fel-save" || !op.path || !op.content || isBlankFelContent(op.content)) continue;
+      const path = op.path;
+      const next = new TextEncoder().encode(op.content);
       try {
-        await volume.stat(op.path);
-        this.rememberDone(op);
-        dropOp(op.id);
+        const current = await volume.get(path);
+        if (sameBytes(current, next)) {
+          this.rememberDone(op);
+          dropOp(op.id);
+          continue;
+        }
       } catch (error) {
         if (!(error instanceof NotFoundError)) throw error;
-        const path = op.path;
-        const content = op.content;
-        const stat = await volume.tx(async (draft) => {
-          const parent = parentPath(path);
-          if (parent !== "/") await draft.mkdir(parent);
-          return draft.put(path, new TextEncoder().encode(content), { mime: "application/json" });
-        });
-        this.rememberDone({ ...op, pieceCid: stat.pieceCid, stage: "saved" });
-        dropOp(op.id);
-        edited = true;
       }
+      // Parent folder and file entry commit with the document bytes, one piece.
+      const stat = await volume.tx(async (draft) => {
+        const parent = parentPath(path);
+        if (parent !== "/") await draft.mkdir(parent);
+        return draft.put(path, next, { mime: "application/json" });
+      });
+      this.rememberDone({ ...op, pieceCid: stat.pieceCid, stage: "saved" });
+      dropOp(op.id);
+      edited = true;
     }
     if (edited && this.#draft) await this.rebuildDraft();
   }
@@ -1811,6 +1815,12 @@ export class DriveApp {
     this.persistStaged();
     await this.refresh();
   }
+}
+
+function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.byteLength !== b.byteLength) return false;
+  for (let i = 0; i < a.byteLength; i += 1) if (a[i] !== b[i]) return false;
+  return true;
 }
 
 function remap(path: string, from: string, to: string): string {
