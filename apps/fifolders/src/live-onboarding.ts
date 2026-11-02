@@ -20,7 +20,7 @@ import {
 } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { discoverWallets, type AnnouncedWallet } from "./eip6963.js";
-import type { OnboardingIO } from "./onboarding-io.js";
+import type { ChainReporter, OnboardingIO } from "./onboarding-io.js";
 import {
   PAYMENT_DEPOSIT,
   SESSION_FUND_WEI,
@@ -252,6 +252,9 @@ export function createLiveOnboarding(): OnboardingIO {
         address,
         fil: formatToken(fil),
         usdfc: formatToken(usdfc),
+        deposit: formatToken(pay.deposited),
+        availableFunds: pay.availableFunds.toString(),
+        lockupRate: pay.lockupRate.toString(),
         paymentsReady: paymentsReady(pay.deposited, pay.approved),
         sessionReady,
         sessionExpiry: sessionReady && stored ? formatExpiry(BigInt(stored.expiry)) : "",
@@ -263,7 +266,7 @@ export function createLiveOnboarding(): OnboardingIO {
         connectPrompts,
       };
     },
-    async authorize(choice, force = false) {
+    async authorize(choice, force = false, report?: ChainReporter) {
       const address = requireRoot();
       const chain = chainOf(choice);
       const now = BigInt(Math.floor(Date.now() / 1000));
@@ -282,6 +285,7 @@ export function createLiveOnboarding(): OnboardingIO {
       const expiresAt = now + BigInt(SESSION_TTL_SEC);
       const permissions = fifoldersPermissions();
       const client = await walletClient(choice);
+      report?.({ flow: "session", phase: "signing" });
       const hash = await client.writeContract({
         address: chain.contracts.sessionKeyRegistry.address,
         abi: chain.contracts.sessionKeyRegistry.abi,
@@ -292,9 +296,9 @@ export function createLiveOnboarding(): OnboardingIO {
         chain,
       });
       signatures += SIGNATURES.sessionLogin;
-      const reader = publicClient(choice);
-      const receipt = await reader.waitForTransactionReceipt({ hash });
+      const receipt = await watchReceipt(choice, hash, "session", report);
       if (receipt.status !== "success") throw new Error("Session key login failed.");
+      report?.({ flow: "session", phase: "done", hash });
       await sessionKey.syncExpirations(permissions);
       const stored: StoredSession = {
         v: 1,
@@ -306,7 +310,7 @@ export function createLiveOnboarding(): OnboardingIO {
       };
       saveSession(stored);
     },
-    async fixPayments(choice) {
+    async fixPayments(choice, report?: ChainReporter, force = false) {
       const address = requireRoot();
       const { Synapse } = await import("@filoz/synapse-sdk");
       const synapse = new Synapse({
@@ -314,9 +318,12 @@ export function createLiveOnboarding(): OnboardingIO {
         source: "fifolders",
       });
       const before = await readPayments(choice, address);
-      if (paymentsReady(before.deposited, before.approved)) return;
-      await synapse.payments.depositWithPermitAndApproveOperator({ amount: PAYMENT_DEPOSIT });
-      signatures += SIGNATURES.paymentFix;
+      if (!force && paymentsReady(before.deposited, before.approved)) return;
+      report?.({ flow: "payment", phase: "signing" });
+      const hash = await synapse.payments.depositWithPermitAndApproveOperator({ amount: PAYMENT_DEPOSIT });
+      if (!paymentsReady(before.deposited, before.approved)) signatures += SIGNATURES.paymentFix;
+      await watchReceipt(choice, hash, "payment", report);
+      report?.({ flow: "payment", phase: "done", hash });
     },
     async createDataset(input) {
       const address = requireRoot();
@@ -461,7 +468,37 @@ export function createLiveOnboarding(): OnboardingIO {
     return sessionKey;
   }
 
-  async function readPayments(choice: ChainChoice, address: Address): Promise<{ deposited: bigint; approved: boolean }> {
+  async function watchReceipt(choice: ChainChoice, hash: Hex, flow: "session" | "payment", report?: ChainReporter) {
+    report?.({ flow, phase: "submitted", hash });
+    const reader = publicClient(choice);
+    const started = Date.now();
+    const startBlock = await reader.getBlockNumber().catch(() => 0n);
+    report?.({ flow, phase: "confirming", hash, blocks: 0, elapsedSec: 0 });
+    const timer = setInterval(() => {
+      void reader
+        .getBlockNumber()
+        .then((block) => {
+          report?.({
+            flow,
+            phase: "confirming",
+            hash,
+            blocks: Number(block > startBlock ? block - startBlock : 0n),
+            elapsedSec: Math.max(0, Math.round((Date.now() - started) / 1000)),
+          });
+        })
+        .catch(() => undefined);
+    }, 2000);
+    try {
+      return await reader.waitForTransactionReceipt({ hash });
+    } finally {
+      clearInterval(timer);
+    }
+  }
+
+  async function readPayments(
+    choice: ChainChoice,
+    address: Address,
+  ): Promise<{ deposited: bigint; approved: boolean; availableFunds: bigint; lockupRate: bigint }> {
     const { Synapse } = await import("@filoz/synapse-sdk");
     const synapse = new Synapse({
       client: createWalletClient({
@@ -471,12 +508,13 @@ export function createLiveOnboarding(): OnboardingIO {
       }) as never,
       source: "fifolders",
     });
-    const info = await synapse.payments.accountInfo();
+    const info = (await synapse.payments.accountInfo()) as { funds?: bigint; availableFunds?: bigint; lockupRate?: bigint };
     const approval = await synapse.payments.serviceApproval();
     const approved =
       (typeof approval === "object" && approval !== null && "isApproved" in approval && Boolean(approval.isApproved)) ||
       (Array.isArray(approval) && Boolean(approval[0]));
-    return { deposited: info.availableFunds ?? info.funds ?? 0n, approved };
+    const availableFunds = info.availableFunds ?? info.funds ?? 0n;
+    return { deposited: availableFunds, approved, availableFunds, lockupRate: info.lockupRate ?? 0n };
   }
 }
 

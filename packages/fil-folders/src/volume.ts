@@ -7,6 +7,7 @@ import { FIL_FOLDERS_NAMESPACE, namespaceId, volumeKey } from "./ids.js";
 import { mergeTrees } from "./merge.js";
 import { normalizePath } from "./paths.js";
 import type { Registry } from "./registry/types.js";
+import { withPiecePadding } from "./pad.js";
 import { createSynapseStorage } from "./storage/synapse.js";
 import type { Storage } from "./storage/types.js";
 import {
@@ -69,8 +70,9 @@ export async function openVolume(options: OpenVolumeOptions): Promise<Volume> {
   if (!options.registry) throw new Error("openVolume requires registry");
   if (!options.owner || !isAddress(options.owner)) throw new Error("openVolume requires an owner address");
   if (typeof options.name !== "string" || options.name.length === 0) throw new Error("openVolume requires a volume name");
-  const storage = options.storage ?? (options.synapse ? createSynapseStorage(options.synapse) : undefined);
-  if (!storage) throw new Error("openVolume requires storage or synapse");
+  const raw = options.storage ?? (options.synapse ? createSynapseStorage(options.synapse) : undefined);
+  if (!raw) throw new Error("openVolume requires storage or synapse");
+  const storage = withPiecePadding(raw);
   const volume = new Volume(options, storage);
   await volume.init();
   return volume;

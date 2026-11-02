@@ -1,0 +1,251 @@
+diff --git a/apps/felanumio/src/client.ts b/apps/felanumio/src/client.ts
+index f24496a..270c1a8 100644
+--- a/apps/felanumio/src/client.ts
++++ b/apps/felanumio/src/client.ts
+@@ -1,3 +1,4 @@
++import { hostBase, routePath, withKeptQuery } from "../../../p2p/src/host-base.ts";
+ import { caretColor, selectionColor } from "../../../packages/core/src/presence.ts";
+ import { hexAlpha } from "../../../packages/core/src/palette.ts";
+ import { a1ToIndex, canonicalNumber, displayValue, evaluate, indexToCol, shiftFormula, type GridRead } from "./formula.ts";
+@@ -25,13 +26,19 @@ interface Remote {
+ function bookUrl(id: string): string {
+   let hash = "";
+   try {
+-    const here = location.pathname === "/sheets/b/" + id || location.pathname.startsWith("/sheets/b/" + id + "/");
++    const path = routePath();
++    const here =
++      path === "/sheets/b/" + id ||
++      path.startsWith("/sheets/b/" + id + "/") ||
++      path === "/b/" + id ||
++      path.startsWith("/b/" + id + "/");
+     hash = (here ? location.hash.replace(/^#/, "") : "") || localStorage.getItem("felarumi-secret:book:" + id) || "";
+   } catch {
+     hash = "";
+   }
+-  const wire = new URLSearchParams(location.search).get("wire");
+-  return "/sheets/b/" + id + (wire ? "?wire=" + encodeURIComponent(wire) : "") + (hash ? "#" + hash : "");
++  const base = hostBase();
++  const prefix = base.endsWith("/felanumio") ? base : base + "/sheets";
++  return withKeptQuery(prefix + "/b/" + id, hash);
+ }
+ 
+ const sid = sessionStorage.getItem("felanumio-sid") || crypto.randomUUID().replace(/-/g, "").slice(0, 16);
+@@ -39,8 +46,9 @@ sessionStorage.setItem("felanumio-sid", sid);
+ const displayName = () => sessionStorage.getItem("felarumi-name") || "Guest";
+ 
+ function boot(): void {
+-  const bookPath = location.pathname.match(/^\/sheets\/b\/([A-Za-z0-9_-]+)/);
+-  const tokenPath = location.pathname.match(/^\/sheets\/([vce])\/([A-Za-z0-9_-]+)/);
++  const path = routePath();
++  const bookPath = path.match(/^\/(?:sheets\/)?b\/([A-Za-z0-9_-]+)/);
++  const tokenPath = path.match(/^\/(?:sheets\/)?([vce])\/([A-Za-z0-9_-]+)/);
+   if (tokenPath) {
+     void fetch("/api/books/open/" + tokenPath[2])
+       .then((res) => res.json())
+diff --git a/p2p/serve.ts b/p2p/serve.ts
+index d556940..d0f082e 100644
+--- a/p2p/serve.ts
++++ b/p2p/serve.ts
+@@ -92,6 +92,11 @@ if (process.env.SKIP_BUILD === "1" && fs.existsSync(path.join(DIST, "index.html"
+   await buildStatic();
+ }
+ 
++if (process.env.BUILD_ONLY === "1") {
++  console.log(`static build written to ${DIST}`);
++  process.exit(0);
++}
++
+ const rooms = new Map<string, Map<string, import("ws").WebSocket>>();
+ const wss = new WebSocketServer({ noServer: true });
+ const server = createServer((req, res) => {
+diff --git a/p2p/src/boot.ts b/p2p/src/boot.ts
+index 9a002a4..fe18d3a 100644
+--- a/p2p/src/boot.ts
++++ b/p2p/src/boot.ts
+@@ -785,11 +785,100 @@ function installApi(): void {
+   };
+ }
+ 
++function installFifoldersBridge(): void {
++  const params = new URLSearchParams(location.search);
++  if (params.get("fifolders") !== "1") return;
++  let initial = "";
++  const paint = () => {
++    const status = document.querySelector("#status");
++    if (!status) return;
++    let stage = "pending";
++    try {
++      const raw = localStorage.getItem("fifolders:ops");
++      const file = raw ? (JSON.parse(raw) as { ops?: { path?: string; stage?: string; kind?: string }[] }) : {};
++      const op = (file.ops ?? []).find((item) => item.kind === "fel-save" && item.path === (params.get("path") || ""));
++      if (op?.stage) stage = op.stage;
++    } catch {
++      stage = "pending";
++    }
++    status.textContent = stage === "saving" ? "Saving" : stage === "saved" || stage === "done" ? "Saved to Filecoin" : "Save pending";
++  };
++  const publish = () => {
++    const raw = docSession ? docSession.exportJson() : bookSession ? bookSession.exportJson() : "";
++    if (!raw) return;
++    if (!initial) {
++      initial = raw;
++      return;
++    }
++    if (raw === initial) return;
++    const path = params.get("path") || "";
++    const name = params.get("name") || "";
++    const now = Date.now();
++    let ops: { id?: string }[] = [];
++    try {
++      const parsed = JSON.parse(localStorage.getItem("fifolders:ops") || "{}") as { ops?: { id?: string }[] };
++      ops = Array.isArray(parsed.ops) ? parsed.ops : [];
++    } catch {
++      ops = [];
++    }
++    const id = "fel:" + path;
++    const next = {
++      id,
++      v: 1,
++      kind: "fel-save",
++      label: name || path || "Save",
++      status: "pending",
++      stage: "saving",
++      path,
++      name,
++      content: raw,
++      volume: params.get("volume") || "",
++      owner: params.get("owner") || "",
++      pieceCid: params.get("pieceCid") || undefined,
++      created: now,
++      updated: now,
++    };
++    localStorage.setItem("fifolders:ops", JSON.stringify({ v: 1, ops: [...ops.filter((op) => op.id !== id), next] }));
++    try {
++      const channel = new BroadcastChannel("fifolders-ops");
++      channel.postMessage({ v: 1 });
++      channel.close();
++    } catch {
++      // The storage write is enough for the FiFolders tab.
++    }
++    paint();
++  };
++  const tick = () => {
++    const title = document.querySelector("#title") as HTMLInputElement | null;
++    const name = (params.get("name") || "").replace(/\.(felarumi|felanumio)$/i, "");
++    if (title && name && !title.dataset.fifolders) {
++      title.dataset.fifolders = "1";
++      title.value = name;
++      title.dispatchEvent(new Event("input", { bubbles: true }));
++      title.dispatchEvent(new Event("change", { bubbles: true }));
++    }
++    const home = document.querySelector("#home") as HTMLElement | null;
++    const blank = document.querySelector("#blank") as HTMLButtonElement | null;
++    if (home && !home.hidden && blank && !blank.dataset.fifolders) {
++      blank.dataset.fifolders = "1";
++      blank.click();
++    }
++    paint();
++    publish();
++  };
++  window.setInterval(tick, 1000);
++  window.setTimeout(tick, 50);
++  window.addEventListener("storage", (event) => {
++    if (event.key === "fifolders:ops") paint();
++  });
++}
++
+ if ((window as unknown as { __FELARUMI_P2P__?: boolean }).__FELARUMI_P2P__) {
+   window.WebSocket = shimWebSocket as unknown as typeof WebSocket;
+   installFetch();
+   installApi();
+   installUi();
++  installFifoldersBridge();
+ }
+ 
+ export {};
+diff --git a/p2p/src/host-base.ts b/p2p/src/host-base.ts
+new file mode 100644
+index 0000000..c5d4a6c
+--- /dev/null
++++ b/p2p/src/host-base.ts
+@@ -0,0 +1,26 @@
++/** Prefix used when Felarumi and Felanumio are hosted under FiFolders Pages. */
++export function hostBase(): string {
++  const path = location.pathname;
++  if (path === "/felarumi" || path.startsWith("/felarumi/")) return "/felarumi";
++  if (path === "/felanumio" || path.startsWith("/felanumio/")) return "/felanumio";
++  return "";
++}
++
++/** App route, after a Pages 404 redirect (`?spa=`) or the /felarumi and /felanumio prefix. */
++export function routePath(): string {
++  const spa = new URLSearchParams(location.search).get("spa");
++  if (spa) return spa.startsWith("/") ? spa : `/${spa}`;
++  const base = hostBase();
++  let path = location.pathname;
++  if (base && (path === base || path.startsWith(`${base}/`))) path = path.slice(base.length) || "/";
++  if (!path.startsWith("/")) path = `/${path}`;
++  return path || "/";
++}
++
++/** Keep FiFolders query params (and wire) when the editor moves to a document or book. */
++export function withKeptQuery(path: string, hash: string): string {
++  const params = new URLSearchParams(location.search);
++  params.delete("spa");
++  const query = params.toString();
++  return path + (query ? `?${query}` : "") + (hash ? `#${hash}` : "");
++}
+diff --git a/src/client/main.ts b/src/client/main.ts
+index 4d4de9b..5de74b7 100644
+--- a/src/client/main.ts
++++ b/src/client/main.ts
+@@ -1,3 +1,4 @@
++import { hostBase, routePath, withKeptQuery } from "../../p2p/src/host-base.ts";
+ import type { Command } from "../shared/commands.ts";
+ import type { Role } from "../shared/access.ts";
+ import type { Heading } from "../shared/doc.ts";
+@@ -85,7 +86,7 @@ function displayName(): string {
+ }
+ 
+ function docIdFromPath(): string | null {
+-  const m = location.pathname.match(/^\/d\/([^/]+)\/?$/);
++  const m = routePath().match(/^\/d\/([^/]+)\/?$/);
+   return m ? decodeURIComponent(m[1]) : null;
+ }
+ 
+@@ -193,15 +194,14 @@ function p2pSecret(kind: "doc" | "book", id: string): string {
+ }
+ 
+ function withWire(path: string, hash: string): string {
+-  const wire = new URLSearchParams(location.search).get("wire");
+-  const query = wire ? "?wire=" + encodeURIComponent(wire) : "";
+-  return path + query + (hash ? "#" + hash : "");
++  return withKeptQuery(path, hash);
+ }
+ 
+ function docUrl(id: string): string {
+-  const here = location.pathname === "/d/" + id || location.pathname === "/d/" + id + "/";
++  const path = routePath();
++  const here = path === "/d/" + id || path === "/d/" + id + "/";
+   const hash = (here ? location.hash.replace(/^#/, "") : "") || p2pSecret("doc", id);
+-  return withWire("/d/" + id, hash);
++  return withWire(hostBase() + "/d/" + id, hash);
+ }
+ 
+ async function mountHome(): Promise<void> {
+@@ -2310,12 +2310,13 @@ function bindMenus(editor: Editor, actions: Record<string, () => void>): void {
+ }
+ 
+ function boot(): void {
+-  const doc = location.pathname.match(/^\/d\/([^/]+)\/?$/);
++  const path = routePath();
++  const doc = path.match(/^\/d\/([^/]+)\/?$/);
+   if (doc) {
+     mountEditor(decodeURIComponent(doc[1]), new URLSearchParams(location.search).get("s") || "");
+     return;
+   }
+-  const linked = location.pathname.match(/^\/([vce])\/([^/]+)\/?$/);
++  const linked = path.match(/^\/([vce])\/([^/]+)\/?$/);
+   if (linked) {
+     void fetch("/api/open/" + encodeURIComponent(linked[2]))
+       .then((res) => (res.ok ? res.json() : null))

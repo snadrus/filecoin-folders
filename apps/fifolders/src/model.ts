@@ -1,6 +1,6 @@
 import type { Stat } from "fil-folders";
 
-export type NavId = "drive" | "recent" | "starred" | "trash";
+export type NavId = "drive" | "recent" | "starred" | "trash" | "loose";
 export type ViewMode = "list" | "grid";
 export type SortKey = "name" | "owner" | "mtime" | "size";
 export type FelKind = "felarumi" | "felanumio";
@@ -106,6 +106,7 @@ export function copyName(name: string): string {
 export function breadcrumbs(nav: NavId, cwd: string): { label: string; path: string }[] {
   if (nav === "recent") return [{ label: "Recent", path: "" }];
   if (nav === "starred") return [{ label: "Starred", path: "" }];
+  if (nav === "loose") return [{ label: "Loose pieces", path: "" }];
   if (nav === "trash") {
     const crumbs = [{ label: "Trash", path: TRASH_PATH }];
     if (cwd === TRASH_PATH || !cwd.startsWith(`${TRASH_PATH}/`)) return crumbs;
@@ -213,11 +214,30 @@ export function materialIcon(entry: Pick<Stat, "type" | "name" | "mime">): strin
   return "draft";
 }
 
-export function appLink(kind: FelKind, pieceCid: string, name: string, bases: Record<FelKind, string>): string {
-  const raw = bases[kind].trim().replace(/\/$/, "");
-  const url = new URL(raw.includes("://") ? raw : `https://${raw}`);
-  url.searchParams.set("pieceCid", pieceCid);
+export interface AppLinkExtra {
+  path?: string;
+  volume?: string;
+  owner?: string;
+  /** Base URL used to resolve a relative editor path such as `./felarumi/`. */
+  href?: string;
+}
+
+export function appLink(
+  kind: FelKind,
+  pieceCid: string,
+  name: string,
+  bases: Record<FelKind, string>,
+  extra: AppLinkExtra = {},
+): string {
+  const raw = bases[kind].trim();
+  const href = extra.href || (typeof location !== "undefined" ? location.href : "https://fidrive.scionbase.ai/");
+  const url = new URL(raw, href);
+  url.searchParams.set("fifolders", "1");
   url.searchParams.set("name", name);
+  if (pieceCid) url.searchParams.set("pieceCid", pieceCid);
+  if (extra.path) url.searchParams.set("path", extra.path);
+  if (extra.volume) url.searchParams.set("volume", extra.volume);
+  if (extra.owner) url.searchParams.set("owner", extra.owner);
   return url.toString();
 }
 

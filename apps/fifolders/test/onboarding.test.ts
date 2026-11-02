@@ -75,6 +75,8 @@ describe("mocked wallet and SessionKeyRegistry", () => {
     app.mount(root);
     await app.settled;
 
+    root.querySelector<HTMLButtonElement>("[data-testid=costs-continue]")?.click();
+    await settle(app);
     root.querySelector("form")?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
     await settle(app);
     expect(root.querySelector("[data-testid=setup]")).toBeTruthy();

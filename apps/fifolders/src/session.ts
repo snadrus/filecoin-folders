@@ -8,6 +8,7 @@ import {
   type Registry,
   type Volume,
 } from "fil-folders";
+import { restoreMemoryVolume } from "./volume-persist.js";
 import { createPublicClient, createWalletClient, custom, http, type Address, type Hex } from "viem";
 import { filecoinCalibration } from "viem/chains";
 
@@ -17,8 +18,8 @@ export const CALIBRATION_RPC = "https://api.calibration.node.glif.io/rpc/v1";
 export const MAINNET_RPC = "https://api.node.glif.io/rpc/v1";
 export const E2E_OWNER = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266" as Address;
 export const DEFAULT_VOLUME = "My Drive";
-export const DEFAULT_FELARUMI = "https://felarumi.example";
-export const DEFAULT_FELANUMIO = "https://felanumio.example";
+export const DEFAULT_FELARUMI = "./felarumi/";
+export const DEFAULT_FELANUMIO = "./felanumio/";
 
 export type ChainChoice = "calibration" | "mainnet";
 
@@ -72,6 +73,7 @@ export async function openMockSession(volumeName = DEFAULT_VOLUME): Promise<Sess
     owner: E2E_OWNER,
     name: volumeName,
   });
+  if (import.meta.env.VITE_E2E === "1") await restoreMemoryVolume(volume, E2E_OWNER, volumeName);
   return {
     volume,
     owner: E2E_OWNER,

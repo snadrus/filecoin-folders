@@ -177,13 +177,16 @@ describe("DriveApp", () => {
       input.value = "Notes";
       input.form?.requestSubmit();
       await app.settled;
-      expect(entry(root, "Notes.felarumi")?.dataset.kind).toBe("felarumi");
-      const doc = JSON.parse(new TextDecoder().decode(await session.volume.get("/Notes.felarumi")));
-      expect(doc).toEqual({ v: 1, type: "doc", title: "Notes", content: [{ type: "paragraph", text: "" }] });
+      const pending = entry(root, "Notes.felarumi");
+      expect(pending?.dataset.kind).toBe("felarumi");
+      expect(pending?.textContent).toContain("Save pending");
+      await expect(session.volume.stat("/Felarumi/Notes.felarumi")).rejects.toThrow();
       const docUrl = new URL(opened[0] ?? "");
       expect(docUrl.origin).toBe("https://felarumi.example");
+      expect(docUrl.searchParams.get("fifolders")).toBe("1");
       expect(docUrl.searchParams.get("name")).toBe("Notes.felarumi");
-      expect(docUrl.searchParams.get("pieceCid")).toMatch(/^mem:/);
+      expect(docUrl.searchParams.get("path")).toBe("/Felarumi/Notes.felarumi");
+      expect(docUrl.searchParams.get("pieceCid")).toBeNull();
 
       root.querySelector<HTMLButtonElement>("[data-testid=new-button]")!.click();
       root.querySelector<HTMLButtonElement>("[data-action=new-felanumio]")!.click();
@@ -191,11 +194,12 @@ describe("DriveApp", () => {
       sheetInput.value = "Budget.felanumio";
       sheetInput.form?.requestSubmit();
       await app.settled;
-      const sheet = JSON.parse(new TextDecoder().decode(await session.volume.get("/Budget.felanumio")));
-      expect(sheet).toEqual({ v: 1, type: "sheet", title: "Budget", sheets: [{ name: "Sheet1", cells: {} }] });
+      await expect(session.volume.stat("/Felanumio/Budget.felanumio")).rejects.toThrow();
+      expect(entry(root, "Budget.felanumio")?.textContent).toContain("Save pending");
       const sheetUrl = new URL(opened[1] ?? "");
       expect(sheetUrl.origin).toBe("https://felanumio.example");
       expect(sheetUrl.searchParams.get("name")).toBe("Budget.felanumio");
+      expect(sheetUrl.searchParams.get("path")).toBe("/Felanumio/Budget.felanumio");
     } finally {
       window.open = previous;
     }

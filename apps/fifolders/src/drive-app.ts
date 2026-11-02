@@ -1,4 +1,4 @@
-import { blankBytes, felFileName, felTitle } from "./blank.js";
+import { felFileName } from "./blank.js";
 import {
   CasConflictError,
   NotFoundError,
@@ -6,6 +6,8 @@ import {
   type Stat,
   type Volume,
 } from "fil-folders";
+import { chainStepTitle, explorerHref, stepDetail, type ChainReport, type ChainStepView } from "./chain-step.js";
+import { loosePieces, rememberPiece, type LoosePiece } from "./loose.js";
 import {
   TRASH_PATH,
   applySelection,
@@ -30,8 +32,21 @@ import {
   type ViewMode,
 } from "./model.js";
 import type { WalletPanel } from "./onboarding-logic.js";
+import { dropOp, isBlankFelContent, loadOps, newOp, OPS_CHANNEL, OPS_KEY, patchOp, upsertOp, type FifoldersOp, type OpKind } from "./ops.js";
+import {
+  datasetBlurb,
+  depositBlurb,
+  describeRunway,
+  fallbackQuote,
+  formatUsd,
+  fourGiBLine,
+  monthlyEstimate,
+  skipLivePricing,
+  type CostQuote,
+} from "./pricing.js";
 import type { CasObserver, ChainChoice } from "./session.js";
-import { renderApp, type DialogState, type UploadRow, type ViewModel } from "./view.js";
+import { loadSavedView, persistMemoryVolume, saveView } from "./volume-persist.js";
+import { renderApp, type ActivityRow, type DialogState, type UploadRow, type ViewModel } from "./view.js";
 
 export interface DriveAppOptions {
   volume: Volume | null;
@@ -117,10 +132,19 @@ export class DriveApp {
   mainnetBlocked = false;
   dropPath: string | null = null;
   dragging = false;
+  costsOpen = false;
+  gb = "1";
+  chainSteps: ChainStepView[] = [];
+  recentDone: ActivityRow[] = [];
+  looseRows: LoosePiece[] = [];
+  quote: CostQuote = fallbackQuote();
 
   root: HTMLElement | null = null;
   #tail: Promise<void> = Promise.resolve();
   #toastSeq = 0;
+  #opSeq = 0;
+  #opsAdopted = false;
+  #opsListening = false;
 
   constructor(options: DriveAppOptions) {
     this.volume = options.volume;
@@ -138,7 +162,9 @@ export class DriveApp {
     this.panel = options.panel ?? null;
     this.view = localStorage.getItem("fifolders:view") === "grid" ? "grid" : "list";
     this.mainnetBlocked = options.chain === "mainnet";
+    this.costsOpen = !options.volume;
     if (options.volume) this.loadPrefs();
+    if (!skipLivePricing()) void this.loadQuote();
   }
 
   get settled(): Promise<void> {
@@ -159,6 +185,7 @@ export class DriveApp {
     if (options.onConnect) this.onConnect = options.onConnect;
     if (options.onSetupAction) this.onSetupAction = options.onSetupAction;
     if (options.onDisconnect) this.onDisconnect = options.onDisconnect;
+    this.costsOpen = false;
     this.loadPrefs();
     if (this.root) void this.enqueue(() => this.refresh());
   }
@@ -203,8 +230,16 @@ export class DriveApp {
     root.addEventListener("drop", (event) => this.onDrop(event));
     root.addEventListener("submit", (event) => {
       event.preventDefault();
+      const form = event.target as HTMLFormElement | null;
+      if (form && (this.dialog?.mode === "new-felarumi" || this.dialog?.mode === "new-felanumio")) {
+        const name = form.querySelector<HTMLInputElement>("[data-testid=dialog-input]")?.value ?? this.dialog.value;
+        const kind: FelKind = this.dialog.mode === "new-felarumi" ? "felarumi" : "felanumio";
+        this.openNewFel(kind, name);
+        return;
+      }
       void this.enqueue(() => this.onSubmit(event));
     });
+    this.listenForOps();
     void this.enqueue(() => this.refresh());
   }
 
@@ -225,6 +260,13 @@ export class DriveApp {
   private loadPrefs(): void {
     this.stars = new Set(readJson<string[]>(this.starKey()) ?? []);
     this.origins = readJson<Record<string, string>>(this.originKey()) ?? {};
+    if (!this.owner) return;
+    const saved = loadSavedView(this.owner, this.volumeName);
+    if (!saved) return;
+    if (saved.nav === "drive" || saved.nav === "recent" || saved.nav === "starred" || saved.nav === "trash" || saved.nav === "loose") {
+      this.nav = saved.nav;
+    }
+    if (saved.cwd) this.cwd = saved.cwd;
   }
 
   private starKey(): string {
@@ -256,12 +298,25 @@ export class DriveApp {
       return;
     }
     try {
-      const [entries, tree] = await Promise.all([this.loadListing(), this.walk("/")]);
-      this.entries = entries;
+      await this.reconcileOps();
+      const tree = await this.walk("/");
       this.storageUsed = sumSizes(tree);
-      const visible = new Set(entries.map((entry) => entry.path));
-      this.selected = this.selected.filter((path) => visible.has(path));
+      if (this.nav === "loose") {
+        this.looseRows = this.collectLoose(tree);
+        this.entries = [];
+      } else {
+        this.entries = await this.loadListing();
+        const visible = new Set(this.entries.map((entry) => entry.path));
+        this.selected = this.selected.filter((path) => visible.has(path));
+      }
+      this.saveCurrentView();
+      if (import.meta.env.VITE_E2E === "1") await persistMemoryVolume(this.volume, this.owner, this.volumeName);
     } catch (error) {
+      if (error instanceof NotFoundError && this.cwd !== "/") {
+        this.cwd = "/";
+        await this.refresh();
+        return;
+      }
       this.toast(errorText(error));
     }
     this.render();
@@ -293,9 +348,15 @@ export class DriveApp {
       const items = (await this.walk("/")).filter((entry) => !isTrashPath(entry.path));
       return this.filterQuery(sortStats(items, this.sortKey, this.sortDir, true));
     }
-    let items = await volume.ls(this.cwd || "/");
+    let items: Stat[] = [];
+    try {
+      items = await volume.ls(this.cwd || "/");
+    } catch (error) {
+      if (!(error instanceof NotFoundError)) throw error;
+      if ((this.cwd || "/") !== "/") throw error;
+    }
     if ((this.cwd || "/") === "/") items = items.filter((entry) => entry.name !== ".trash");
-    return sortStats(items, this.sortKey, this.sortDir, true);
+    return sortStats(this.mergePending(items), this.sortKey, this.sortDir, true);
   }
 
   private filterQuery(entries: Stat[]): Stat[] {
@@ -372,62 +433,97 @@ export class DriveApp {
       progress: 8,
       status: "uploading",
     }));
+    const staged = payloads.map((file, index) => {
+      const path = joinPath(dest, file.rel);
+      const id = this.beginOp({
+        kind: "upload",
+        label: `Upload ${baseName(path)}`,
+        path,
+        name: baseName(path),
+        size: file.bytes.byteLength,
+        mime: guessMime(file.name, file.type),
+        stage: "uploading",
+      });
+      rows[index]!.id = id;
+      return { ...file, path, id };
+    });
     this.uploads = [...this.uploads, ...rows];
+    this.entries = this.mergePending(this.entries);
     this.render();
     const ok = await this.run(async () => {
       await this.volume!.tx(async (draft) => {
-        for (let index = 0; index < payloads.length; index += 1) {
-          const file = payloads[index]!;
-          const path = joinPath(dest, file.rel);
-          const parent = parentPath(path);
+        for (let index = 0; index < staged.length; index += 1) {
+          const file = staged[index]!;
+          const parent = parentPath(file.path);
           if (parent !== "/") await draft.mkdir(parent);
           const siblings = await draft.ls(parent);
-          const name = uniqueName(baseName(path), new Set(siblings.map((item) => item.name)));
+          const name = uniqueName(baseName(file.path), new Set(siblings.map((item) => item.name)));
+          const path = joinPath(parent, name);
           rows[index]!.progress = 55;
           this.render();
-          await draft.put(joinPath(parent, name), file.bytes, { mime: guessMime(file.name, file.type) });
+          const stat = await draft.put(path, file.bytes, { mime: guessMime(file.name, file.type) });
+          patchOp(file.id, { pieceCid: stat.pieceCid, path, name, stage: "uploaded" });
+          if (stat.pieceCid) {
+            rememberPiece({ pieceCid: stat.pieceCid, name, mime: guessMime(file.name, file.type), size: file.bytes.byteLength, uploaded: Date.now(), path });
+          }
           rows[index]!.progress = 100;
           rows[index]!.status = "done";
           this.render();
         }
       });
     });
-    if (!ok) {
-      for (const row of rows) row.status = "error";
-      this.render();
+    if (ok) {
+      for (const file of staged) {
+        const op = loadOps().find((item) => item.id === file.id);
+        if (op) this.rememberDone(op);
+        dropOp(file.id);
+      }
+    } else {
+      for (const row of rows) {
+        row.status = "error";
+        patchOp(row.id, { status: "error", stage: "error", error: "Upload failed" });
+      }
     }
+    this.render();
   }
 
-  private async createBlank(kind: FelKind, rawName: string): Promise<void> {
+  /** Opens a blank editor tab immediately. The file is stored on the first real save. */
+  private openNewFel(kind: FelKind, rawName: string): void {
     const requested = felFileName(rawName, kind);
     if (!requested) {
       this.toast("Enter a file name.");
+      this.dialog = null;
       this.render();
       return;
     }
-    let opened: { pieceCid: string; name: string } | null = null;
-    const ok = await this.run(async () => {
-      const dir = this.destDir();
-      let taken = new Set<string>();
-      try {
-        taken = new Set((await this.volume!.ls(dir)).map((item) => item.name));
-      } catch (error) {
-        if (!(error instanceof NotFoundError)) throw error;
-      }
-      const name = uniqueName(requested, taken);
-      const stat = await this.volume!.put(joinPath(dir, name), blankBytes(kind, felTitle(name, kind)), {
-        mime: "application/json",
-      });
-      opened = { pieceCid: stat.pieceCid ?? "", name: stat.name };
+    const dir = kind === "felarumi" ? "/Felarumi" : "/Felanumio";
+    const taken = new Set(
+      loadOps()
+        .filter((op) => op.path && parentPath(op.path) === dir)
+        .map((op) => op.name ?? ""),
+    );
+    const name = uniqueName(requested, taken);
+    const path = joinPath(dir, name);
+    const url = appLink(kind, "", name, { felarumi: this.felarumiUrl, felanumio: this.felanumioUrl }, {
+      path,
+      volume: this.volumeName,
+      owner: this.owner,
     });
-    if (ok && opened) {
-      const created = opened as { pieceCid: string; name: string };
-      const url = appLink(kind, created.pieceCid, created.name, {
-        felarumi: this.felarumiUrl,
-        felanumio: this.felanumioUrl,
-      });
-      window.open(url, "_blank", "noopener");
-    }
+    window.open(url, "_blank", "noopener");
+    this.dialog = null;
+    this.beginOp({
+      kind: "fel-save",
+      label: name,
+      path,
+      name,
+      volume: this.volumeName,
+      owner: this.owner,
+      stage: "pending",
+      mime: "application/json",
+      size: 0,
+    });
+    this.entries = this.mergePending(this.entries);
+    this.render();
   }
 
   private async createFolder(name: string): Promise<void> {
@@ -569,13 +665,8 @@ export class DriveApp {
       await this.refresh();
       return;
     }
-    const kind = felKind(stat.name);
-    if (kind) {
-      const url = appLink(kind, stat.pieceCid ?? "", stat.name, {
-        felarumi: this.felarumiUrl,
-        felanumio: this.felanumioUrl,
-      });
-      window.open(url, "_blank", "noopener");
+    if (felKind(stat.name)) {
+      this.openFel(stat);
       return;
     }
     const bytes = await volume.get(path);
@@ -664,6 +755,7 @@ export class DriveApp {
     if (
       action === "authorize" ||
       action === "fix-payments" ||
+      action === "add-funds" ||
       action === "create-dataset" ||
       action === "refresh-session" ||
       action === "open-drive"
@@ -696,6 +788,28 @@ export class DriveApp {
       this.accountMenu = !this.accountMenu;
       this.newMenu = false;
       this.render();
+      return;
+    }
+    if (action === "costs-continue") {
+      this.costsOpen = false;
+      this.render();
+      return;
+    }
+    if (action === "show-costs") {
+      this.accountMenu = false;
+      this.newMenu = false;
+      this.costsOpen = true;
+      this.render();
+      return;
+    }
+    if (action === "retry-activity") {
+      const id = actionEl?.dataset.id ?? "";
+      void this.enqueue(() => this.retryOp(id));
+      return;
+    }
+    if (action === "loose-download" || action === "loose-open") {
+      const cid = actionEl?.dataset.cid ?? "";
+      void this.enqueue(() => (action === "loose-download" ? this.downloadLoose(cid) : this.openLoose(cid)));
       return;
     }
     if (action === "chain") {
@@ -802,7 +916,13 @@ export class DriveApp {
     if (this.context && action) {
       const paths = this.context.paths;
       const targetPath = this.context.target;
+      const target = this.entries.find((entry) => entry.path === targetPath);
       this.context = null;
+      if (action === "open" && target && felKind(target.name)) {
+        this.openFel(target);
+        this.render();
+        return;
+      }
       void this.enqueue(() => this.runContext(action, paths, targetPath));
       return;
     }
@@ -873,6 +993,11 @@ export class DriveApp {
     const entry = (event.target as HTMLElement | null)?.closest<HTMLElement>("[data-testid=entry]");
     if (!entry?.dataset.path) return;
     const path = decodeURIComponent(entry.dataset.path);
+    const stat = this.entries.find((item) => item.path === path);
+    if (stat && felKind(stat.name)) {
+      this.openFel(stat);
+      return;
+    }
     void this.enqueue(() => this.openPath(path));
   }
 
@@ -940,6 +1065,11 @@ export class DriveApp {
   private onInput(event: Event): void {
     const target = event.target as HTMLInputElement | null;
     if (!target) return;
+    if (target.dataset.testid === "cost-gb") {
+      this.gb = target.value;
+      this.render();
+      return;
+    }
     if (target.dataset.testid === "search") {
       this.query = target.value;
       void this.enqueue(() => this.refresh());
@@ -1016,8 +1146,7 @@ export class DriveApp {
     if (this.dialog.mode === "new-felarumi" || this.dialog.mode === "new-felanumio") {
       const name = form.querySelector<HTMLInputElement>("[data-testid=dialog-input]")?.value ?? this.dialog.value;
       const kind: FelKind = this.dialog.mode === "new-felarumi" ? "felarumi" : "felanumio";
-      this.dialog = null;
-      await this.createBlank(kind, name);
+      this.openNewFel(kind, name);
       return;
     }
     if (this.dialog.mode === "rename" && this.dialog.path) {
@@ -1145,6 +1274,251 @@ export class DriveApp {
     }
   }
 
+  noteChain(report: ChainReport): void {
+    const title = chainStepTitle(report);
+    const href = report.hash ? explorerHref(this.chain, report.hash) : "";
+    const step: ChainStepView = { id: report.hash || `${report.flow}-${report.phase}`, title, detail: stepDetail(report), href, phase: report.phase };
+    const index = this.chainSteps.findIndex((item) => item.title === title);
+    this.chainSteps = index >= 0 ? this.chainSteps.map((item, i) => (i === index ? step : item)) : [...this.chainSteps, step];
+    const id = `chain:${report.flow}`;
+    if (report.phase === "signing") {
+      this.beginOp({ id, kind: report.flow === "session" ? "session" : "deposit", label: report.flow === "session" ? "Authorize session key" : "Deposit USDFC", stage: "signing" });
+    } else if (report.phase === "done") this.finishOp(id);
+    else patchOp(id, { stage: report.phase, txHash: report.hash });
+    if (this.root && !this.volume) this.render();
+  }
+
+  beginOp(partial: { id?: string; kind: OpKind; label: string; stage?: string; path?: string; name?: string; size?: number; mime?: string; volume?: string; owner?: string }): string {
+    const id = partial.id ?? `op-${Date.now()}-${++this.#opSeq}`;
+    upsertOp(newOp({ ...partial, id }));
+    return id;
+  }
+
+  finishOp(id: string): void {
+    const op = loadOps().find((item) => item.id === id);
+    if (op) this.rememberDone(op);
+    dropOp(id);
+    if (this.root) this.render();
+  }
+
+  failOp(id: string, error: string): void {
+    patchOp(id, { status: "error", stage: "error", error });
+    if (this.root) this.render();
+  }
+
+  private rememberDone(op: FifoldersOp): void {
+    const label = op.kind === "fel-save" ? `${op.name ?? op.label} saved` : op.label;
+    const row: ActivityRow = { id: op.id, label, status: "done" };
+    this.recentDone = [row, ...this.recentDone.filter((item) => item.id !== op.id)].slice(0, 8);
+  }
+
+  private listenForOps(): void {
+    if (this.#opsListening || typeof window === "undefined") return;
+    this.#opsListening = true;
+    window.addEventListener("beforeunload", (event) => {
+      const pending = loadOps().some((op) => op.status === "pending") || this.busy;
+      if (!pending) return;
+      event.preventDefault();
+      event.returnValue = "";
+    });
+    window.addEventListener("storage", (event) => {
+      if (event.key === OPS_KEY) void this.enqueue(() => this.refresh());
+    });
+    document.addEventListener("pointerdown", (event) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.closest("[data-menu], [data-action=account], [data-action=new-toggle]")) return;
+      if (!this.newMenu && !this.accountMenu && !this.context) return;
+      this.newMenu = false;
+      this.accountMenu = false;
+      this.context = null;
+      this.root?.querySelectorAll("[data-menu]").forEach((node) => node.remove());
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape") return;
+      if (!this.newMenu && !this.accountMenu && !this.context && !this.dialog && !this.preview) return;
+      this.newMenu = false;
+      this.accountMenu = false;
+      this.context = null;
+      this.dialog = null;
+      this.revokePreview();
+      this.render();
+    });
+    try {
+      const channel = new BroadcastChannel(OPS_CHANNEL);
+      channel.onmessage = () => {
+        void this.enqueue(() => this.refresh());
+      };
+    } catch {
+      // BroadcastChannel is optional.
+    }
+  }
+
+  private async loadQuote(): Promise<void> {
+    try {
+      const { CALIBRATION_RPC } = await import("./session.js");
+      const { Synapse } = await import("@filoz/synapse-sdk");
+      const { calibration } = await import("@filoz/synapse-core/chains");
+      const { http } = await import("viem");
+      const { generatePrivateKey, privateKeyToAccount } = await import("viem/accounts");
+      const account = privateKeyToAccount(generatePrivateKey());
+      const synapse = Synapse.create({
+        account: account.address,
+        chain: calibration,
+        transport: http(CALIBRATION_RPC),
+        source: "fifolders",
+      });
+      const info = await synapse.storage.getStorageInfo();
+      let ratePerMonth: bigint | undefined;
+      try {
+        const costs = await synapse.storage.getUploadCosts({ dataSize: 1024n * 1024n * 1024n, withCDN: false });
+        ratePerMonth = costs.rate.perMonth;
+      } catch {
+        ratePerMonth = undefined;
+      }
+      const { quoteFromLive } = await import("./pricing.js");
+      this.quote = quoteFromLive({
+        perTiBNoCdn: info.pricing.noCDN.perTiBPerMonth,
+        perTiBWithCdn: info.pricing.withCDN.perTiBPerMonth,
+        ratePerMonth,
+      });
+      if (this.costsOpen) this.render();
+    } catch {
+      this.quote = fallbackQuote();
+    }
+  }
+
+  private saveCurrentView(): void {
+    if (!this.owner) return;
+    saveView(this.owner, this.volumeName, { nav: this.nav, cwd: this.cwd, volume: this.volumeName });
+  }
+
+  private mergePending(entries: Stat[]): Stat[] {
+    const ops = loadOps().filter((op) => (op.kind === "upload" || op.kind === "fel-save") && op.path && op.name && op.status !== "done");
+    const byPath = new Map(entries.map((entry) => [entry.path, entry]));
+    const cwd = this.cwd || "/";
+    if (cwd === "/" && this.nav === "drive") {
+      for (const name of ["Felarumi", "Felanumio"]) {
+        const path = `/${name}`;
+        if (ops.some((op) => op.path?.startsWith(`${path}/`)) && !byPath.has(path)) {
+          byPath.set(path, { name, path, type: "dir", size: 0, mtime: Date.now() });
+        }
+      }
+    }
+    for (const op of ops) {
+      const parent = parentPath(op.path ?? "/");
+      const showHere = parent === cwd || (cwd === "/" && this.nav === "drive" && op.kind === "fel-save");
+      if (!showHere || byPath.has(op.path ?? "")) continue;
+      byPath.set(op.path ?? "", {
+        name: op.name ?? "",
+        path: op.path ?? "",
+        type: "file",
+        size: op.size ?? 0,
+        mtime: op.updated,
+        mime: op.mime,
+        pieceCid: op.pieceCid,
+      });
+    }
+    return [...byPath.values()];
+  }
+
+  private async reconcileOps(): Promise<void> {
+    if (!this.#opsAdopted) {
+      this.#opsAdopted = true;
+      for (const op of loadOps()) {
+        if (op.kind === "upload" && op.status === "pending" && !op.pieceCid) {
+          patchOp(op.id, { status: "error", stage: "interrupted", error: "Upload interrupted" });
+        }
+      }
+    }
+    const volume = this.volume;
+    if (!volume) return;
+    for (const op of loadOps()) {
+      if ((op.kind === "upload" || op.kind === "commit") && op.path && op.pieceCid) {
+        try {
+          const stat = await volume.stat(op.path);
+          if (!stat.pieceCid || stat.pieceCid === op.pieceCid) {
+            this.rememberDone(op);
+            dropOp(op.id);
+          }
+        } catch (error) {
+          if (!(error instanceof NotFoundError)) throw error;
+        }
+      }
+      if (op.kind !== "fel-save" || !op.path || !op.content || isBlankFelContent(op.content)) continue;
+      try {
+        await volume.stat(op.path);
+        this.rememberDone(op);
+        dropOp(op.id);
+      } catch (error) {
+        if (!(error instanceof NotFoundError)) throw error;
+        const parent = parentPath(op.path);
+        if (parent !== "/") await volume.mkdir(parent);
+        const stat = await volume.put(op.path, new TextEncoder().encode(op.content), { mime: "application/json" });
+        this.rememberDone({ ...op, pieceCid: stat.pieceCid, stage: "saved" });
+        dropOp(op.id);
+      }
+    }
+  }
+
+  private async retryOp(id: string): Promise<void> {
+    const op = loadOps().find((item) => item.id === id);
+    if (!op) return;
+    if (op.kind === "fel-save" && op.content && !isBlankFelContent(op.content)) {
+      patchOp(id, { status: "pending", stage: "saving", error: "" });
+      await this.refresh();
+      return;
+    }
+    this.toast(op.pieceCid ? "Still waiting for that piece to show up in the volume." : "Upload interrupted. Choose the file again.");
+    this.render();
+  }
+
+  private collectLoose(tree: Stat[]): LoosePiece[] {
+    const referenced = new Set(tree.flatMap((entry) => (entry.pieceCid ? [entry.pieceCid] : [])));
+    const storage = this.volume?.storage as { inner?: { pieces?: Map<string, Uint8Array> } } | undefined;
+    const pieces = storage?.inner?.pieces;
+    if (!pieces) return loosePieces([], referenced);
+    return loosePieces(
+      [...pieces.entries()].map(([pieceCid, bytes]) => ({ pieceCid, bytes })),
+      referenced,
+    );
+  }
+
+  private openFel(stat: Pick<Stat, "name" | "path" | "pieceCid">): void {
+    const kind = felKind(stat.name);
+    if (!kind) return;
+    const url = appLink(kind, stat.pieceCid ?? "", stat.name, { felarumi: this.felarumiUrl, felanumio: this.felanumioUrl }, {
+      path: stat.path,
+      volume: this.volumeName,
+      owner: this.owner,
+    });
+    window.open(url, "_blank", "noopener");
+  }
+
+  private async downloadLoose(cid: string): Promise<void> {
+    const piece = this.looseRows.find((item) => item.pieceCid === cid);
+    if (!piece) return;
+    const blob = toBlob(piece.bytes, piece.mime);
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = piece.name || cid;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  }
+
+  private async openLoose(cid: string): Promise<void> {
+    const piece = this.looseRows.find((item) => item.pieceCid === cid);
+    if (!piece) return;
+    const kindPreview = previewKind(piece.mime, piece.bytes);
+    this.revokePreview();
+    if (kindPreview === "text") this.preview = { name: piece.name, kind: "text", text: new TextDecoder().decode(piece.bytes) };
+    else if (kindPreview === "none") this.preview = { name: piece.name, kind: "none" };
+    else this.preview = { name: piece.name, kind: kindPreview, url: URL.createObjectURL(toBlob(piece.bytes, piece.mime)) };
+    this.render();
+  }
+
   private toModel(): ViewModel {
     const target = this.context ? this.entries.find((entry) => entry.path === this.context?.target) : undefined;
     const dialog: DialogState | null = this.dialog
@@ -1157,8 +1531,76 @@ export class DriveApp {
           dest: this.dialog.dest,
         }
       : null;
+    const pending = loadOps();
+    const activity: ActivityRow[] = [
+      ...pending.map((op): ActivityRow => ({
+        id: op.id,
+        label: op.error ? `${op.label}: ${op.error}` : op.label,
+        status: op.status === "error" ? "error" : "pending",
+      })),
+      ...this.recentDone,
+    ].slice(0, 12);
+    const gb = Number(this.gb);
+    const estimateAtto = monthlyEstimate(this.quote, Number.isFinite(gb) ? gb : 0);
+    let available = 0n;
+    let rate = 0n;
+    if (this.panel?.availableFunds) {
+      try {
+        available = BigInt(this.panel.availableFunds);
+      } catch {
+        available = 0n;
+      }
+    }
+    if (this.panel?.lockupRate) {
+      try {
+        rate = BigInt(this.panel.lockupRate);
+      } catch {
+        rate = 0n;
+      }
+    }
+    const runway = describeRunway({
+      availableFunds: available,
+      lockupRatePerEpoch: rate,
+      datasetBytes: this.storageUsed,
+      known: Boolean(this.panel),
+    });
+    const badges: Record<string, string> = {};
+    for (const op of pending) {
+      if (!op.path) continue;
+      if (op.kind === "upload" && op.status === "pending") badges[op.path] = "Saving…";
+      if (op.kind === "fel-save") {
+        badges[op.path] = op.stage === "saving" ? "Saving…" : op.stage === "saved" ? "Saved" : "Save pending";
+      }
+    }
     return {
       connected: Boolean(this.volume),
+      costsOpen: this.costsOpen,
+      costs: {
+        perTiB: formatUsd(this.quote.perTiBPerMonth),
+        fourGiB: formatUsd(fourGiBLine(this.quote)),
+        proving: formatUsd(this.quote.provingPerMonth),
+        reserve: formatUsd(this.quote.reserve),
+        cdnReserve: formatUsd(this.quote.cdnReserve),
+        createFee: formatUsd(this.quote.createFee),
+        addPieces: `${formatUsd(this.quote.addPiecesBase)} + ${formatUsd(this.quote.addPiecesEach)} per piece`,
+        estimate: formatUsd(estimateAtto),
+        gb: this.gb,
+        deposit: this.panel ? `Current deposit ${this.panel.deposit} USDFC` : "Connect a wallet to see your deposit.",
+        datasetNote: datasetBlurb(this.quote),
+        depositNote: depositBlurb(this.quote, "5"),
+      },
+      chainSteps: this.chainSteps,
+      activity,
+      activityPending: pending.some((op) => op.status === "pending") || this.busy,
+      runway,
+      loose: this.looseRows.map((piece) => ({
+        pieceCid: piece.pieceCid,
+        name: piece.name,
+        size: piece.size,
+        uploaded: piece.uploaded,
+        mime: piece.mime,
+      })),
+      badges,
       chain: this.chain,
       mainnetBlocked: this.mainnetBlocked,
       volumeName: this.volumeName,
@@ -1176,7 +1618,6 @@ export class DriveApp {
       selected: this.selected,
       stars: this.stars,
       storageUsed: this.storageUsed,
-      busy: this.busy,
       newMenu: this.newMenu,
       accountMenu: this.accountMenu,
       context: this.context

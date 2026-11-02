@@ -20,6 +20,7 @@ export type { CommittedRecord, Registry, RegistryCommit } from "./registry/types
 export { createViemRegistry } from "./registry/viem.js";
 export type { ViemRegistryOptions } from "./registry/viem.js";
 export { assertSupportedRuntime } from "./runtime.js";
+export { MIN_PIECE_BYTES, padPiece, unpadPiece, withPiecePadding } from "./pad.js";
 export { MemoryStorage, createMemoryStorage } from "./storage/memory.js";
 export { createSynapseStorage } from "./storage/synapse.js";
 export type { SynapseStorageOptions } from "./storage/synapse.js";

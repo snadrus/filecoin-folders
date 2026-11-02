@@ -4,6 +4,14 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      collab_ref:
+        description: collab-edit ref to build (branch, tag, or commit)
+        required: false
+        default: p2p
+        type: string
+  repository_dispatch:
+    types: [collab-edit]
 
 permissions:
   contents: read
@@ -14,11 +22,20 @@ concurrency:
   group: pages
   cancel-in-progress: false
 
+env:
+  COLLAB_REPO: snadrus/collab-edit
+  COLLAB_REF: p2p
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.COLLAB_REPO }}
+          ref: ${{ github.event.inputs.collab_ref || github.event.client_payload.ref || env.COLLAB_REF }}
+          path: collab-edit
       - uses: pnpm/action-setup@v4
         with:
           version: 10
@@ -29,7 +46,19 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter fil-folders build
       - run: pnpm --filter fifolders build
+      - name: Build Felarumi and Felanumio
+        working-directory: collab-edit
+        run: |
+          if [ ! -f p2p/src/host-base.ts ]; then
+            git apply --check ../scripts/collab-edit-p2p.patch
+            git apply ../scripts/collab-edit-p2p.patch
+          fi
+          npm install --ignore-scripts
+          node scripts/install-fil-folders.mjs
+          BUILD_ONLY=1 node --disable-warning=ExperimentalWarning --experimental-strip-types p2p/serve.ts
+      - run: node scripts/stage-editors.mjs collab-edit/p2p/dist
       - run: printf '%s\n' 'fidrive.scionbase.ai' > apps/fifolders/dist/CNAME
+      - run: node scripts/verify-pages-dist.mjs apps/fifolders/dist
       - uses: actions/upload-pages-artifact@v3
         with:
           path: apps/fifolders/dist

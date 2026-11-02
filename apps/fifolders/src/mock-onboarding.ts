@@ -17,7 +17,7 @@ import {
   type DatasetRecord,
   type WalletPanel,
 } from "./onboarding-logic.js";
-import type { OnboardingIO } from "./onboarding-io.js";
+import type { ChainReporter, OnboardingIO } from "./onboarding-io.js";
 import { observeRegistry, type Session } from "./session.js";
 
 export const MOCK_CHAIN_ID = 314159;
@@ -45,6 +45,12 @@ export function createMockOnboarding(params: URLSearchParams): OnboardingIO {
 
   const seededPayments = params.get("pay") === "ready";
   if (localStorage.getItem(PAYMENTS_KEY) == null && seededPayments) localStorage.setItem(PAYMENTS_KEY, "1");
+  if (!localStorage.getItem("fifolders:mock-pay") && (params.get("funds") || params.get("rate") || params.get("ens"))) {
+    localStorage.setItem(
+      "fifolders:mock-pay",
+      JSON.stringify({ funds: params.get("funds") || "", rate: params.get("rate") || "", ens: params.get("ens") || "" }),
+    );
+  }
   if (!localStorage.getItem(DATASETS_KEY)) {
     const count = Number(params.get("datasets") ?? "0");
     const seed: DatasetRecord[] = [];
@@ -82,10 +88,17 @@ export function createMockOnboarding(params: URLSearchParams): OnboardingIO {
     const list = datasets();
     const chosen = chooseDataset(list, loadLastDataset(MOCK_CHAIN_ID, MOCK_ADDRESS));
     const deposited = localStorage.getItem(PAYMENTS_KEY) === "1";
+    const pay = mockPay();
+    const baseFunds = deposited ? 5n * 10n ** 18n : 0n;
+    const available = pay.funds ? BigInt(pay.funds) : baseFunds;
     return {
       address: MOCK_ADDRESS,
       fil: formatToken(2_500_000_000_000_000_000n),
       usdfc: formatToken(deposited ? 5n * 10n ** 18n : 0n),
+      deposit: formatToken(deposited ? 5n * 10n ** 18n : 0n),
+      availableFunds: available.toString(),
+      lockupRate: pay.rate || "0",
+      ens: pay.ens || undefined,
       paymentsReady: paymentsReady(deposited ? 1n : 0n, deposited),
       sessionReady: legacy || sessionReady,
       sessionExpiry: sessionReady ? formatExpiry(onchain) : "",
@@ -120,11 +133,14 @@ export function createMockOnboarding(params: URLSearchParams): OnboardingIO {
       if (input.chain === "mainnet") throw new Error("Mainnet has no FolderRegistry yet. Use Calibration.");
       return panel();
     },
-    async authorize(_chain, force = false) {
+    async authorize(_chain, force = false, report?: ChainReporter) {
       if (!connected) throw new Error("Connect a wallet first.");
       const now = BigInt(Math.floor(Date.now() / 1000));
       const stored = loadSession(MOCK_CHAIN_ID, MOCK_ADDRESS);
       if (!force && sessionUsable(stored, now) && stored && expiryFor(stored.sessionAddress) > now) return;
+      report?.({ flow: "session", phase: "signing" });
+      report?.({ flow: "session", phase: "submitted", hash: "0xsession" });
+      report?.({ flow: "session", phase: "confirming", hash: "0xsession", blocks: 1, elapsedSec: 1 });
       signatures += SIGNATURES.sessionLogin;
       const privateKey = generatePrivateKey();
       const account = privateKeyToAccount(privateKey);
@@ -140,12 +156,23 @@ export function createMockOnboarding(params: URLSearchParams): OnboardingIO {
         sessionAddress: account.address,
         expiry: expiry.toString(),
       });
+      report?.({ flow: "session", phase: "done", hash: "0xsession" });
     },
-    async fixPayments() {
+    async fixPayments(_chain, report?: ChainReporter, force = false) {
       if (!connected) throw new Error("Connect a wallet first.");
-      if (localStorage.getItem(PAYMENTS_KEY) === "1") return;
-      signatures += SIGNATURES.paymentFix;
+      const ready = localStorage.getItem(PAYMENTS_KEY) === "1";
+      if (ready && !force) return;
+      report?.({ flow: "payment", phase: "signing" });
+      report?.({ flow: "payment", phase: "submitted", hash: "0xpay" });
+      report?.({ flow: "payment", phase: "confirming", hash: "0xpay", blocks: 1, elapsedSec: 1 });
+      if (!ready) signatures += SIGNATURES.paymentFix;
       localStorage.setItem(PAYMENTS_KEY, "1");
+      if (force && ready) {
+        const pay = mockPay();
+        const current = pay.funds ? BigInt(pay.funds) : 5n * 10n ** 18n;
+        localStorage.setItem("fifolders:mock-pay", JSON.stringify({ ...pay, funds: (current + 5n * 10n ** 18n).toString() }));
+      }
+      report?.({ flow: "payment", phase: "done", hash: "0xpay" });
     },
     async createDataset(input) {
       const now = new Date();
@@ -204,6 +231,14 @@ export function createMockOnboarding(params: URLSearchParams): OnboardingIO {
       localStorage.removeItem(walletStorageKey());
     },
   };
+}
+
+function mockPay(): { funds?: string; rate?: string; ens?: string } {
+  try {
+    return JSON.parse(localStorage.getItem("fifolders:mock-pay") || "{}") as { funds?: string; rate?: string; ens?: string };
+  } catch {
+    return {};
+  }
 }
 
 function sampleDataset(index: number): DatasetRecord {

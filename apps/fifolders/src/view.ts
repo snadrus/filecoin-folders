@@ -1,5 +1,7 @@
 import type { HistoryEntry, Stat } from "fil-folders";
+import type { ChainStepView } from "./chain-step.js";
 import { felanumioSvg, felarumiSvg, logoSvg } from "./icons.js";
+import { identiconSvg } from "./identicon.js";
 import { datasetLabel, type WalletPanel } from "./onboarding-logic.js";
 import {
   type FelKind,
@@ -12,9 +14,9 @@ import {
   formatBytes,
   formatWhen,
   materialIcon,
-  meterPercent,
   shortAddress,
 } from "./model.js";
+import { DOCS_COSTS_URL, type Runway } from "./pricing.js";
 
 export interface UploadRow {
   id: string;
@@ -52,8 +54,45 @@ export interface ContextState {
   starred: boolean;
 }
 
+export interface ActivityRow {
+  id: string;
+  label: string;
+  status: "pending" | "done" | "error";
+}
+
+export interface LooseRow {
+  pieceCid: string;
+  name: string;
+  size: number;
+  uploaded: number;
+  mime: string;
+}
+
+export interface CostView {
+  perTiB: string;
+  fourGiB: string;
+  proving: string;
+  reserve: string;
+  cdnReserve: string;
+  createFee: string;
+  addPieces: string;
+  estimate: string;
+  gb: string;
+  deposit: string;
+  datasetNote: string;
+  depositNote: string;
+}
+
 export interface ViewModel {
   connected: boolean;
+  costsOpen: boolean;
+  costs: CostView;
+  chainSteps: ChainStepView[];
+  activity: ActivityRow[];
+  activityPending: boolean;
+  runway: Runway;
+  loose: LooseRow[];
+  badges: Record<string, string>;
   chain: "calibration" | "mainnet";
   mainnetBlocked: boolean;
   volumeName: string;
@@ -71,7 +110,6 @@ export interface ViewModel {
   selected: string[];
   stars: Set<string>;
   storageUsed: number;
-  busy: boolean;
   newMenu: boolean;
   accountMenu: boolean;
   context: ContextState | null;
@@ -92,8 +130,9 @@ export interface ViewModel {
 }
 
 export function renderApp(model: ViewModel): string {
+  if (model.costsOpen) return renderCosts(model);
   if (!model.connected) return model.panel ? renderSetup(model) : renderConnect(model);
-  return `<div class="shell ${model.busy ? "is-busy" : ""}">
+  return `<div class="shell">
     ${renderTop(model)}
     ${renderNav(model)}
     <main class="workspace">
@@ -151,7 +190,7 @@ function renderSetup(model: ViewModel): string {
   const payment = panel.paymentsReady
     ? `<p class="status ok" data-testid="payment-status">Storage payment ready</p>`
     : `<button class="primary" type="button" data-testid="fix-payments" data-action="fix-payments">Enable storage payment</button>
-       <p class="note">One step deposits 5 USDFC and approves the storage operator.</p>`;
+       <p class="note">${escapeHtml(model.costs.depositNote)}</p>`;
   const session = panel.sessionReady
     ? `<p class="status ok" data-testid="session-status">Session key ready${panel.sessionExpiry ? ` until ${escapeHtml(panel.sessionExpiry)}` : ""}</p>
        <button type="button" data-testid="session-refresh" data-action="refresh-session">Refresh session key</button>`
@@ -163,7 +202,8 @@ function renderSetup(model: ViewModel): string {
         `<label class="dataset"><input type="radio" name="dataset" data-testid="dataset-choice" value="${escapeHtml(dataset.id)}" ${dataset.id === panel.selectedDatasetId ? "checked" : ""}/> <span>${escapeHtml(datasetLabel(dataset))}</span></label>`,
     )
     .join("");
-  const create = `<button class="${panel.createPrimary ? "primary" : ""}" type="button" data-testid="create-dataset" data-action="create-dataset">Create new dataset</button>`;
+  const create = `<button class="${panel.createPrimary ? "primary" : ""}" type="button" data-testid="create-dataset" data-action="create-dataset">Create new dataset</button>
+        <p class="note">${escapeHtml(model.costs.datasetNote)}</p>`;
   const open =
     panel.selectedDatasetId && panel.paymentsReady && (panel.sessionReady || panel.legacyRegistry)
       ? `<button class="primary" type="button" data-testid="open-drive" data-action="open-drive">Open drive</button>`
@@ -178,6 +218,7 @@ function renderSetup(model: ViewModel): string {
       <p class="account-line" data-testid="setup-address">${escapeHtml(panel.address)}</p>
       <p class="balances" data-testid="balances"><span>${escapeHtml(panel.fil)} FIL</span><span>${escapeHtml(panel.usdfc)} USDFC</span></p>
       ${legacy}
+      ${renderChainSteps(model.chainSteps)}
       ${payment}
       ${session}
       <div class="datasets" data-testid="datasets">
@@ -198,24 +239,46 @@ function chainButton(chain: "calibration" | "mainnet", label: string, current: s
 }
 
 function renderTop(model: ViewModel): string {
+  const label = model.panel?.ens || shortAddress(model.owner);
   return `<header class="topbar">
     <div class="brand">${logoSvg(28)} <span>FiFolders</span></div>
     <label class="search">
       <span class="material-symbols-outlined" aria-hidden="true">search</span>
       <input data-testid="search" type="search" placeholder="Search in FiFolders" value="${escapeHtml(model.query)}" />
     </label>
-    <div class="chain-toggle compact" role="group" aria-label="Network">
-      ${chainButton("calibration", "Calibration", model.chain)}
-      ${chainButton("mainnet", "Mainnet", model.chain)}
-    </div>
-    <button class="account" data-action="account" data-testid="account" type="button">${escapeHtml(shortAddress(model.owner))}</button>
+    ${model.activityPending ? `<span class="activity-dot" data-testid="activity-indicator" title="Saving"></span>` : ""}
+    <button class="account" data-action="account" data-testid="account" type="button">${identiconSvg(model.owner)}<span data-testid="account-label">${escapeHtml(label)}</span></button>
     <span class="sr-only" data-testid="wallet-signatures">${model.panel?.signatures ?? 0}</span>
-    ${model.busy ? `<div class="busy" data-testid="busy"></div>` : ""}
+    ${renderChainSteps(model.chainSteps)}
   </header>`;
 }
 
+function renderChainSteps(steps: ChainStepView[]): string {
+  if (!steps.length) return "";
+  return `<ol class="chain-steps" data-testid="chain-steps">${steps
+    .map(
+      (step) => `<li data-phase="${step.phase}" data-testid="chain-step">
+        <span>${escapeHtml(step.title)}</span>
+        ${step.detail ? `<span class="note">${escapeHtml(step.detail)}</span>` : ""}
+        ${step.href ? `<a data-testid="tx-link" href="${escapeHtml(step.href)}" target="_blank" rel="noreferrer">${escapeHtml(step.id)}</a>` : ""}
+      </li>`,
+    )
+    .join("")}</ol>`;
+}
+
 function renderNav(model: ViewModel): string {
-  const percent = meterPercent(model.storageUsed);
+  const runway = model.runway;
+  const activity = model.activity.length
+    ? `<section class="activity" data-testid="activity">${model.activity
+        .map(
+          (item) => `<div class="activity-item" data-testid="activity-item" data-status="${item.status}">
+            <span class="activity-mark" aria-hidden="true"></span>
+            <span>${escapeHtml(item.label)}</span>
+            ${item.status === "error" ? `<button type="button" data-action="retry-activity" data-id="${escapeHtml(item.id)}" data-testid="retry-activity">Retry</button>` : ""}
+          </div>`,
+        )
+        .join("")}</section>`
+    : "";
   return `<aside class="nav">
     <button class="new" data-testid="new-button" data-action="new-toggle" type="button" ${model.mainnetBlocked ? "disabled" : ""}>
       <span class="material-symbols-outlined" aria-hidden="true">add</span> New
@@ -224,15 +287,25 @@ function renderNav(model: ViewModel): string {
       ${navItem("drive", "folder", "My Drive", model.nav)}
       ${navItem("recent", "schedule", "Recent", model.nav)}
       ${navItem("starred", "star", "Starred", model.nav)}
+      ${navItem("loose", "inventory_2", "Loose pieces", model.nav)}
       ${navItem("trash", "delete", "Trash", model.nav)}
     </nav>
-    <div class="storage" data-testid="storage-meter">
-      <div class="meter"><span style="width:${percent.toFixed(2)}%"></span></div>
-      <span data-testid="storage-label">${escapeHtml(formatBytes(model.storageUsed))} used</span>
+    ${activity}
+    <div class="storage ${runway.low ? "low" : ""}" data-testid="storage-runway">
+      <p class="runway-headline" data-testid="runway-headline">${runwayHtml(runway.headline, runway.datasetLabel)}</p>
+      ${runway.detail ? `<p class="runway-detail" data-testid="runway-detail">${runwayHtml(runway.detail, runway.datasetLabel)}</p>` : ""}
+      ${runway.showAdd ? `<button type="button" class="primary slim" data-action="add-funds" data-testid="add-funds">Add funds</button>` : ""}
     </div>
     <input data-testid="file-input" class="sr-only" type="file" multiple />
     <input data-testid="folder-input" class="sr-only" type="file" multiple webkitdirectory />
   </aside>`;
+}
+
+function runwayHtml(text: string, datasetLabel: string): string {
+  const phrase = `Dataset total ${datasetLabel}`;
+  if (!text.includes(phrase) || datasetLabel === "0 B") return escapeHtml(text);
+  const [before, after] = text.split(phrase);
+  return `${escapeHtml(before ?? "")}<span data-testid="dataset-total">${escapeHtml(phrase)}</span>${escapeHtml(after ?? "")}`;
 }
 
 function navItem(id: NavId, icon: string, label: string, current: NavId): string {
@@ -258,12 +331,9 @@ function renderBrowser(model: ViewModel): string {
         `${index ? `<span class="crumb-sep">/</span>` : ""}<button type="button" data-testid="breadcrumb" data-action="crumb" data-path="${encodeURIComponent(crumb.path)}">${escapeHtml(crumb.label)}</button>`,
     )
     .join("");
-  const rows = model.entries
-    .map((entry) => renderEntry(entry, model))
-    .join("");
-  const empty = model.entries.length
-    ? ""
-    : `<p class="empty" data-testid="empty">${escapeHtml(emptyCopy(model))}</p>`;
+  const rows = model.nav === "loose" ? model.loose.map((piece) => renderLoose(piece)).join("") : model.entries.map((entry) => renderEntry(entry, model)).join("");
+  const filled = model.nav === "loose" ? model.loose.length : model.entries.length;
+  const empty = filled ? "" : `<p class="empty" data-testid="empty">${escapeHtml(emptyCopy(model))}</p>`;
   const blocked = model.mainnetBlocked
     ? `<p class="banner" data-testid="mainnet-banner">Mainnet has no FolderRegistry yet. Switch back to Calibration to keep working in this volume.</p>`
     : "";
@@ -319,12 +389,27 @@ function renderEntry(entry: Stat, model: ViewModel): string {
   const drop = model.dropPath === entry.path ? "true" : "false";
   const icon = entryIcon(entry, kind as FelKind | "");
   const star = model.stars.has(entry.path) ? `<span class="material-symbols-outlined filled star" aria-label="Starred">star</span>` : "";
-  const name = `${icon}<span class="name">${escapeHtml(entry.name)}</span>${star}`;
+  const badge = model.badges[entry.path] ? `<span class="badge" data-testid="save-badge">${escapeHtml(model.badges[entry.path] ?? "")}</span>` : "";
+  const name = `${icon}<span class="name">${escapeHtml(entry.name)}</span>${badge}${star}`;
   const body =
     model.view === "grid"
       ? name
       : `<span class="cell name-cell">${name}</span><span class="cell owner">${escapeHtml(shortAddress(model.owner))}</span><span class="cell mtime">${escapeHtml(formatWhen(entry.mtime))}</span><span class="cell size">${entry.type === "dir" ? "—" : escapeHtml(formatBytes(entry.size))}</span>`;
-  return `<div class="entry ${model.view}" role="row" data-testid="entry" data-path="${encodeURIComponent(entry.path)}" data-type="${entry.type}" data-kind="${kind}" data-selected="${selected ? "true" : "false"}" data-drop="${drop}" draggable="true">${body}</div>`;
+  return `<div class="entry ${model.view}" role="row" data-testid="entry" data-path="${encodeURIComponent(entry.path)}" data-type="${entry.type}" data-kind="${kind}" data-selected="${selected ? "true" : "false"}" data-drop="${drop}" data-saving="${badge ? "true" : "false"}" draggable="true">${body}</div>`;
+}
+
+function renderLoose(piece: LooseRow): string {
+  const when = piece.uploaded ? formatWhen(piece.uploaded) : "—";
+  return `<div class="entry list" role="row" data-testid="loose-row" data-cid="${escapeHtml(piece.pieceCid)}">
+    <span class="cell name-cell"><span class="name">${escapeHtml(piece.name)}</span></span>
+    <span class="cell owner">${escapeHtml(piece.mime)}</span>
+    <span class="cell mtime">${escapeHtml(when)}</span>
+    <span class="cell size">${escapeHtml(formatBytes(piece.size))}</span>
+    <span class="cell loose-actions">
+      <button type="button" data-action="loose-download" data-cid="${escapeHtml(piece.pieceCid)}" data-testid="loose-download">Download</button>
+      <button type="button" data-action="loose-open" data-cid="${escapeHtml(piece.pieceCid)}" data-testid="loose-open">Open</button>
+    </span>
+  </div>`;
 }
 
 function entryIcon(entry: Stat, kind: FelKind | ""): string {
@@ -338,6 +423,7 @@ function emptyCopy(model: ViewModel): string {
   if (model.nav === "trash") return "Trash is empty";
   if (model.nav === "starred") return "No starred items";
   if (model.nav === "recent") return "Nothing recent";
+  if (model.nav === "loose") return "No loose pieces";
   return "This folder is empty";
 }
 
@@ -435,21 +521,64 @@ function renderAccount(model: ViewModel): string {
           .join("")}</select>
       </label>
       <button type="button" data-action="create-dataset" data-testid="create-dataset">Create new dataset</button>
+      <p class="note">${escapeHtml(model.costs.datasetNote)}</p>
       <p class="account-line" data-testid="session-status">${panel.sessionReady ? `Session key until ${escapeHtml(panel.sessionExpiry || "soon")}` : "Session key missing"}</p>
       <p class="account-line">${escapeHtml(panel.fil)} FIL · ${escapeHtml(panel.usdfc)} USDFC${panel.paymentsReady ? "" : " · payment needed"}</p>
       <button type="button" data-action="refresh-session" data-testid="session-refresh">Refresh session key</button>`
     : "";
   return `<div class="menu account-menu" data-menu="account" data-testid="account-menu">
-    <p class="account-line">${escapeHtml(model.owner)}</p>
+    <p class="account-line">${escapeHtml(panel?.ens || model.owner)}</p>
     <p class="account-line">Volume ${escapeHtml(model.volumeName)} · encryption ${model.encrypted ? "on" : "off"}</p>
+    <div class="chain-toggle" role="group" aria-label="Network">
+      ${chainButton("calibration", "Calibration", model.chain)}
+      ${chainButton("mainnet", "Mainnet", model.chain)}
+    </div>
     ${datasets}
-    <label class="field">Felarumi URL
-      <input data-testid="felarumi-url" value="${escapeHtml(model.felarumiUrl)}" />
-    </label>
-    <label class="field">Felanumio URL
-      <input data-testid="felanumio-url" value="${escapeHtml(model.felanumioUrl)}" />
-    </label>
+    <button type="button" data-action="show-costs" data-testid="show-costs">What it costs</button>
+    <details class="advanced" data-testid="advanced-editors">
+      <summary>Advanced</summary>
+      <label class="field">Felarumi URL
+        <input data-testid="felarumi-url" value="${escapeHtml(model.felarumiUrl)}" />
+      </label>
+      <label class="field">Felanumio URL
+        <input data-testid="felanumio-url" value="${escapeHtml(model.felanumioUrl)}" />
+      </label>
+    </details>
     <button type="button" data-action="disconnect" data-testid="disconnect">Disconnect</button>
+  </div>`;
+}
+
+function renderCosts(model: ViewModel): string {
+  const costs = model.costs;
+  const back = model.connected ? "Back to drive" : "Continue";
+  return `<div class="connect">
+    <div class="connect-card setup-card costs-card" data-testid="costs">
+      ${logoSvg(56)}
+      <h1>What it costs</h1>
+      <p class="lede">Felarumi documents and Felanumio spreadsheets are included — you only pay Filecoin storage.</p>
+      <ul class="cost-list">
+        <li>Storage is ${escapeHtml(costs.perTiB)} per TiB each month for one copy, and only while the pieces exist. About ${escapeHtml(costs.fourGiB)} per 4 GiB each month.</li>
+        <li>Proving is ${escapeHtml(costs.proving)} per dataset each month once it holds data.</li>
+        <li>A new dataset needs a refundable ${escapeHtml(costs.reserve)} USDFC reserve (${escapeHtml(costs.cdnReserve)} with CDN). A ${escapeHtml(costs.createFee)} create fee is drawn from that reserve.</li>
+        <li>Adding pieces is ${escapeHtml(costs.addPieces)}.</li>
+        <li>30 days of storage is always prepaid and locked. Session keys also need a little FIL for gas (0.05 FIL).</li>
+      </ul>
+      <label class="field">Estimate for
+        <input data-testid="cost-gb" inputmode="decimal" value="${escapeHtml(costs.gb)}" /> GiB
+      </label>
+      <p data-testid="cost-estimate">${escapeHtml(costs.estimate)} per month</p>
+      <p data-testid="cost-deposit">${escapeHtml(costs.deposit)}</p>
+      ${renderRunwayBlock(model.runway)}
+      <p class="note"><a href="${DOCS_COSTS_URL}" target="_blank" rel="noreferrer">How Filecoin storage is priced</a></p>
+      <button class="primary" type="button" data-testid="costs-continue" data-action="costs-continue">${back}</button>
+    </div>
+  </div>`;
+}
+
+function renderRunwayBlock(runway: Runway): string {
+  return `<div class="storage ${runway.low ? "low" : ""}" data-testid="storage-runway">
+    <p data-testid="runway-headline">${runwayHtml(runway.headline, runway.datasetLabel)}</p>
+    ${runway.detail ? `<p data-testid="runway-detail">${runwayHtml(runway.detail, runway.datasetLabel)}</p>` : ""}
   </div>`;
 }
 
