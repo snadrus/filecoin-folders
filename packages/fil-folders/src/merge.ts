@@ -15,6 +15,8 @@ interface FlatFile {
   located?: string;
   size: number;
   mime?: string;
+  ipfs?: string;
+  importedCar?: boolean;
   enc?: ContentEnc;
 }
 
@@ -77,7 +79,14 @@ function sameContent(a: Flat | undefined, b: Flat | undefined): boolean {
   if (!a || !b || a.type !== b.type) return false;
   if (a.type === "dir" && b.type === "dir") return true;
   if (a.type !== "file" || b.type !== "file") return false;
-  return a.pieceCid === b.pieceCid && a.size === b.size && (a.mime ?? "") === (b.mime ?? "") && sameEnc(a.enc, b.enc);
+  return (
+    a.pieceCid === b.pieceCid &&
+    a.size === b.size &&
+    (a.mime ?? "") === (b.mime ?? "") &&
+    (a.ipfs ?? "") === (b.ipfs ?? "") &&
+    Boolean(a.importedCar) === Boolean(b.importedCar) &&
+    sameEnc(a.enc, b.enc)
+  );
 }
 
 function sameEnc(a: ContentEnc | undefined, b: ContentEnc | undefined): boolean {
@@ -114,6 +123,8 @@ function flatten(root: DirNode): Map<string, Flat> {
         };
         if (entry.located !== undefined) file.located = entry.located;
         if (entry.mime !== undefined) file.mime = entry.mime;
+        if (entry.ipfs !== undefined) file.ipfs = entry.ipfs;
+        if (entry.importedCar) file.importedCar = true;
         if (entry.enc !== undefined) file.enc = entry.enc;
         map.set(path, file);
       }
@@ -151,6 +162,8 @@ function unflatten(map: Map<string, Flat>, rootMtime: number): DirNode {
       };
       if (node.located !== undefined) file.located = node.located;
       if (node.mime !== undefined) file.mime = node.mime;
+      if (node.ipfs !== undefined) file.ipfs = node.ipfs;
+      if (node.importedCar) file.importedCar = true;
       if (node.enc !== undefined) file.enc = node.enc;
       parent.entries.push(file);
     }

@@ -22,6 +22,12 @@ export function baseName(path: string): string {
   return trimmed.slice(index + 1);
 }
 
+export function matchesQuery(entry: { name: string; path: string }, query: string): boolean {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return true;
+  return entry.name.toLowerCase().includes(needle) || entry.path.toLowerCase().includes(needle);
+}
+
 export function joinPath(dir: string, name: string): string {
   const clean = name.replace(/^\/+/, "").replace(/\/+$/, "");
   if (!clean) return dir || "/";

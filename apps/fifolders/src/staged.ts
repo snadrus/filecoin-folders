@@ -3,7 +3,7 @@ import { MemoryRegistry, MemoryStorage, NotFoundError, openVolume, type Volume }
 /** One local edit. A Save replays the list in a single volume transaction. */
 export type StagedOp =
   | { op: "mkdir"; path: string }
-  | { op: "put"; path: string; bytes: string; mime?: string }
+  | { op: "put"; path: string; bytes: string; mime?: string; ipfs?: string; importedCar?: boolean }
   | { op: "mv"; from: string; to: string }
   | { op: "cp"; from: string; to: string }
   | { op: "rm"; path: string };
@@ -83,7 +83,11 @@ async function applyOne(volume: Volume, op: StagedOp): Promise<void> {
     return;
   }
   if (op.op === "put") {
-    await volume.put(op.path, b64ToBytes(op.bytes), op.mime ? { mime: op.mime } : undefined);
+    await volume.put(op.path, b64ToBytes(op.bytes), {
+      ...(op.mime ? { mime: op.mime } : {}),
+      ...(op.ipfs ? { ipfs: op.ipfs } : {}),
+      ...(op.importedCar ? { importedCar: true } : {}),
+    });
     return;
   }
   if (op.op === "mv") {
@@ -111,7 +115,11 @@ async function copyTree(source: Volume, dest: Volume, dir: string): Promise<void
       await copyTree(source, dest, entry.path);
     } else {
       const bytes = await source.get(entry.path);
-      await dest.put(entry.path, bytes, entry.mime ? { mime: entry.mime } : undefined);
+      await dest.put(entry.path, bytes, {
+        ...(entry.mime ? { mime: entry.mime } : {}),
+        ...(entry.ipfs ? { ipfs: entry.ipfs } : {}),
+        ...(entry.importedCar ? { importedCar: true } : {}),
+      });
     }
   }
 }
@@ -139,6 +147,8 @@ function parseOp(value: unknown): StagedOp | null {
   if (op.op === "put" && typeof op.path === "string" && typeof op.bytes === "string") {
     const next: StagedOp = { op: "put", path: op.path, bytes: op.bytes };
     if (typeof op.mime === "string") next.mime = op.mime;
+    if (typeof op.ipfs === "string") next.ipfs = op.ipfs;
+    if (op.importedCar === true) next.importedCar = true;
     return next;
   }
   if ((op.op === "mv" || op.op === "cp") && typeof op.from === "string" && typeof op.to === "string") {

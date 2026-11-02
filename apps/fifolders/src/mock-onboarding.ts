@@ -116,7 +116,7 @@ export function createMockOnboarding(params: URLSearchParams): OnboardingIO {
       return [{ rdns: "mock.wallet", name: "Mock wallet" }];
     },
     async connect(input) {
-      if (input.chain === "mainnet") throw new Error("Mainnet has no FolderRegistry yet. Use Calibration.");
+      if (input.chain === "mainnet") throw new Error("Registry not deployed");
       connectPrompts += 1;
       connected = true;
       localStorage.setItem(PERMITTED_KEY, "1");
@@ -130,7 +130,7 @@ export function createMockOnboarding(params: URLSearchParams): OnboardingIO {
     },
     async snapshot(input) {
       if (!connected) throw new Error("Connect a wallet first.");
-      if (input.chain === "mainnet") throw new Error("Mainnet has no FolderRegistry yet. Use Calibration.");
+      if (input.chain === "mainnet") throw new Error("Registry not deployed");
       return panel();
     },
     async authorize(_chain, force = false, report?: ChainReporter) {

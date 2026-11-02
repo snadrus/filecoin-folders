@@ -14,8 +14,10 @@
     "@filoz/synapse-core": "^0.4.1",
     "@filoz/synapse-sdk": "^0.40.4",
     "@fontsource/roboto": "^5.2.6",
+    "@walletconnect/ethereum-provider": "^2.26.0",
     "fil-folders": "workspace:*",
     "material-symbols": "^0.31.8",
+    "uqr": "^0.1.3",
     "viem": "^2.38.3"
   },
   "devDependencies": {

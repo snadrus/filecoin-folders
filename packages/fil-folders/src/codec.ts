@@ -74,6 +74,11 @@ function parseEntry(value: unknown): ManifestEntry {
     if (typeof entry.mime !== "string") throw new Error("manifest mime is invalid");
     parsed.mime = entry.mime;
   }
+  if (entry.ipfs !== undefined) {
+    if (typeof entry.ipfs !== "string" || entry.ipfs.length === 0) throw new Error("manifest ipfs root is invalid");
+    parsed.ipfs = entry.ipfs;
+  }
+  if (entry.importedCar === true) parsed.importedCar = true;
   if (entry.enc !== undefined) parsed.enc = parseEnc(entry.enc);
   if (entry.entries !== undefined) {
     if (!Array.isArray(entry.entries)) throw new Error("manifest directory entries are invalid");

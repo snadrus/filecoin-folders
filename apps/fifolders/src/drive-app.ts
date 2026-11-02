@@ -1,11 +1,22 @@
 import { felFileName } from "./blank.js";
 import {
+  CarArchiveError,
   CasConflictError,
   NotFoundError,
+  contentCid,
+  fundingShortfall,
+  readCarRoots,
   type HistoryEntry,
   type Stat,
   type Volume,
 } from "fil-folders";
+import { DEFAULT_STORAGE_COPIES, defaultLocalCopies, loadCheckpoint, loadCopyCatalog, recoverReplication, saveCheckpoint, saveCopyCatalog } from "./copies.js";
+import { DownloadQueue } from "./downloads.js";
+import { indexingLabel, localIndexStore, runIndexingCheck } from "./indexing.js";
+import { canPreviewName, fileShareLink } from "./links.js";
+import { REGISTRY_NOT_DEPLOYED, registryReady, saveNetworkPreference } from "./network.js";
+import { qrSvg } from "./qr.js";
+import { loadRemovals, piecesEligibleForRemoval, saveRemovals, schedulePieceRemovals, type RemovalAdapters } from "./removal.js";
 import { chainStepTitle, explorerHref, stepDetail, type ChainReport, type ChainStepView } from "./chain-step.js";
 import { loosePieces, rememberPiece, type LoosePiece } from "./loose.js";
 import {
@@ -21,6 +32,7 @@ import {
   guessMime,
   isTrashPath,
   joinPath,
+  matchesQuery,
   parentPath,
   previewKind,
   sortStats,
@@ -73,6 +85,11 @@ export interface DriveAppOptions {
   onConnect?: (input: { chain: ChainChoice; volumeName: string; encrypt: boolean }) => Promise<void>;
   onSetupAction?: (action: string, value?: string) => Promise<void>;
   onDisconnect?: () => void;
+  /** Read-only funding quote for the real piece size and copy count. A shortfall skips the upload. */
+  quoteUpload?: (input: { pieceBytes: number; copies: number }) => Promise<{ ready: boolean; depositNeeded?: bigint; needsApproval?: boolean }>;
+  /** IPFS indexer probe. A miss does not fail the file. */
+  indexProbe?: (cid: string) => Promise<boolean>;
+  removalAdapters?: RemovalAdapters;
 }
 
 interface DialogModel {
@@ -135,7 +152,18 @@ export class DriveApp {
   accountMenu = false;
   context: ContextModel | null = null;
   dialog: DialogModel | null = null;
-  details: { stat: Stat; history: HistoryEntry[]; version: bigint; pieceCid: string } | null = null;
+  details: {
+    stat: Stat;
+    history: HistoryEntry[];
+    version: bigint;
+    pieceCid: string;
+    shareUrl?: string;
+    qr?: string;
+    copies: number;
+    providers: string[];
+    indexing?: string;
+    previewable: boolean;
+  } | null = null;
   preview: PreviewModel | null = null;
   uploads: UploadRow[] = [];
   toasts: { id: string; text: string }[] = [];
@@ -152,6 +180,10 @@ export class DriveApp {
   staged: StagedOp[] = [];
   restoreNote = "";
   autoSaveUploads = true;
+  quoteUpload?: DriveAppOptions["quoteUpload"];
+  indexProbe?: DriveAppOptions["indexProbe"];
+  removalAdapters?: RemovalAdapters;
+  readonly downloads = new DownloadQueue();
 
   root: HTMLElement | null = null;
   #tail: Promise<void> = Promise.resolve();
@@ -177,10 +209,15 @@ export class DriveApp {
     this.onConnect = options.onConnect;
     this.onSetupAction = options.onSetupAction;
     this.onDisconnect = options.onDisconnect;
+    this.quoteUpload = options.quoteUpload;
+    this.indexProbe = options.indexProbe;
+    this.removalAdapters = options.removalAdapters;
     this.panel = options.panel ?? null;
     this.view = localStorage.getItem("fifolders:view") === "grid" ? "grid" : "list";
     this.autoSaveUploads = autoSaveUploads();
-    this.mainnetBlocked = options.chain === "mainnet";
+    this.mainnetBlocked = options.chain === "mainnet" && !registryReady("mainnet");
+    this.downloads.onChange = () => this.render();
+    this.downloads.setScope(options.volume ? `${options.owner}:${options.volumeName}` : undefined);
     this.costsOpen = !options.volume;
     if (options.volume) {
       this.loadPrefs();
@@ -200,7 +237,11 @@ export class DriveApp {
     this.encrypted = options.encrypted;
     this.volumeName = options.volumeName;
     this.cas = options.cas;
-    this.mainnetBlocked = options.chain === "mainnet";
+    this.mainnetBlocked = options.chain === "mainnet" && !registryReady("mainnet");
+    this.quoteUpload = options.quoteUpload ?? this.quoteUpload;
+    this.indexProbe = options.indexProbe ?? this.indexProbe;
+    this.removalAdapters = options.removalAdapters ?? this.removalAdapters;
+    this.downloads.setScope(`${options.owner}:${options.volumeName}`);
     this.connectError = "";
     this.setupError = "";
     if (options.panel) this.panel = options.panel;
@@ -216,6 +257,7 @@ export class DriveApp {
     this.loadPrefs();
     this.#restoredFromDisk = loadStaged(this.owner, this.volumeName).ops.length > 0;
     if (this.root) void this.enqueue(() => this.refresh());
+    if (options.volume) void this.recoverPendingUpload();
   }
 
   setWallets(wallets: { rdns: string; name: string }[]): void {
@@ -395,7 +437,7 @@ export class DriveApp {
   private filterQuery(entries: Stat[]): Stat[] {
     const query = this.query.trim().toLowerCase();
     if (!query) return entries;
-    return entries.filter((entry) => entry.name.toLowerCase().includes(query));
+    return entries.filter((entry) => matchesQuery(entry, query));
   }
 
   private async walk(dir: string): Promise<Stat[]> {
@@ -418,7 +460,7 @@ export class DriveApp {
 
   private async run(task: () => Promise<void>): Promise<boolean> {
     if (!this.volume || this.mainnetBlocked) {
-      this.toast("Mainnet has no FolderRegistry yet.");
+      this.toast(REGISTRY_NOT_DEPLOYED);
       this.render();
       return false;
     }
@@ -460,6 +502,15 @@ export class DriveApp {
         bytes: new Uint8Array(await file.arrayBuffer()),
       })),
     );
+    const totalBytes = payloads.reduce((sum, file) => sum + file.bytes.byteLength, 0);
+    if (this.quoteUpload && totalBytes > 0) {
+      const quote = await this.quoteUpload({ pieceBytes: totalBytes, copies: DEFAULT_STORAGE_COPIES });
+      if (!quote.ready) {
+        this.toast(fundingShortfall({ depositNeeded: quote.depositNeeded, needsFwssMaxApproval: quote.needsApproval }, DEFAULT_STORAGE_COPIES));
+        this.render();
+        return;
+      }
+    }
     const view = await this.editingVolume();
     const reserved = new Map<string, Set<string>>();
     const ops: StagedOp[] = [];
@@ -480,7 +531,8 @@ export class DriveApp {
       taken.add(name);
       const path = joinPath(parent, name);
       const mime = guessMime(file.name, file.type);
-      ops.push({ op: "put", path, bytes: bytesToB64(file.bytes), mime });
+      const share = await describeShare(file.bytes);
+      ops.push({ op: "put", path, bytes: bytesToB64(file.bytes), mime, ipfs: share.ipfs, importedCar: share.importedCar });
       rows.push({ id: path, name: file.rel, progress: 40, status: "uploading" });
     }
     this.uploads = [...this.uploads, ...rows];
@@ -720,16 +772,28 @@ export class DriveApp {
     if (!volume) return;
     const stat = await volume.stat(path);
     if (stat.type === "dir") return;
-    const bytes = await volume.get(path);
-    const blob = toBlob(bytes, guessMime(stat.name, stat.mime));
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = stat.name;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 2000);
+    this.downloads.scope = this.scopeKey();
+    this.downloads.enqueue({
+      id: path,
+      name: stat.name,
+      cid: stat.pieceCid || stat.ipfs,
+      deletionScheduled: this.removalScheduled(stat),
+      run: async (stage) => {
+        stage("Downloading from storage provider");
+        const bytes = await volume.get(path);
+        stage("Preparing original file");
+        const blob = toBlob(bytes, guessMime(stat.name, stat.mime));
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = stat.name;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 2000);
+      },
+    });
+    await this.downloads.idle;
   }
 
   private async showDetails(path: string): Promise<void> {
@@ -744,7 +808,30 @@ export class DriveApp {
       const commits = await real.history();
       pieceCid = commits.at(-1)?.pieceCid ?? "";
     }
-    this.details = { stat, history, version: head.version, pieceCid };
+    const catalog = loadCopyCatalog(this.scopeKey())[stat.located || ""] ?? [];
+    const serviceURLs = catalog.map((copy) => copy.serviceURL).filter(Boolean);
+    const shareUrl = fileShareLink({
+      name: stat.name,
+      cid: stat.ipfs,
+      pieceCid: stat.located || stat.pieceCid,
+      importedCar: stat.importedCar,
+      serviceURLs,
+      removalScheduled: this.removalScheduled(stat),
+      uploadComplete: true,
+      encrypted: this.encrypted,
+    });
+    const indexing = stat.ipfs ? indexingLabel(localIndexStore(this.scopeKey()).read()[stat.ipfs]) : undefined;
+    this.details = {
+      stat,
+      history,
+      version: head.version,
+      pieceCid,
+      ...(shareUrl ? { shareUrl, qr: qrSvg(shareUrl) } : {}),
+      copies: catalog.length || (stat.type === "file" ? DEFAULT_STORAGE_COPIES : 0),
+      providers: catalog.map((copy) => copy.providerId),
+      ...(indexing ? { indexing } : {}),
+      previewable: stat.type === "file" && canPreviewName(stat.name, stat.ipfs, stat.importedCar),
+    };
     this.render();
   }
 
@@ -849,10 +936,24 @@ export class DriveApp {
       void this.enqueue(() => (action === "loose-download" ? this.downloadLoose(cid) : this.openLoose(cid)));
       return;
     }
+    if (action === "cancel-download") {
+      this.downloads.cancel(actionEl?.dataset.id ?? "");
+      return;
+    }
+    if (action === "check-indexing") {
+      const cid = actionEl?.dataset.cid ?? "";
+      if (!cid) return;
+      void this.enqueue(async () => {
+        await runIndexingCheck(localIndexStore(this.scopeKey()), cid, this.indexProbe ?? (async () => false));
+        if (this.details?.stat.ipfs === cid) await this.showDetails(this.details.stat.path);
+      });
+      return;
+    }
     if (action === "chain") {
       const chain = actionEl?.dataset.chain === "mainnet" ? "mainnet" : "calibration";
       this.chain = chain;
-      this.mainnetBlocked = chain === "mainnet" && Boolean(this.volume);
+      saveNetworkPreference(chain);
+      this.mainnetBlocked = chain === "mainnet" && !registryReady("mainnet");
       this.render();
       return;
     }
@@ -1168,8 +1269,8 @@ export class DriveApp {
       if (wallet) this.walletRdns = wallet;
       this.volumeName = volumeName;
       this.encryptPref = encrypt;
-      if (this.chain === "mainnet") {
-        this.connectError = "Mainnet has no FolderRegistry yet. Use Calibration.";
+      if (this.chain === "mainnet" && !registryReady("mainnet")) {
+        this.connectError = REGISTRY_NOT_DEPLOYED;
         this.render();
         return;
       }
@@ -1692,6 +1793,12 @@ export class DriveApp {
         : null,
       dialog,
       details: this.details,
+      downloads: {
+        active: this.downloads.active,
+        pending: this.downloads.pending,
+        error: this.downloads.error,
+        finished: this.downloads.finished,
+      },
       preview: this.preview,
       uploads: this.uploads,
       toasts: this.toasts,
@@ -1796,9 +1903,76 @@ export class DriveApp {
       this.#baseline = null;
       this.restoreNote = "";
       this.persistStaged();
+      await this.rememberCopies();
+      if (ops.some((op) => op.op === "rm")) await this.scheduleUnreferenced();
     });
     if (ok) this.finishOp(id);
     else this.failOp(id, "Couldn't save");
+  }
+
+  private scopeKey(): string {
+    return `${this.owner.toLowerCase()}:${this.volumeName}`;
+  }
+
+  private removalScheduled(stat: Stat): boolean {
+    const piece = stat.located || "";
+    if (!piece) return false;
+    const record = loadRemovals(this.scopeKey())[piece];
+    return Boolean(record && Object.keys(record).length);
+  }
+
+  private async rememberCopies(): Promise<void> {
+    if (!this.volume) return;
+    const head = (await this.volume.history()).at(-1)?.pieceCid;
+    if (!head) return;
+    const scope = this.scopeKey();
+    const catalog = loadCopyCatalog(scope);
+    if (catalog[head]?.length) return;
+    const notice = loadCheckpoint(scope);
+    const confirmed = notice?.providers.filter((provider) => provider.confirmed && provider.providerId) ?? [];
+    catalog[head] = confirmed.length
+      ? confirmed.map((provider) => ({
+          datasetId: provider.dataSetId || provider.providerId,
+          providerId: provider.providerId,
+          serviceURL: provider.serviceURL,
+        }))
+      : defaultLocalCopies();
+    saveCopyCatalog(scope, catalog);
+  }
+
+  private async scheduleUnreferenced(): Promise<void> {
+    if (!this.volume) return;
+    const live = new Set(await this.volume.referencedPieces());
+    const history = await this.volume.history();
+    const eligible = piecesEligibleForRemoval(
+      history.map((entry) => entry.pieceCid),
+      live,
+    );
+    const scope = this.scopeKey();
+    const catalog = loadCopyCatalog(scope);
+    const records = loadRemovals(scope);
+    const adapters = this.removalAdapters ?? localRemovalAdapters();
+    for (const piece of eligible) {
+      const copies = catalog[piece] ?? [];
+      if (!copies.length) continue;
+      const file = { pieceCid: piece, datasetIds: copies.map((copy) => copy.datasetId), checkpoints: { ...(records[piece] ?? {}) } };
+      await schedulePieceRemovals(file, async (datasetId, next) => {
+        const current = { ...(records[piece] ?? {}) };
+        if (next) current[datasetId] = next;
+        else delete current[datasetId];
+        records[piece] = current;
+        saveRemovals(scope, records);
+      }, adapters);
+    }
+  }
+
+  private async recoverPendingUpload(): Promise<void> {
+    const saved = loadCheckpoint(this.scopeKey());
+    if (!saved || saved.phase === "complete" || saved.phase === "failed") return;
+    const next = await recoverReplication(saved, async () => "pending");
+    saveCheckpoint(this.scopeKey(), next);
+    if (next.error) this.toast(next.error);
+    this.render();
   }
 
   private async discardStaged(): Promise<void> {
@@ -1815,6 +1989,35 @@ export class DriveApp {
     this.persistStaged();
     await this.refresh();
   }
+}
+
+async function describeShare(bytes: Uint8Array): Promise<{ ipfs: string; importedCar: boolean }> {
+  try {
+    const roots = readCarRoots(bytes);
+    const root = roots[0];
+    if (!root) throw new CarArchiveError("The CAR archive needs at least one root CID for Drive to track and retrieve it.");
+    return { ipfs: root, importedCar: true };
+  } catch (error) {
+    if (error instanceof CarArchiveError) throw error;
+    return { ipfs: await contentCid(bytes), importedCar: false };
+  }
+}
+
+function localRemovalAdapters(): RemovalAdapters {
+  return {
+    async listPieceIds() {
+      return ["1"];
+    },
+    async scheduled() {
+      return new Set();
+    },
+    async submit() {
+      return { hash: "0xlocal" };
+    },
+    async resolve(_datasetId, checkpoint) {
+      return { status: "success", hash: checkpoint.transactionHash ?? "0xlocal" };
+    },
+  };
 }
 
 function sameBytes(a: Uint8Array, b: Uint8Array): boolean {

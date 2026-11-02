@@ -19,6 +19,10 @@ export interface FileNode {
   size: number;
   mtime: number;
   mime?: string;
+  /** IPFS root CID recorded for share links and gateway preview. */
+  ipfs?: string;
+  /** True when the file bytes are an imported CAR archive, stored unchanged. */
+  importedCar?: boolean;
   enc?: ContentEnc;
 }
 
@@ -46,6 +50,8 @@ export interface ManifestEntry {
   mtime: number;
   pieceCid?: string;
   mime?: string;
+  ipfs?: string;
+  importedCar?: boolean;
   enc?: ManifestEnc;
   /** Inlined children. Absent when this directory is stored as its own piece. */
   entries?: ManifestEntry[];
@@ -67,6 +73,10 @@ export interface Stat {
   mtime: number;
   mime?: string;
   pieceCid?: string;
+  /** Storage piece that holds this file when it lives inside a CAR. */
+  located?: string;
+  ipfs?: string;
+  importedCar?: boolean;
 }
 
 export interface HistoryEntry {
@@ -81,6 +91,8 @@ export interface HistoryEntry {
 
 export interface PutOptions {
   mime?: string;
+  ipfs?: string;
+  importedCar?: boolean;
 }
 
 export interface RmOptions {
@@ -95,6 +107,9 @@ export interface SynapseLike {
       options?: unknown,
     ): Promise<{ pieceCid: { toString(): string } | string; size?: number | bigint }>;
     download(options: { pieceCid: string }): Promise<Uint8Array>;
+    prepare?(options: unknown): Promise<{ costs?: { ready?: boolean; depositNeeded?: bigint; needsFwssMaxApproval?: boolean } }>;
+    createContext?(options: unknown): Promise<unknown>;
+    createContexts?(options: unknown): Promise<unknown[]>;
   };
 }
 

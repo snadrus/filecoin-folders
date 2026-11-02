@@ -1,4 +1,4 @@
-export { contentCid, decodeCar, encodeCar, isCar } from "./car.js";
+export { CarArchiveError, contentCid, decodeCar, encodeCar, isCar, readCarRoots } from "./car.js";
 export { manifestBytes } from "./codec.js";
 export type { CarBlockRange, DecodedCar } from "./car.js";
 export { bytesToPieceCid, pieceCidToBytes } from "./bytes.js";
@@ -25,8 +25,8 @@ export type { ViemRegistryOptions } from "./registry/viem.js";
 export { assertSupportedRuntime } from "./runtime.js";
 export { MIN_PIECE_BYTES, padPiece, unpadPiece, withPiecePadding } from "./pad.js";
 export { MemoryStorage, createMemoryStorage } from "./storage/memory.js";
-export { createSynapseStorage } from "./storage/synapse.js";
-export type { SynapseStorageOptions } from "./storage/synapse.js";
+export { createSynapseStorage, fundingShortfall } from "./storage/synapse.js";
+export type { ReplicationNotice, SynapseStorageOptions } from "./storage/synapse.js";
 export type { Storage } from "./storage/types.js";
 export type {
   ContentEnc,

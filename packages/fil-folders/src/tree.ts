@@ -46,6 +46,9 @@ export function toStat(node: Node, path: string, volumeName = ""): Stat {
       pieceCid: node.pieceCid,
     };
     if (node.mime !== undefined) stat.mime = node.mime;
+    if (node.located !== undefined) stat.located = node.located;
+    if (node.ipfs !== undefined) stat.ipfs = node.ipfs;
+    if (node.importedCar) stat.importedCar = true;
     return stat;
   }
   return {
@@ -111,6 +114,8 @@ function shape(node: Node): unknown {
       mtime: node.mtime,
       mime: node.mime ?? null,
       pieceCid: node.pieceCid,
+      ipfs: node.ipfs ?? null,
+      importedCar: node.importedCar ?? false,
       enc: node.enc ?? null,
     };
   }
