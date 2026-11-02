@@ -2261,6 +2261,7 @@ function remap(path: string, from: string, to: string): string {
 }
 
 function errorText(error: unknown): string {
+  console.error("FiFolders error", error);
   if (error instanceof CasConflictError) {
     return error.paths.length
       ? `Couldn't save. Conflicting changes at ${error.paths.join(", ")}.`

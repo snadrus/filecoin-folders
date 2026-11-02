@@ -80,6 +80,7 @@ export class DownloadQueue {
         } catch (cause) {
           ok = false;
           if (generation === this.#generation) {
+            console.error("FiFolders download", cause);
             this.error = `${job.name}: ${cause instanceof Error ? cause.message : "Unable to download the file"}`;
           }
         } finally {

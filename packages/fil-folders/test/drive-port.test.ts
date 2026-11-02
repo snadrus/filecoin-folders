@@ -61,8 +61,11 @@ describe("synapse copies and funding quote", () => {
         async createContexts() {
           return [{ provider: { id: 2n, pdp: { serviceURL: "https://b.example" } }, dataSetId: 10n }];
         },
-        async prepare(options: { pieceSizes: bigint[] }) {
-          prepared = options.pieceSizes;
+        async prepare(options: { dataSize: bigint }) {
+          // Same arithmetic shape as synapse-core calculateAdditionalLockupRequired.
+          const currentDataSetSize = 10n;
+          void (currentDataSetSize + options.dataSize);
+          prepared = [options.dataSize];
           return { costs: { ready: true, depositNeeded: 0n } };
         },
         async upload(_data: Uint8Array, options: { callbacks?: { onPiecesAdded?: (hash: string, id: bigint) => void } }) {

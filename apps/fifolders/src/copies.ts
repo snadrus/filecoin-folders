@@ -132,6 +132,7 @@ export async function replicatePiece(
       row.pieceId = result?.pieceId ?? row.pieceId;
     } catch (error) {
       row.rejected = true;
+      console.error("FiFolders upload", error);
       checkpoint.error = error instanceof Error ? error.message : "Upload failed";
     }
   }
