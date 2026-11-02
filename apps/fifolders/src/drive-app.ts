@@ -18,6 +18,7 @@ import { REGISTRY_NOT_DEPLOYED, registryReady, saveNetworkPreference } from "./n
 import { qrSvg } from "./qr.js";
 import { loadRemovals, piecesEligibleForRemoval, saveRemovals, schedulePieceRemovals, type RemovalAdapters } from "./removal.js";
 import { chainStepTitle, explorerHref, stepDetail, type ChainReport, type ChainStepView } from "./chain-step.js";
+import { ACTIVITY_DISMISS_MS, dismissActivity, loadDismissed } from "./activity.js";
 import { defaultFelTitle, felTarget, rememberFelTarget, remapFelTargets } from "./fel-names.js";
 import { loosePieces, rememberPiece, type LoosePiece } from "./loose.js";
 import {
@@ -283,6 +284,16 @@ export class DriveApp {
   pickedDataset = "";
   /** Saves the pick as the preferred dataset right away, not after queued wallet work. */
   onPickDataset?: (id: string) => void;
+
+  /** Uncaught error from anywhere: log the stack, show a dismissible toast, keep the UI usable. */
+  reportBackgroundError(error: unknown): void {
+    console.error("FiFolders background error", error);
+    const message = error instanceof Error ? error.message : typeof error === "string" ? error : "";
+    if (!message) return;
+    const where = error instanceof Error ? (error.stack?.split("\n").find((line) => line.includes(location.origin)) ?? "").trim() : "";
+    this.toast(where ? `${message} (${where.replace(location.origin, "")})` : message);
+    if (this.root) this.render();
+  }
 
   /** Boot or uncaught failure: keep the UI on screen and say what went wrong. */
   showBootError(message: string): void {
@@ -1061,6 +1072,14 @@ export class DriveApp {
       this.render();
       return;
     }
+    if (action === "dismiss-activity") {
+      const id = actionEl?.dataset.id ?? "";
+      const op = loadOps().find((item) => item.id === id);
+      if (op) dismissActivity(`${op.id}@${op.updated}`);
+      dropOp(id);
+      this.dismissRow(id);
+      return;
+    }
     if (action === "toggle-txlog") {
       this.txlogOpen = !this.txlogOpen;
       this.render();
@@ -1550,7 +1569,19 @@ export class DriveApp {
     if (!this.root) return;
     this.captureTransient();
     const focus = captureFocus(this.root);
-    this.root.innerHTML = renderApp(this.toModel());
+    let html: string;
+    try {
+      html = renderApp(this.toModel());
+    } catch (error) {
+      // A bad value (e.g. a bigint mixed with a number) must not blank the screen.
+      console.error("FiFolders render", error);
+      if (this.#renderFailed) return;
+      this.#renderFailed = true;
+      this.toast(`Display error: ${errorText(error)}`);
+      this.#renderFailed = false;
+      return;
+    }
+    this.root.innerHTML = html;
     restoreFocus(this.root, focus);
     const menu = this.root.querySelector<HTMLElement>("[data-testid=context-menu]");
     if (menu) {
@@ -1600,6 +1631,17 @@ export class DriveApp {
     const label = op.kind === "fel-save" ? `${op.name ?? op.label} saved` : op.label;
     const row: ActivityRow = { id: op.id, label, status: "done" };
     this.recentDone = [row, ...this.recentDone.filter((item) => item.id !== op.id)].slice(0, 8);
+    this.#doneAt.set(op.id, Date.now());
+    setTimeout(() => this.dismissRow(op.id), ACTIVITY_DISMISS_MS);
+  }
+
+  #doneAt = new Map<string, number>();
+  #renderFailed = false;
+
+  private dismissRow(id: string): void {
+    this.recentDone = this.recentDone.filter((item) => item.id !== id);
+    this.#doneAt.delete(id);
+    if (this.root) this.render();
   }
 
   private listenForOps(): void {
@@ -1870,13 +1912,14 @@ export class DriveApp {
         }
       : null;
     const pending = loadOps();
+    const dismissed = loadDismissed();
     const activity: ActivityRow[] = [
-      ...pending.map((op): ActivityRow => ({
+      ...pending.filter((op) => !(op.status === "error" && dismissed.has(`${op.id}@${op.updated}`))).map((op): ActivityRow => ({
         id: op.id,
         label: op.error ? `${op.label}: ${op.error}` : op.label,
         status: op.status === "error" ? "error" : "pending",
       })),
-      ...this.recentDone,
+      ...this.recentDone.map((row) => ({ ...row, elapsedMs: Date.now() - (this.#doneAt.get(row.id) ?? Date.now()) })),
     ].slice(0, 12);
     let available = 0n;
     let rate = 0n;

@@ -67,8 +67,9 @@ try {
 
 // Mount first so the UI is always visible; resume runs behind it and may show the renew banner.
 app.mount(root);
-window.addEventListener("error", (event) => app.showBootError(bootMessage(event.error, "Something went wrong.")));
-window.addEventListener("unhandledrejection", (event) => app.showBootError(bootMessage(event.reason, "Something went wrong.")));
+// Background failures (wallet extensions, SDK polling) are reported, never fatal.
+window.addEventListener("error", (event) => app.reportBackgroundError(event.error ?? event.message));
+window.addEventListener("unhandledrejection", (event) => app.reportBackgroundError(event.reason));
 
 async function boot(): Promise<void> {
   const onboard = new URLSearchParams(location.search).get("onboard") === "1";
