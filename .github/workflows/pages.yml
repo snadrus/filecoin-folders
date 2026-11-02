@@ -57,7 +57,7 @@ jobs:
           node scripts/install-fil-folders.mjs
           BUILD_ONLY=1 node --disable-warning=ExperimentalWarning --experimental-strip-types p2p/serve.ts
       - run: node scripts/stage-editors.mjs collab-edit/p2p/dist
-      - run: printf '%s\n' 'fidrive.scionbase.ai' > apps/fifolders/dist/CNAME
+      - run: printf '%s\n' 'fifolder.scionbase.ai' > apps/fifolders/dist/CNAME
       - run: node scripts/verify-pages-dist.mjs apps/fifolders/dist
       - uses: actions/upload-pages-artifact@v3
         with:
