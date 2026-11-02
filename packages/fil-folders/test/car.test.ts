@@ -80,19 +80,19 @@ describe("CARv1 bundle", () => {
     const { volume, storage, registry } = await makeVolume();
     const body = text('{"v":1,"type":"doc","content":[{"text":"hello"}]}');
     await volume.tx(async (draft) => {
-      await draft.mkdir("/Felarumi");
-      await draft.put("/Felarumi/Notes.felarumi", body, { mime: "application/json" });
+      await draft.mkdir("/FiPen");
+      await draft.put("/FiPen/Notes.fipen", body, { mime: "application/json" });
     });
     expect(registry.commits).toBe(1);
     expect(storage.pieces.size).toBe(1);
     const head = await registry.head(OWNER, namespaceId(), volumeKey("demo"));
     const car = decodeCar(unpadPiece(storage.pieces.get(bytesToPieceCid(head.pieceCid))!));
     const manifest = decode(car.blocks.get(car.root)!);
-    expect(manifest).toContain("Notes.felarumi");
+    expect(manifest).toContain("Notes.fipen");
     expect([...car.blocks.values()].some((block) => decode(block).includes("hello"))).toBe(true);
     expect(car.blocks.size).toBeGreaterThan(1);
 
-    await volume.mkdir("/Felarumi/empty");
+    await volume.mkdir("/FiPen/empty");
     expect(storage.pieces.size).toBe(2);
     const metaHead = await registry.head(OWNER, namespaceId(), volumeKey("demo"));
     const meta = decodeCar(unpadPiece(storage.pieces.get(bytesToPieceCid(metaHead.pieceCid))!));

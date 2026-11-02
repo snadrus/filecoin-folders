@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { felFileName, felTitle } from "../src/blank.js";
 import {
   applySelection,
   appLink,
@@ -25,16 +26,23 @@ describe("model", () => {
     expect(meterPercent(1)).toBeGreaterThan(0);
   });
 
-  it("recognizes fel files and builds app links", () => {
+  it("recognizes new and legacy editor files and builds app links", () => {
+    expect(felKind("Notes.fipen")).toBe("felarumi");
     expect(felKind("Notes.Felarumi")).toBe("felarumi");
+    expect(felKind("Budget.figrid")).toBe("felanumio");
     expect(felKind("scene.felanumio")).toBe("felanumio");
     expect(felKind("notes.txt")).toBeNull();
-    const link = appLink("felarumi", "bafy", "a.felarumi", {
-      felarumi: "https://felarumi.example/",
-      felanumio: "https://felanumio.example",
+    expect(felFileName("Notes", "felarumi")).toBe("Notes.fipen");
+    expect(felFileName("Notes.felarumi", "felarumi")).toBe("Notes.fipen");
+    expect(felFileName("Budget.felanumio", "felanumio")).toBe("Budget.figrid");
+    expect(felTitle("Notes.felarumi", "felarumi")).toBe("Notes");
+    const link = appLink("felarumi", "bafy", "a.fipen", {
+      felarumi: "https://fipen.example/",
+      felanumio: "https://figrid.example",
     });
     expect(link).toContain("pieceCid=bafy");
-    expect(link).toContain("name=a.felarumi");
+    expect(link).toContain("name=a.fipen");
+    expect(link.startsWith("https://fipen.example/")).toBe(true);
   });
 
   it("builds breadcrumbs and trash paths", () => {

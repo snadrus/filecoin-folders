@@ -46,7 +46,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter fil-folders build
       - run: pnpm --filter fifolders build
-      - name: Build Felarumi and Felanumio
+      - name: Build FiPen and FiGrid
         working-directory: collab-edit
         run: |
           if [ ! -f p2p/src/host-base.ts ]; then

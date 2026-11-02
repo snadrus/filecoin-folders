@@ -350,8 +350,8 @@ function renderNewMenu(): string {
     <button type="button" data-action="new-folder"><span class="material-symbols-outlined" aria-hidden="true">create_new_folder</span> New folder</button>
     <button type="button" data-action="upload-file"><span class="material-symbols-outlined" aria-hidden="true">upload_file</span> File upload</button>
     <button type="button" data-action="upload-folder"><span class="material-symbols-outlined" aria-hidden="true">drive_folder_upload</span> Folder upload</button>
-    <button type="button" data-action="new-felarumi">${felarumiSvg()} Felarumi document</button>
-    <button type="button" data-action="new-felanumio">${felanumioSvg()} Felanumio spreadsheet</button>
+    <button type="button" data-action="new-felarumi">${felarumiSvg()} FiPen document</button>
+    <button type="button" data-action="new-felanumio">${felanumioSvg()} FiGrid spreadsheet</button>
   </div>`;
 }
 
@@ -602,10 +602,10 @@ function renderAccount(model: ViewModel): string {
     <button type="button" data-action="show-costs" data-testid="show-costs">What it costs</button>
     <details class="advanced" data-testid="advanced-editors">
       <summary>Advanced</summary>
-      <label class="field">Felarumi URL
+      <label class="field">FiPen URL
         <input data-testid="felarumi-url" value="${escapeHtml(model.felarumiUrl)}" />
       </label>
-      <label class="field">Felanumio URL
+      <label class="field">FiGrid URL
         <input data-testid="felanumio-url" value="${escapeHtml(model.felanumioUrl)}" />
       </label>
     </details>
@@ -620,7 +620,7 @@ function renderCosts(model: ViewModel): string {
     <div class="connect-card setup-card costs-card" data-testid="costs">
       ${logoSvg(56)}
       <h1>What it costs</h1>
-      <p class="lede">Felarumi documents and Felanumio spreadsheets are included — you only pay Filecoin storage.</p>
+      <p class="lede">FiPen documents and FiGrid spreadsheets are included — you only pay Filecoin storage.</p>
       <ul class="cost-list">
         <li>Storage is ${escapeHtml(costs.perTiB)} per TiB each month for one copy, and only while the pieces exist. About ${escapeHtml(costs.fourGiB)} per 4 GiB each month.</li>
         <li>Proving is ${escapeHtml(costs.proving)} per dataset each month once it holds data.</li>

@@ -19,8 +19,8 @@ export const CALIBRATION_RPC = "https://api.calibration.node.glif.io/rpc/v1";
 export const MAINNET_RPC = "https://api.node.glif.io/rpc/v1";
 export const E2E_OWNER = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266" as Address;
 export const DEFAULT_VOLUME = "My Drive";
-export const DEFAULT_FELARUMI = "./felarumi/";
-export const DEFAULT_FELANUMIO = "./felanumio/";
+export const DEFAULT_FELARUMI = "./fipen/";
+export const DEFAULT_FELANUMIO = "./figrid/";
 
 export type ChainChoice = "calibration" | "mainnet";
 
@@ -198,14 +198,25 @@ export function storeEncrypt(chain: ChainChoice, owner: string, volume: string, 
   localStorage.setItem(`fifolders:enc:${chain}:${owner.toLowerCase()}:${volume}`, encrypt ? "1" : "0");
 }
 
+function editorUrl(keys: readonly string[], envKeys: readonly string[], fallback: string): string {
+  for (const key of keys) {
+    const stored = localStorage.getItem(key);
+    if (stored) return stored;
+  }
+  const env = import.meta.env as Record<string, string | undefined>;
+  for (const key of envKeys) {
+    if (env[key]) return env[key];
+  }
+  return fallback;
+}
+
 export function felBases(): { felarumi: string; felanumio: string } {
-  const env = import.meta.env;
   return {
-    felarumi: localStorage.getItem("fifolders:felarumi-url") || env.VITE_FELARUMI_URL || DEFAULT_FELARUMI,
-    felanumio: localStorage.getItem("fifolders:felanumio-url") || env.VITE_FELANUMIO_URL || DEFAULT_FELANUMIO,
+    felarumi: editorUrl(["fifolders:fipen-url", "fifolders:felarumi-url"], ["VITE_FIPEN_URL", "VITE_FELARUMI_URL"], DEFAULT_FELARUMI),
+    felanumio: editorUrl(["fifolders:figrid-url", "fifolders:felanumio-url"], ["VITE_FIGRID_URL", "VITE_FELANUMIO_URL"], DEFAULT_FELANUMIO),
   };
 }
 
 export function storeFelUrl(kind: "felarumi" | "felanumio", url: string): void {
-  localStorage.setItem(kind === "felarumi" ? "fifolders:felarumi-url" : "fifolders:felanumio-url", url);
+  localStorage.setItem(kind === "felarumi" ? "fifolders:fipen-url" : "fifolders:figrid-url", url);
 }

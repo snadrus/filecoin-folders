@@ -2,6 +2,8 @@
 
 interface ImportMetaEnv {
   readonly VITE_E2E?: string;
+  readonly VITE_FIPEN_URL?: string;
+  readonly VITE_FIGRID_URL?: string;
   readonly VITE_FELARUMI_URL?: string;
   readonly VITE_FELANUMIO_URL?: string;
   readonly VITE_FOLDER_REGISTRY?: string;

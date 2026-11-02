@@ -22,7 +22,7 @@ flowchart LR
 | `contracts/` | Foundry project. `FolderRegistry` plus Calibration and mainnet deploy scripts. |
 | `packages/fil-folders` | TypeScript ESM package. Browser and Node.js 22+. |
 | `examples/cli.ts` | `ls` / `put` / `get` against Calibration. |
-| `apps/fifolders` | FiFolders, a static Vite file manager on `fil-folders`. |
+| `apps/fifolders` | FiFolders, a static Vite file manager on `fil-folders`. FiPen documents and FiGrid spreadsheets are at `/fipen/` and `/figrid/`. |
 
 ## Registry
 

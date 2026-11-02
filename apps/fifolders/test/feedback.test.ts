@@ -69,7 +69,7 @@ describe("pricing and runway", () => {
 
 describe("editor links and save records", () => {
   it("keeps piece cid and name and resolves a relative editor on this origin", () => {
-    const link = appLink("felarumi", "bafy", "a.felarumi", { felarumi: "./felarumi/", felanumio: "./felanumio/" }, {
+    const link = appLink("felarumi", "bafy", "a.felarumi", { felarumi: "./fipen/", felanumio: "./figrid/" }, {
       href: "https://fidrive.scionbase.ai/",
       path: "/Felarumi/a.felarumi",
       volume: "My Drive",
@@ -77,7 +77,7 @@ describe("editor links and save records", () => {
     });
     const url = new URL(link);
     expect(url.origin).toBe("https://fidrive.scionbase.ai");
-    expect(url.pathname).toBe("/felarumi/");
+    expect(url.pathname).toBe("/fipen/");
     expect(url.searchParams.get("fifolders")).toBe("1");
     expect(url.searchParams.get("pieceCid")).toBe("bafy");
     expect(url.searchParams.get("name")).toBe("a.felarumi");

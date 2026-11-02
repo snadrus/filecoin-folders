@@ -1,9 +1,13 @@
 import type { FelKind } from "./model.js";
 
 /**
- * Empty snapshots the Felarumi and Felanumio editors open.
+ * Empty snapshots the FiPen and FiGrid editors open.
  * `v` is the file schema. A document is one empty paragraph. A spreadsheet is one sheet with no cells.
  */
+
+const NEW_EXT: Record<FelKind, string> = { felarumi: ".fipen", felanumio: ".figrid" };
+const KNOWN_EXT = [".fipen", ".felarumi", ".figrid", ".felanumio"];
+
 export interface FelarumiDoc {
   v: 1;
   type: "doc";
@@ -32,13 +36,23 @@ export function blankBytes(kind: FelKind, title: string): Uint8Array {
 }
 
 export function felFileName(raw: string, kind: FelKind): string {
-  const ext = kind === "felarumi" ? ".felarumi" : ".felanumio";
-  const trimmed = raw.trim();
+  let trimmed = raw.trim();
   if (!trimmed || /[\\/]/.test(trimmed)) return "";
-  return trimmed.toLowerCase().endsWith(ext) ? trimmed : `${trimmed}${ext}`;
+  const lower = trimmed.toLowerCase();
+  for (const ext of KNOWN_EXT) {
+    if (lower.endsWith(ext)) {
+      trimmed = trimmed.slice(0, -ext.length).trim();
+      break;
+    }
+  }
+  if (!trimmed) return "";
+  return `${trimmed}${NEW_EXT[kind]}`;
 }
 
 export function felTitle(fileName: string, kind: FelKind): string {
-  const ext = kind === "felarumi" ? ".felarumi" : ".felanumio";
-  return fileName.toLowerCase().endsWith(ext) ? fileName.slice(0, -ext.length) : fileName;
+  const lower = fileName.toLowerCase();
+  for (const ext of [NEW_EXT[kind], kind === "felarumi" ? ".felarumi" : ".felanumio"]) {
+    if (lower.endsWith(ext)) return fileName.slice(0, -ext.length);
+  }
+  return fileName;
 }

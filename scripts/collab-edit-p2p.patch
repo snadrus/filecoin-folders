@@ -1,5 +1,75 @@
+diff --git a/README.md b/README.md
+index 0af94b0..b54c859 100644
+--- a/README.md
++++ b/README.md
+@@ -1,12 +1,12 @@
+-# Felarumi
++# FiPen
+ 
+-Felarumi is a real-time collaborative rich-text editor. Several people can edit one document at once. Remote carets stay on the page; a person's name shows when you hover their caret, their selection, or their avatar.
++FiPen is a real-time collaborative rich-text editor. Several people can edit one document at once. Remote carets stay on the page; a person's name shows when you hover their caret, their selection, or their avatar.
+ 
+-![Felarumi editor with two collaborators](docs/screenshot.png)
++![FiPen editor with two collaborators](docs/screenshot.png)
+ 
+ ## Roadmap
+ 
+-Felarumi is the writing app. Felanumio, the spreadsheet, is served from the same process at [/sheets](http://localhost:8787/sheets).
++FiPen is the writing app. FiGrid, the spreadsheet, is served from the same process at [/sheets](http://localhost:8787/sheets). New documents are `.fipen` files and new spreadsheets are `.figrid` files. Older `.felarumi` and `.felanumio` files still open.
+ 
+ ## Run
+ 
+diff --git a/apps/felanumio/public/app.css b/apps/felanumio/public/app.css
+index 5f92cc7..0844a20 100644
+--- a/apps/felanumio/public/app.css
++++ b/apps/felanumio/public/app.css
+@@ -6,6 +6,8 @@ button { cursor: pointer; }
+ [hidden] { display: none !important; }
+ .topbar { display: flex; align-items: center; gap: 12px; height: 56px; padding: 0 16px; background: white; border-bottom: 1px solid var(--line); }
+ .mark { width: 36px; height: 36px; border-radius: 8px; background: var(--green); color: white; display: grid; place-items: center; font-weight: 700; text-decoration: none; }
++.mark.logo { background: transparent; width: auto; height: auto; }
++.mark.logo img { width: 36px; height: 36px; display: block; }
+ #title { border: 0; background: transparent; font-size: 18px; padding: 4px 6px; border-radius: 4px; flex: 1; }
+ #title:hover, #title:focus { background: var(--hover); outline: none; }
+ .share { background: var(--green); color: white; border: 0; border-radius: 999px; height: 36px; padding: 0 18px; }
+diff --git a/apps/felanumio/public/index.html b/apps/felanumio/public/index.html
+index a2360ad..7320ca4 100644
+--- a/apps/felanumio/public/index.html
++++ b/apps/felanumio/public/index.html
+@@ -3,7 +3,8 @@
+ <head>
+   <meta charset="utf-8">
+   <meta name="viewport" content="width=device-width, initial-scale=1">
+-  <title>Felanumio</title>
++  <title>FiGrid</title>
++  <link rel="icon" href="/figrid.svg" type="image/svg+xml">
+   <link rel="stylesheet" href="/fonts/fonts.css">
+   <link rel="stylesheet" href="/ui/shell.css">
+   <link rel="stylesheet" href="/sheets/app.css">
+@@ -11,9 +12,9 @@
+ <body>
+   <div id="home" hidden>
+     <header class="topbar">
+-      <a class="mark" href="/sheets">F</a>
+-      <strong>Felanumio</strong>
+-      <a class="text-link" href="/">Felarumi</a>
++      <a class="mark logo" href="/sheets" aria-label="FiGrid home"><img src="/figrid.svg" alt=""></a>
++      <strong>FiGrid</strong>
++      <a class="text-link" href="/">FiPen</a>
+     </header>
+     <main class="home-main">
+       <button type="button" id="blank" class="blank">Blank spreadsheet</button>
+@@ -23,7 +24,7 @@
+   </div>
+   <div id="app" hidden>
+     <header class="topbar">
+-      <a class="mark" href="/sheets">F</a>
++      <a class="mark logo" href="/sheets" aria-label="FiGrid home"><img src="/figrid.svg" alt=""></a>
+       <input id="title" value="Untitled spreadsheet" maxlength="200">
+       <span id="status"></span>
+       <div id="avatars" class="avatars"></div>
 diff --git a/apps/felanumio/src/client.ts b/apps/felanumio/src/client.ts
-index f24496a..270c1a8 100644
+index f24496a..ac3fbe2 100644
 --- a/apps/felanumio/src/client.ts
 +++ b/apps/felanumio/src/client.ts
 @@ -1,3 +1,4 @@
@@ -25,7 +95,7 @@ index f24496a..270c1a8 100644
 -  const wire = new URLSearchParams(location.search).get("wire");
 -  return "/sheets/b/" + id + (wire ? "?wire=" + encodeURIComponent(wire) : "") + (hash ? "#" + hash : "");
 +  const base = hostBase();
-+  const prefix = base.endsWith("/felanumio") ? base : base + "/sheets";
++  const prefix = base.endsWith("/felanumio") || base.endsWith("/figrid") ? base : base + "/sheets";
 +  return withKeptQuery(prefix + "/b/" + id, hash);
  }
  
@@ -43,7 +113,7 @@ index f24496a..270c1a8 100644
      void fetch("/api/books/open/" + tokenPath[2])
        .then((res) => res.json())
 diff --git a/p2p/serve.ts b/p2p/serve.ts
-index d556940..d0f082e 100644
+index d556940..1d1fde6 100644
 --- a/p2p/serve.ts
 +++ b/p2p/serve.ts
 @@ -92,6 +92,11 @@ if (process.env.SKIP_BUILD === "1" && fs.existsSync(path.join(DIST, "index.html"
@@ -58,11 +128,61 @@ index d556940..d0f082e 100644
  const rooms = new Map<string, Map<string, import("ws").WebSocket>>();
  const wss = new WebSocketServer({ noServer: true });
  const server = createServer((req, res) => {
+@@ -160,5 +165,5 @@ server.on("upgrade", (req, socket, head) => {
+ });
+ 
+ server.listen(PORT, HOST, () => {
+-  console.log(`Felarumi static host on http://${HOST}:${PORT}`);
++  console.log(`FiPen static host on http://${HOST}:${PORT}`);
+ });
 diff --git a/p2p/src/boot.ts b/p2p/src/boot.ts
-index 9a002a4..fe18d3a 100644
+index 9a002a4..8ebf3db 100644
 --- a/p2p/src/boot.ts
 +++ b/p2p/src/boot.ts
-@@ -785,11 +785,100 @@ function installApi(): void {
+@@ -8,6 +8,8 @@ import {
+   CALIBRATION_REGISTRY,
+   FELANUMIO_DIR,
+   FELARUMI_DIR,
++  FIGRID_DIR,
++  FIPEN_DIR,
+   NO_REGISTRY_NOTICE,
+   listSnapshots,
+   openCalibrationVolume,
+@@ -493,7 +495,7 @@ async function exportActive(saveDownload = false): Promise<string> {
+   const cid = await files.put(bytes);
+   await putBlob(cid, bytes);
+   setCid(cid);
+-  if (saveDownload) download(bytes, docSession ? "felarumi.json" : "felanumio.json");
++  if (saveDownload) download(bytes, docSession ? "fipen.json" : "figrid.json");
+   return raw;
+ }
+ 
+@@ -702,12 +704,12 @@ function installUi(): void {
+       synapse: mock ?? undefined,
+     });
+     clearBrowser();
+-    const docs = await listSnapshots(volume, FELARUMI_DIR);
+-    const sheets = await listSnapshots(volume, FELANUMIO_DIR);
++    const docs = [...(await listSnapshots(volume, FIPEN_DIR)), ...(await listSnapshots(volume, FELARUMI_DIR))];
++    const sheets = [...(await listSnapshots(volume, FIGRID_DIR)), ...(await listSnapshots(volume, FELANUMIO_DIR))];
+     const files = [...docs, ...sheets].filter((entry) => entry.type === "file");
+     if (!files.length) {
+       const empty = document.createElement("p");
+-      empty.textContent = "No files in /Felarumi or /Felanumio";
++      empty.textContent = "No files in /FiPen, /FiGrid, /Felarumi, or /Felanumio";
+       filesEl.append(empty);
+     }
+     for (const entry of files) {
+@@ -727,7 +729,7 @@ function installUi(): void {
+       filesEl.append(button);
+     }
+     await paintHistory(volume);
+-    status.textContent = files.length ? "Choose a file" : "No files in /Felarumi or /Felanumio";
++    status.textContent = files.length ? "Choose a file" : "No files in /FiPen, /FiGrid, /Felarumi, or /Felanumio";
+   }
+ }
+ 
+@@ -785,11 +787,100 @@ function installApi(): void {
    };
  }
  
@@ -163,21 +283,48 @@ index 9a002a4..fe18d3a 100644
  }
  
  export {};
+diff --git a/p2p/src/folder-save.ts b/p2p/src/folder-save.ts
+index 87495eb..16fa6d5 100644
+--- a/p2p/src/folder-save.ts
++++ b/p2p/src/folder-save.ts
+@@ -19,6 +19,9 @@ import { RPC_URLS, type Eip1193Provider } from "./storage.ts";
+ /** Volume name. The registry key is keccak256("default"). */
+ export const VOLUME_NAME = "default";
+ 
++export const FIPEN_DIR = "/FiPen";
++export const FIGRID_DIR = "/FiGrid";
++/** Legacy folders. New saves use /FiPen and /FiGrid. These stay listed. */
+ export const FELARUMI_DIR = "/Felarumi";
+ export const FELANUMIO_DIR = "/Felanumio";
+ 
+@@ -35,8 +38,8 @@ export function registryFor(network: "mainnet" | "calibration"): { address: type
+ 
+ export function snapshotPath(kind: "felarumi" | "felanumio", title: string): string {
+   const clean = title.replace(/[\\/\u0000]/g, " ").replace(/\s+/g, " ").trim().slice(0, 120) || "Untitled";
+-  const dir = kind === "felarumi" ? FELARUMI_DIR : FELANUMIO_DIR;
+-  const ext = kind === "felarumi" ? ".felarumi" : ".felanumio";
++  const dir = kind === "felarumi" ? FIPEN_DIR : FIGRID_DIR;
++  const ext = kind === "felarumi" ? ".fipen" : ".figrid";
+   return `${dir}/${clean}${ext}`;
+ }
+ 
 diff --git a/p2p/src/host-base.ts b/p2p/src/host-base.ts
 new file mode 100644
-index 0000000..c5d4a6c
+index 0000000..38ae508
 --- /dev/null
 +++ b/p2p/src/host-base.ts
-@@ -0,0 +1,26 @@
-+/** Prefix used when Felarumi and Felanumio are hosted under FiFolders Pages. */
+@@ -0,0 +1,28 @@
++/** Prefix used when FiPen and FiGrid are hosted under FiFolders Pages. Legacy prefixes still resolve. */
 +export function hostBase(): string {
 +  const path = location.pathname;
-+  if (path === "/felarumi" || path.startsWith("/felarumi/")) return "/felarumi";
-+  if (path === "/felanumio" || path.startsWith("/felanumio/")) return "/felanumio";
++  const prefixes = ["/figrid", "/fipen", "/felanumio", "/felarumi"];
++  for (const prefix of prefixes) {
++    if (path === prefix || path.startsWith(`${prefix}/`)) return prefix;
++  }
 +  return "";
 +}
 +
-+/** App route, after a Pages 404 redirect (`?spa=`) or the /felarumi and /felanumio prefix. */
++/** App route, after a Pages 404 redirect (`?spa=`) or the editor prefix. */
 +export function routePath(): string {
 +  const spa = new URLSearchParams(location.search).get("spa");
 +  if (spa) return spa.startsWith("/") ? spa : `/${spa}`;
@@ -195,8 +342,153 @@ index 0000000..c5d4a6c
 +  const query = params.toString();
 +  return path + (query ? `?${query}` : "") + (hash ? `#${hash}` : "");
 +}
+diff --git a/p2p/tests/folders.test.ts b/p2p/tests/folders.test.ts
+index b8c2620..caac689 100644
+--- a/p2p/tests/folders.test.ts
++++ b/p2p/tests/folders.test.ts
+@@ -6,6 +6,8 @@ import {
+   CALIBRATION_REGISTRY,
+   FELANUMIO_DIR,
+   FELARUMI_DIR,
++  FIGRID_DIR,
++  FIPEN_DIR,
+   NO_REGISTRY_NOTICE,
+   VOLUME_NAME,
+   listSnapshots,
+@@ -33,15 +35,15 @@ describe("filecoin folders", () => {
+   });
+ 
+   it("saves docs and sheets on volume default and reads them back", async () => {
+-    assert.equal(snapshotPath("felarumi", "My/Doc"), "/Felarumi/My Doc.felarumi");
+-    assert.equal(snapshotPath("felanumio", ""), "/Felanumio/Untitled.felanumio");
++    assert.equal(snapshotPath("felarumi", "My/Doc"), "/FiPen/My Doc.fipen");
++    assert.equal(snapshotPath("felanumio", ""), "/FiGrid/Untitled.figrid");
+     const { storage, registry } = memoryVolumeParts(OWNER);
+     const doc = new TextEncoder().encode('{"kind":"felarumi-p2p","contentCid":"bafyunsigned"}');
+     const book = new TextEncoder().encode('{"kind":"felanumio-p2p"}');
+     const saved = await saveSnapshot({ kind: "felarumi", title: "Notes", bytes: doc, owner: OWNER, storage, registry });
+     const sheet = await saveSnapshot({ kind: "felanumio", title: "Budget", bytes: book, owner: OWNER, storage, registry });
+-    assert.equal(saved.path, "/Felarumi/Notes.felarumi");
+-    assert.equal(sheet.path, "/Felanumio/Budget.felanumio");
++    assert.equal(saved.path, "/FiPen/Notes.fipen");
++    assert.equal(sheet.path, "/FiGrid/Budget.figrid");
+     assert.equal(saved.version, 1n);
+     assert.equal(sheet.version, 2n);
+     assert.notEqual(saved.rootCid, sheet.rootCid);
+@@ -49,8 +51,10 @@ describe("filecoin folders", () => {
+ 
+     const volume = await openCalibrationVolume({ storage, registry, owner: OWNER });
+     assert.equal(volume.name, VOLUME_NAME);
+-    const docs = await listSnapshots(volume, FELARUMI_DIR);
+-    const sheets = await listSnapshots(volume, FELANUMIO_DIR);
++    const docs = await listSnapshots(volume, FIPEN_DIR);
++    const sheets = await listSnapshots(volume, FIGRID_DIR);
++    assert.deepEqual(await listSnapshots(volume, FELARUMI_DIR), []);
++    assert.deepEqual(await listSnapshots(volume, FELANUMIO_DIR), []);
+     assert.deepEqual(docs.map((entry) => entry.path), [saved.path]);
+     assert.deepEqual(sheets.map((entry) => entry.path), [sheet.path]);
+     assert.equal(new TextDecoder().decode(await volume.get(saved.path)), new TextDecoder().decode(doc));
+@@ -76,6 +80,8 @@ describe("filecoin folders", () => {
+   it("lists an empty folder as no files", async () => {
+     const { storage, registry } = memoryVolumeParts(OWNER);
+     const volume = await openVolume({ storage, registry, owner: OWNER, name: VOLUME_NAME });
++    assert.deepEqual(await listSnapshots(volume, FIPEN_DIR), []);
++    assert.deepEqual(await listSnapshots(volume, FIGRID_DIR), []);
+     assert.deepEqual(await listSnapshots(volume, FELARUMI_DIR), []);
+     assert.deepEqual(await listSnapshots(volume, FELANUMIO_DIR), []);
+     assert.deepEqual(await volumeHistory(volume), []);
+diff --git a/public/figrid.svg b/public/figrid.svg
+new file mode 100644
+index 0000000..f4fa782
+--- /dev/null
++++ b/public/figrid.svg
+@@ -0,0 +1,16 @@
++<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
++  <!-- Original FiGrid mark: a folded-corner page with a 3 by 3 grid. Not a third-party logo. -->
++  <path fill="#178F4B" d="M6 4h13l7 7v17H6z"/>
++  <path fill="#D9F5E5" d="M19 4v7h7z"/>
++  <g fill="#fff">
++    <rect x="9" y="13" width="3.6" height="3.6"/>
++    <rect x="13.6" y="13" width="3.6" height="3.6"/>
++    <rect x="18.2" y="13" width="3.6" height="3.6"/>
++    <rect x="9" y="17.6" width="3.6" height="3.6"/>
++    <rect x="13.6" y="17.6" width="3.6" height="3.6"/>
++    <rect x="18.2" y="17.6" width="3.6" height="3.6"/>
++    <rect x="9" y="22.2" width="3.6" height="3.6"/>
++    <rect x="13.6" y="22.2" width="3.6" height="3.6"/>
++    <rect x="18.2" y="22.2" width="3.6" height="3.6"/>
++  </g>
++</svg>
+diff --git a/public/fipen.svg b/public/fipen.svg
+new file mode 100644
+index 0000000..534ec5f
+--- /dev/null
++++ b/public/fipen.svg
+@@ -0,0 +1,8 @@
++<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
++  <!-- Original FiPen mark: fountain-pen nib over a folded-corner page. Not a third-party logo. -->
++  <path fill="#0090FF" d="M6 4h13l7 7v17H6z"/>
++  <path fill="#D6EBFF" d="M19 4v7h7z"/>
++  <path fill="#fff" d="M16 7.5c-3.4 4.2-4.6 8-4.6 11.2 0 2.55 2.05 4.6 4.6 4.6s4.6-2.05 4.6-4.6c0-3.2-1.2-7-4.6-11.2z"/>
++  <path fill="#0090FF" d="M15.25 12.2h1.5V20h-1.5z"/>
++  <circle cx="16" cy="14.1" r="1.15" fill="#0090FF"/>
++</svg>
+diff --git a/public/index.html b/public/index.html
+index 3306727..07427dc 100644
+--- a/public/index.html
++++ b/public/index.html
+@@ -3,17 +3,17 @@
+ <head>
+   <meta charset="utf-8">
+   <meta name="viewport" content="width=device-width, initial-scale=1">
+-  <title>Felarumi</title>
+-  <link rel="icon" href="/favicon.png" type="image/png">
+-  <link rel="apple-touch-icon" href="/icon.png">
++  <title>FiPen</title>
++  <link rel="icon" href="/fipen.svg" type="image/svg+xml">
++  <link rel="apple-touch-icon" href="/fipen.svg">
+   <link rel="stylesheet" href="/fonts/fonts.css">
+   <link rel="stylesheet" href="/app.css">
+ </head>
+ <body>
+   <div id="home" hidden>
+     <header class="home-bar">
+-      <img class="home-logo" src="/logo.png" alt="Felarumi">
+-      <a class="sheets-home" href="/sheets">Felanumio</a>
++      <img class="home-logo" src="/fipen.svg" alt="FiPen">
++      <a class="sheets-home" href="/sheets">FiGrid</a>
+     </header>
+     <main class="home-main">
+       <button type="button" id="blank" class="blank-card">
+@@ -29,7 +29,7 @@
+ 
+   <div id="editor" hidden>
+     <header class="topbar">
+-      <a class="mark-link" href="/" aria-label="Felarumi home"><img class="header-logo" src="/logo.png" alt=""></a>
++      <a class="mark-link" href="/" aria-label="FiPen home"><img class="header-logo" src="/fipen.svg" alt=""></a>
+       <div class="title-block">
+         <input id="title" aria-label="Document title" value="Untitled document" maxlength="200" autocomplete="off">
+         <div id="status" class="status">All changes saved</div>
+@@ -50,7 +50,7 @@
+           <button type="button" data-act="history">See version history</button>
+           <button type="button" data-act="name-version">Name current version</button>
+           <div class="menu-label">Download</div>
+-          <button type="button" data-act="download-felarumi">Felarumi (.felarumi)</button>
++          <button type="button" data-act="download-felarumi">FiPen (.fipen)</button>
+           <button type="button" data-act="download-docx">Word (.docx)</button>
+           <button type="button" data-act="download-odt">OpenDocument (.odt)</button>
+           <button type="button" data-act="download-pdf">PDF (.pdf)</button>
+@@ -361,7 +361,7 @@
+       <ul id="history-list"></ul>
+       <footer><button type="button" id="history-restore" hidden>Restore this version</button></footer>
+     </aside>
+-    <input id="import-file" type="file" accept=".felarumi,.docx,.odt,.html,.htm,.md,.txt,.json" hidden>
++    <input id="import-file" type="file" accept=".fipen,.felarumi,.docx,.odt,.html,.htm,.md,.txt,.json" hidden>
+     <div id="toast" hidden></div>
+     <nav id="tabs" hidden></nav>
+   </div>
 diff --git a/src/client/main.ts b/src/client/main.ts
-index 4d4de9b..5de74b7 100644
+index 4d4de9b..6ef6cbf 100644
 --- a/src/client/main.ts
 +++ b/src/client/main.ts
 @@ -1,3 +1,4 @@
@@ -213,7 +505,7 @@ index 4d4de9b..5de74b7 100644
    return m ? decodeURIComponent(m[1]) : null;
  }
  
-@@ -193,15 +194,14 @@ function p2pSecret(kind: "doc" | "book", id: string): string {
+@@ -193,20 +194,19 @@ function p2pSecret(kind: "doc" | "book", id: string): string {
  }
  
  function withWire(path: string, hash: string): string {
@@ -233,6 +525,57 @@ index 4d4de9b..5de74b7 100644
  }
  
  async function mountHome(): Promise<void> {
+   (document.querySelector("#home") as HTMLElement).hidden = false;
+-  document.title = "Felarumi";
++  document.title = "FiPen";
+   const recent = document.querySelector("#recent") as HTMLElement;
+   const blank = document.querySelector("#blank") as HTMLButtonElement;
+   blank.addEventListener("click", async () => {
+@@ -401,7 +401,7 @@ function mountEditor(id: string, shareToken = ""): void {
+     const size = document.querySelector("#size") as HTMLSelectElement;
+     const sizeText = String(state.size);
+     if ([...size.options].some((o) => o.value === sizeText)) size.value = sizeText;
+-    document.title = (title.value || "Untitled document") + " - Felarumi";
++    document.title = (title.value || "Untitled document") + " - FiPen";
+     syncMode();
+     syncSigned();
+   };
+@@ -483,7 +483,7 @@ function mountEditor(id: string, shareToken = ""): void {
+ 
+   title.addEventListener("change", () => sendTitle());
+   title.addEventListener("input", () => {
+-    document.title = title.value + " - Felarumi";
++    document.title = title.value + " - FiPen";
+   });
+   let titleTimer = 0;
+   title.addEventListener("input", () => {
+@@ -538,7 +538,7 @@ function mountEditor(id: string, shareToken = ""): void {
+         .then((r) => r.json())
+         .then((body: { id: string }) => window.open(docUrl(body.id), "_blank", "noopener"));
+     },
+-    "download-felarumi": () => saveFile(safeName(title.value, ".felarumi"), new Blob([toFelarumi(title.value, editor.doc, editor.threads)], { type: "application/json" })),
++    "download-felarumi": () => saveFile(safeName(title.value, ".fipen"), new Blob([toFelarumi(title.value, editor.doc, editor.threads)], { type: "application/json" })),
+     "download-docx": () => void toDocx(editor.doc).then((buf) => saveFile(safeName(title.value, ".docx"), new Blob([buf]))),
+     "download-odt": () => void toOdt(editor.doc).then((buf) => saveFile(safeName(title.value, ".odt"), new Blob([buf]))),
+     "download-html": () => saveFile(safeName(title.value, ".html"), new Blob([toHtml(editor.doc, title.value)], { type: "text/html" })),
+@@ -579,7 +579,7 @@ function mountEditor(id: string, shareToken = ""): void {
+     citation: () => openCitation(),
+     bibliography: () => editor.insertBibliography(),
+     preferences: () => openPreferences(),
+-    addons: () => openDialog("Add-ons", "Felarumi does not run third-party add-ons or scripts."),
++    addons: () => openDialog("Add-ons", "FiPen does not run third-party add-ons or scripts."),
+     "menu-search": () => openMenuSearch(),
+     undo: () => editor.undo(),
+     redo: () => editor.redo(),
+@@ -999,7 +999,7 @@ function mountEditor(id: string, shareToken = ""): void {
+ 
+   async function importFile(file: File): Promise<void> {
+     const name = file.name.toLowerCase();
+-    if (name.endsWith(".felarumi") || name.endsWith(".json")) importBundle(fromFelarumi(await file.text()));
++    if (name.endsWith(".fipen") || name.endsWith(".felarumi") || name.endsWith(".json")) importBundle(fromFelarumi(await file.text()));
+     else if (name.endsWith(".docx")) editor.replaceDocument(await fromDocx(new Uint8Array(await file.arrayBuffer())));
+     else if (name.endsWith(".md") || name.endsWith(".markdown")) editor.replaceDocument(fromMarkdown(await file.text()));
+     else if (name.endsWith(".html") || name.endsWith(".htm")) editor.replaceDocument(fromHtml(await file.text()));
 @@ -2310,12 +2310,13 @@ function bindMenus(editor: Editor, actions: Record<string, () => void>): void {
  }
  
@@ -249,3 +592,27 @@ index 4d4de9b..5de74b7 100644
    if (linked) {
      void fetch("/api/open/" + encodeURIComponent(linked[2]))
        .then((res) => (res.ok ? res.json() : null))
+diff --git a/src/server/index.ts b/src/server/index.ts
+index ee894f9..3da4c77 100644
+--- a/src/server/index.ts
++++ b/src/server/index.ts
+@@ -358,5 +358,5 @@ server.on("upgrade", (req, socket, head) => {
+ });
+ 
+ server.listen(PORT, HOST, () => {
+-  console.log(`Felarumi listening on http://${HOST}:${PORT}`);
++  console.log(`FiPen listening on http://${HOST}:${PORT}`);
+ });
+diff --git a/src/shared/spell.ts b/src/shared/spell.ts
+index e667079..b5e9de5 100644
+--- a/src/shared/spell.ts
++++ b/src/shared/spell.ts
+@@ -15,7 +15,7 @@ export const DEFAULT_SUBS: Record<string, string> = {
+   "...": "…",
+ };
+ 
+-const EXTRA = new Set(["felarumi", "felanumio"]);
++const EXTRA = new Set(["felarumi", "felanumio", "fipen", "figrid"]);
+ 
+ export interface SpellHit {
+   start: number;

@@ -3,7 +3,7 @@ import http from "node:http";
 import path from "node:path";
 
 const dist = path.resolve(process.argv[2] || "apps/fifolders/dist");
-const routes = ["/", "/felarumi/", "/felanumio/"];
+const routes = ["/", "/fipen/", "/figrid/", "/felarumi/", "/felanumio/"];
 
 function localFile(urlPath) {
   const clean = decodeURIComponent(urlPath.split("?")[0]);
@@ -40,6 +40,22 @@ await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
 const { port } = server.address();
 const origin = `http://127.0.0.1:${port}`;
 const missing = [];
+
+for (const [file, needle] of [
+  ["felarumi/index.html", "/fipen/"],
+  ["felanumio/index.html", "/figrid/"],
+  ["404.html", "/fipen"],
+  ["404.html", "/figrid"],
+  ["fipen/favicon.svg", "#0090FF"],
+  ["figrid/favicon.svg", "#178F4B"],
+]) {
+  const full = path.join(dist, file);
+  if (!fs.existsSync(full)) {
+    missing.push(`${file} missing`);
+    continue;
+  }
+  if (!fs.readFileSync(full, "utf8").includes(needle)) missing.push(`${file} missing ${needle}`);
+}
 
 for (const route of routes) {
   const page = await fetch(origin + route);
