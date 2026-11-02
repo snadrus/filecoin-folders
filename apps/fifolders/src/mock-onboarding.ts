@@ -12,7 +12,7 @@ import {
   paymentsReady,
   saveLastDataset,
   saveSession,
-  sessionUsable,
+  sessionGateFromExpiries,
   walletStorageKey,
   type DatasetRecord,
   type WalletPanel,
@@ -71,6 +71,12 @@ export function createMockOnboarding(params: URLSearchParams): OnboardingIO {
     return raw ? BigInt(raw) : 0n;
   }
 
+  /** One on-chain expiry stands in for every required permission. */
+  function permissionExpiries(sessionAddress: string): bigint[] {
+    const expiry = expiryFor(sessionAddress);
+    return [expiry, expiry, expiry, expiry, expiry];
+  }
+
   function datasets(): DatasetRecord[] {
     try {
       const parsed = JSON.parse(localStorage.getItem(DATASETS_KEY) || "[]") as DatasetRecord[];
@@ -84,7 +90,8 @@ export function createMockOnboarding(params: URLSearchParams): OnboardingIO {
     const now = BigInt(Math.floor(Date.now() / 1000));
     const stored = loadSession(MOCK_CHAIN_ID, MOCK_ADDRESS);
     const onchain = stored ? expiryFor(stored.sessionAddress) : 0n;
-    const sessionReady = sessionUsable(stored, now) && onchain > now;
+    const gate = stored ? sessionGateFromExpiries(permissionExpiries(stored.sessionAddress), now) : "expired";
+    const sessionReady = Boolean(stored && gate !== "expired");
     const list = datasets();
     const chosen = chooseDataset(list, loadLastDataset(MOCK_CHAIN_ID, MOCK_ADDRESS));
     const deposited = localStorage.getItem(PAYMENTS_KEY) === "1";
@@ -137,12 +144,12 @@ export function createMockOnboarding(params: URLSearchParams): OnboardingIO {
       if (!connected) throw new Error("Connect a wallet first.");
       const now = BigInt(Math.floor(Date.now() / 1000));
       const stored = loadSession(MOCK_CHAIN_ID, MOCK_ADDRESS);
-      if (!force && sessionUsable(stored, now) && stored && expiryFor(stored.sessionAddress) > now) return;
+      if (!force && stored && sessionGateFromExpiries(permissionExpiries(stored.sessionAddress), now) !== "expired") return;
       report?.({ flow: "session", phase: "signing" });
       report?.({ flow: "session", phase: "submitted", hash: "0xsession" });
       report?.({ flow: "session", phase: "confirming", hash: "0xsession", blocks: 1, elapsedSec: 1 });
       signatures += SIGNATURES.sessionLogin;
-      const privateKey = generatePrivateKey();
+      const privateKey = stored?.privateKey ?? generatePrivateKey();
       const account = privateKeyToAccount(privateKey);
       const expiry = now + BigInt(SESSION_TTL_SEC);
       const next = book();
@@ -157,6 +164,13 @@ export function createMockOnboarding(params: URLSearchParams): OnboardingIO {
         expiry: expiry.toString(),
       });
       report?.({ flow: "session", phase: "done", hash: "0xsession" });
+    },
+    async sessionGate() {
+      if (!connected) throw new Error("Connect a wallet first.");
+      const stored = loadSession(MOCK_CHAIN_ID, MOCK_ADDRESS);
+      if (!stored) return "expired";
+      const now = BigInt(Math.floor(Date.now() / 1000));
+      return sessionGateFromExpiries(permissionExpiries(stored.sessionAddress), now);
     },
     async fixPayments(_chain, report?: ChainReporter, force = false) {
       if (!connected) throw new Error("Connect a wallet first.");
@@ -224,6 +238,9 @@ export function createMockOnboarding(params: URLSearchParams): OnboardingIO {
         cas: observed.cas,
       };
       return session;
+    },
+    async reopen() {
+      return null;
     },
     disconnect() {
       connected = false;

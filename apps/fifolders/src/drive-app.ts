@@ -43,7 +43,7 @@ import {
   type SortKey,
   type ViewMode,
 } from "./model.js";
-import type { WalletPanel } from "./onboarding-logic.js";
+import { isSessionPermissionError, type SessionGate, type WalletPanel } from "./onboarding-logic.js";
 import { dropOp, isBlankFelContent, loadOps, newOp, OPS_CHANNEL, OPS_KEY, patchOp, upsertOp, type FifoldersOp, type OpKind } from "./ops.js";
 import {
   datasetBlurb,
@@ -130,6 +130,11 @@ export class DriveApp {
   onConnect?: DriveAppOptions["onConnect"];
   onSetupAction?: DriveAppOptions["onSetupAction"];
   onDisconnect?: DriveAppOptions["onDisconnect"];
+  /** Read on-chain session-key expirations before a session-key action. */
+  onEnsureSession?: () => Promise<SessionGate>;
+  /** `loginAndFund` on the stored key, then rebind live clients. Not queued. */
+  onRenewSession?: () => Promise<void>;
+  sessionPrompt: Exclude<SessionGate, "ok"> | null = null;
   wallets: { rdns: string; name: string }[] = [];
   walletRdns = "";
   panel: WalletPanel | null = null;
@@ -195,6 +200,8 @@ export class DriveApp {
   #draftReady = false;
   #restoredFromDisk = false;
   #baseline: { origins: Record<string, string>; stars: string[] } | null = null;
+  #renewing = false;
+  #renewWaiters: Array<() => void> = [];
 
   constructor(options: DriveAppOptions) {
     this.volume = options.volume;
@@ -272,6 +279,15 @@ export class DriveApp {
     this.setupError = error;
     this.connectError = "";
     this.render();
+    void this.readSessionPrompt().then(() => {
+      if (this.root) this.render();
+    });
+  }
+
+  /** Swap the open volume after a live session renewal. Mock storage stays put. */
+  replaceVolume(volume: Volume, cas: CasObserver): void {
+    this.volume = volume;
+    this.cas = cas;
   }
 
   detachToConnect(): void {
@@ -387,13 +403,17 @@ export class DriveApp {
       this.saveCurrentView();
       if (import.meta.env.VITE_E2E === "1") await persistMemoryVolume(this.volume, this.owner, this.volumeName);
     } catch (error) {
-      if (error instanceof NotFoundError && this.cwd !== "/") {
+      if (isSessionPermissionError(error)) {
+        this.sessionPrompt = "expired";
+      } else if (error instanceof NotFoundError && this.cwd !== "/") {
         this.cwd = "/";
         await this.refresh();
         return;
+      } else {
+        this.toast(errorText(error));
       }
-      this.toast(errorText(error));
     }
+    await this.readSessionPrompt();
     this.render();
   }
 
@@ -468,22 +488,112 @@ export class DriveApp {
     this.cas.takeMerged();
     this.render();
     try {
+      await this.ensureSession();
       await task();
-      const merged = this.cas.takeMerged();
-      this.busy = false;
-      if (merged) this.toast("Changes merged with a newer version of this volume.");
-      await this.refresh();
-      return true;
+      return await this.finishRun();
     } catch (error) {
-      this.cas.takeMerged();
-      this.busy = false;
-      this.toast(errorText(error));
-      try {
-        await this.refresh();
-      } catch {
-        this.render();
+      if (!isSessionPermissionError(error)) {
+        return this.failRun(error);
       }
-      return false;
+      try {
+        await this.waitForRenewal();
+        await task();
+        return await this.finishRun();
+      } catch (retryError) {
+        return this.failRun(retryError);
+      }
+    }
+  }
+
+  private async finishRun(): Promise<boolean> {
+    const merged = this.cas.takeMerged();
+    this.busy = false;
+    if (merged) this.toast("Changes merged with a newer version of this volume.");
+    await this.refresh();
+    return true;
+  }
+
+  private async failRun(error: unknown): Promise<boolean> {
+    this.cas.takeMerged();
+    this.busy = false;
+    this.toast(isSessionPermissionError(error) ? "Session expired — Renew (1 signature)" : errorText(error));
+    try {
+      await this.refresh();
+    } catch {
+      this.render();
+    }
+    return false;
+  }
+
+  /**
+   * Before a session-key action: block inside the safety margin and wait for Renew.
+   * Under one day, show the prompt and continue.
+   */
+  async ensureSession(): Promise<void> {
+    if (!this.onEnsureSession) return;
+    let gate: SessionGate;
+    try {
+      gate = await this.onEnsureSession();
+    } catch {
+      return;
+    }
+    this.applySessionGate(gate);
+    if (gate !== "expired") return;
+    await this.waitForRenewal();
+  }
+
+  /** Resolves when Renew finishes and the on-chain key is past the safety margin. */
+  waitForRenewal(): Promise<void> {
+    this.sessionPrompt = "expired";
+    if (this.root) this.render();
+    return new Promise((resolve) => {
+      this.#renewWaiters.push(resolve);
+    });
+  }
+
+  private applySessionGate(gate: SessionGate): void {
+    const next = gate === "ok" ? null : gate;
+    if (next === this.sessionPrompt) return;
+    this.sessionPrompt = next;
+    if (this.root) this.render();
+  }
+
+  private async readSessionPrompt(): Promise<void> {
+    if (!this.onEnsureSession || this.#renewWaiters.length > 0) return;
+    try {
+      const gate = await this.onEnsureSession();
+      this.sessionPrompt = gate === "ok" ? null : gate;
+    } catch {
+      // A failed expiry read must not hide a banner the action path already showed.
+    }
+  }
+
+  private async renewFromBanner(): Promise<void> {
+    if (this.#renewing) return;
+    if (!this.onRenewSession) {
+      this.toast("Connect a wallet first.");
+      this.render();
+      return;
+    }
+    this.#renewing = true;
+    try {
+      await this.onRenewSession();
+      let gate: SessionGate = "ok";
+      try {
+        gate = this.onEnsureSession ? await this.onEnsureSession() : "ok";
+      } catch {
+        gate = "ok";
+      }
+      this.sessionPrompt = gate === "ok" ? null : gate;
+      this.render();
+      if (gate === "expired") return;
+      const waiters = this.#renewWaiters.splice(0);
+      for (const resolve of waiters) resolve();
+    } catch (error) {
+      this.toast(isSessionPermissionError(error) ? "Session expired — Renew (1 signature)" : errorText(error));
+      this.render();
+    } finally {
+      this.#renewing = false;
     }
   }
 
@@ -876,6 +986,10 @@ export class DriveApp {
     if (!target) return;
     const actionEl = target.closest<HTMLElement>("[data-action]");
     const action = actionEl?.getAttribute("data-action") ?? "";
+    if (action === "renew-session") {
+      void this.renewFromBanner();
+      return;
+    }
     if (
       action === "authorize" ||
       action === "fix-payments" ||
@@ -888,8 +1002,10 @@ export class DriveApp {
         try {
           await this.onSetupAction?.(action);
         } catch (error) {
-          this.setupError = errorText(error);
-          this.connectError = this.volume ? "" : errorText(error);
+          const message = isSessionPermissionError(error) ? "Session expired — Renew (1 signature)" : errorText(error);
+          this.setupError = message;
+          this.connectError = this.volume ? "" : message;
+          if (isSessionPermissionError(error)) this.sessionPrompt = "expired";
           this.render();
         }
       });
@@ -1814,6 +1930,7 @@ export class DriveApp {
       stagedCount: this.staged.length,
       restoreNote: this.restoreNote,
       autoSaveUploads: this.autoSaveUploads,
+      sessionPrompt: this.sessionPrompt,
     };
   }
 

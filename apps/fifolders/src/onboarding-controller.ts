@@ -1,6 +1,6 @@
 import type { ChainReport } from "./chain-step.js";
 import type { DriveApp } from "./drive-app.js";
-import { canEnter, type WalletPanel } from "./onboarding-logic.js";
+import { canEnter, isSessionPermissionError, type WalletPanel } from "./onboarding-logic.js";
 import type { OnboardingIO } from "./onboarding-io.js";
 import { storeEncrypt, storeVolumeName, type ChainChoice, type Session } from "./session.js";
 
@@ -29,10 +29,22 @@ export async function prepareOnboarding(app: DriveApp, io: OnboardingIO): Promis
     else if (action === "create-dataset") {
       const op = app.beginOp({ kind: "dataset", label: "Create dataset", stage: "pending" });
       try {
-        await io.createDataset({ chain, volumeName });
+        await app.ensureSession();
+        try {
+          await io.createDataset({ chain, volumeName });
+        } catch (error) {
+          if (!isSessionPermissionError(error)) throw error;
+          await app.waitForRenewal();
+          await io.createDataset({ chain, volumeName });
+        }
         app.finishOp(op);
       } catch (error) {
-        app.failOp(op, error instanceof Error ? error.message : "Dataset was not created.");
+        const message = isSessionPermissionError(error)
+          ? "Session expired — Renew (1 signature)"
+          : error instanceof Error
+            ? error.message
+            : "Dataset was not created.";
+        app.failOp(op, message);
         throw error;
       }
     }
@@ -57,6 +69,15 @@ export async function prepareOnboarding(app: DriveApp, io: OnboardingIO): Promis
   app.onDisconnect = () => {
     io.disconnect();
     app.detachToConnect();
+  };
+  app.onEnsureSession = () => io.sessionGate(app.chain);
+  app.onRenewSession = async () => {
+    await io.authorize(app.chain, true, (step) => app.noteChain(step));
+    if (app.volume) {
+      const session = await io.reopen({ chain: app.chain, volumeName: app.volumeName, encrypt: app.encrypted });
+      if (session) app.replaceVolume(session.volume, session.cas);
+    }
+    app.showPanel(await io.snapshot({ chain: app.chain, volumeName: app.volumeName }));
   };
 }
 
@@ -100,7 +121,22 @@ async function openDrive(
   io: OnboardingIO,
   input: { chain: ChainChoice; volumeName: string; encrypt: boolean },
 ): Promise<void> {
-  const session = await io.enter(input);
+  if (!app.panel) {
+    try {
+      app.showPanel(await io.snapshot(input));
+    } catch {
+      // The connect screen still hosts the renew banner if the snapshot cannot be read.
+    }
+  }
+  let session: Session;
+  try {
+    await app.ensureSession();
+    session = await io.enter(input);
+  } catch (error) {
+    if (!isSessionPermissionError(error)) throw error;
+    await app.waitForRenewal();
+    session = await io.enter(input);
+  }
   storeVolumeName(session.volumeName);
   storeEncrypt(session.chain, session.owner, session.volumeName, session.encrypted);
   const panel = await io.snapshot(input);

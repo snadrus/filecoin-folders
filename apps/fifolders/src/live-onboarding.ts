@@ -5,6 +5,7 @@ import {
   DeleteDataSetPermission,
   SchedulePieceRemovalsPermission,
   fromSecp256k1,
+  getExpirations,
 } from "@filoz/synapse-core/session-key";
 import { createSynapseStorage, createViemRegistry, folderCommitPermission, folderRegistryAbi, openVolume } from "fil-folders";
 import {
@@ -39,9 +40,12 @@ import {
   paymentsReady,
   saveLastDataset,
   saveSession,
+  sessionGateFromExpiries,
   sessionUsable,
+  SESSION_PERMISSION_ERROR,
   walletStorageKey,
   type DatasetRecord,
+  type SessionGate,
   type StoredSession,
   type WalletPanel,
 } from "./onboarding-logic.js";
@@ -163,15 +167,36 @@ export function createLiveOnboarding(): OnboardingIO {
     if (!provider) throw new Error("No injected wallet found. Install a browser wallet such as MetaMask.");
   }
 
-  async function onchainExpiry(choice: ChainChoice, sessionAddress: Address): Promise<bigint> {
+  async function onchainExpiries(choice: ChainChoice, sessionAddress: Address): Promise<bigint[]> {
+    const permissions = fifoldersPermissions();
+    // viem types the public client's chain as optional; this client was created with one.
+    const expirations = await getExpirations(publicClient(choice) as never, {
+      address: requireRoot(),
+      sessionKeyAddress: sessionAddress,
+      permissions,
+    });
+    return permissions.map((permission) => expirations[permission] ?? 0n);
+  }
+
+  function rememberSoonest(stored: StoredSession, expiries: readonly bigint[]): void {
+    if (!expiries.length) return;
+    const soonest = expiries.reduce((min, value) => (value < min ? value : min));
+    if (soonest <= 0n || stored.expiry === soonest.toString()) return;
+    saveSession({ ...stored, expiry: soonest.toString() });
+  }
+
+  async function gateFor(choice: ChainChoice): Promise<SessionGate> {
     const chain = chainOf(choice);
-    const client = publicClient(choice);
-    return (await client.readContract({
-      address: chain.contracts.sessionKeyRegistry.address,
-      abi: chain.contracts.sessionKeyRegistry.abi,
-      functionName: "authorizationExpiry",
-      args: [requireRoot(), sessionAddress, folderCommitPermission()],
-    })) as bigint;
+    const stored = loadSession(chain.id, requireRoot());
+    if (!stored) return "expired";
+    const now = BigInt(Math.floor(Date.now() / 1000));
+    try {
+      const expiries = await onchainExpiries(choice, stored.sessionAddress);
+      rememberSoonest(stored, expiries);
+      return sessionGateFromExpiries(expiries, now);
+    } catch {
+      return sessionUsable(stored, now) ? "ok" : "expired";
+    }
   }
 
   async function listDatasets(choice: ChainChoice): Promise<DatasetRecord[]> {
@@ -251,15 +276,19 @@ export function createLiveOnboarding(): OnboardingIO {
       ]);
       const stored = loadSession(chain.id, address);
       const now = BigInt(Math.floor(Date.now() / 1000));
-      let onchain = 0n;
-      if (stored && sessionUsable(stored, now)) {
+      let gate: SessionGate = "expired";
+      let soonest = stored ? BigInt(stored.expiry) : 0n;
+      if (stored) {
         try {
-          onchain = await onchainExpiry(input.chain, stored.sessionAddress);
+          const expiries = await onchainExpiries(input.chain, stored.sessionAddress);
+          rememberSoonest(stored, expiries);
+          gate = sessionGateFromExpiries(expiries, now);
+          if (expiries.length) soonest = expiries.reduce((min, value) => (value < min ? value : min));
         } catch {
-          onchain = 0n;
+          gate = sessionUsable(stored, now) ? "ok" : "expired";
         }
       }
-      const sessionReady = Boolean(stored && sessionUsable(stored, now) && onchain > now);
+      const sessionReady = Boolean(stored && gate !== "expired");
       const remembered = selectedDataset || loadLastDataset(chain.id, address);
       const chosen = chooseDataset(datasets, remembered);
       selectedDataset = chosen.selectedId ?? "";
@@ -273,7 +302,7 @@ export function createLiveOnboarding(): OnboardingIO {
         lockupRate: pay.lockupRate.toString(),
         paymentsReady: paymentsReady(pay.deposited, pay.approved),
         sessionReady,
-        sessionExpiry: sessionReady && stored ? formatExpiry(BigInt(stored.expiry)) : "",
+        sessionExpiry: sessionReady ? formatExpiry(soonest) : "",
         datasets,
         selectedDatasetId: selectedDataset,
         createPrimary: datasets.length === 0,
@@ -287,11 +316,8 @@ export function createLiveOnboarding(): OnboardingIO {
       const chain = chainOf(choice);
       const now = BigInt(Math.floor(Date.now() / 1000));
       const existing = loadSession(chain.id, address);
-      if (!force && existing && sessionUsable(existing, now)) {
-        const expiry = await onchainExpiry(choice, existing.sessionAddress);
-        if (expiry > now) return;
-      }
-      const privateKey = generatePrivateKey();
+      if (!force && existing && (await gateFor(choice)) !== "expired") return;
+      const privateKey = existing?.privateKey ?? generatePrivateKey();
       const sessionKey = fromSecp256k1({
         privateKey,
         root: address,
@@ -325,6 +351,9 @@ export function createLiveOnboarding(): OnboardingIO {
         expiry: expiresAt.toString(),
       };
       saveSession(stored);
+    },
+    sessionGate(choice) {
+      return gateFor(choice);
     },
     async fixPayments(choice, report?: ChainReporter, force = false) {
       const address = requireRoot();
@@ -462,6 +491,9 @@ export function createLiveOnboarding(): OnboardingIO {
       };
       return opened;
     },
+    async reopen(input) {
+      return this.enter(input);
+    },
     disconnect() {
       root = null;
       provider = null;
@@ -491,8 +523,11 @@ export function createLiveOnboarding(): OnboardingIO {
     try {
       await sessionKey.syncExpirations(fifoldersPermissions());
     } catch {
-      // The stored expiry still lets local signing proceed. The chain check happens on the next snapshot.
+      // A failed read keeps the stored expirations. Synapse.create still rejects a dead key.
     }
+    const now = BigInt(Math.floor(Date.now() / 1000));
+    const expiries = fifoldersPermissions().map((permission) => sessionKey.expirations[permission] ?? 0n);
+    if (sessionGateFromExpiries(expiries, now) === "expired") throw new Error(SESSION_PERMISSION_ERROR);
     return sessionKey;
   }
 
