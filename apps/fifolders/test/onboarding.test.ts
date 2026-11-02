@@ -195,10 +195,17 @@ describe("expired session key renews and retries", () => {
     const volume = app.volume!;
     const original = volume.tx.bind(volume);
     let calls = 0;
+    let depth = 0;
     volume.tx = async (fn) => {
-      calls += 1;
-      if (calls === 1) throw new Error(SESSION_PERMISSION_ERROR);
-      return original(fn);
+      // Staged saves replay into the draft with nested tx calls; count top-level saves only.
+      if (depth === 0) calls += 1;
+      if (calls === 1 && depth === 0) throw new Error(SESSION_PERMISSION_ERROR);
+      depth += 1;
+      try {
+        return await original(fn);
+      } finally {
+        depth -= 1;
+      }
     };
     const pending = app.uploadFiles([new File(["again"], "retry.txt", { type: "text/plain" })]);
     await until(() => root.querySelector("[data-testid=session-renew]")?.getAttribute("data-prompt") === "expired");
