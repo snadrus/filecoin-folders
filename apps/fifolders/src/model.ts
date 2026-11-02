@@ -83,8 +83,8 @@ export function shortAddress(address: string): string {
 
 export function felKind(name: string): FelKind | null {
   const lower = name.toLowerCase();
-  if (lower.endsWith(".felarumi")) return "felarumi";
-  if (lower.endsWith(".felanumio")) return "felanumio";
+  if (lower.endsWith(".fipen") || lower.endsWith(".felarumi")) return "felarumi";
+  if (lower.endsWith(".figrid") || lower.endsWith(".felanumio")) return "felanumio";
   return null;
 }
 
@@ -224,7 +224,7 @@ export interface AppLinkExtra {
   path?: string;
   volume?: string;
   owner?: string;
-  /** Base URL used to resolve a relative editor path such as `./felarumi/`. */
+  /** Base URL used to resolve a relative editor path such as `./fipen/`. */
   href?: string;
 }
 

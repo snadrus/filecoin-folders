@@ -163,7 +163,7 @@ describe("DriveApp", () => {
     expect(root.textContent).toContain("/same.txt");
   });
 
-  it("creates a blank Felarumi document and Felanumio spreadsheet, then opens them", async () => {
+  it("creates a blank FiPen document and FiGrid spreadsheet, then opens them", async () => {
     const opened: string[] = [];
     const previous = window.open;
     window.open = ((url?: string | URL) => {
@@ -173,20 +173,22 @@ describe("DriveApp", () => {
     try {
       const { app, root, session } = await mountMock();
       root.querySelector<HTMLButtonElement>("[data-testid=new-button]")!.click();
+      expect(root.querySelector("[data-action=new-felarumi]")?.textContent).toContain("FiPen document");
+      expect(root.querySelector("[data-action=new-felanumio]")?.textContent).toContain("FiGrid spreadsheet");
       root.querySelector<HTMLButtonElement>("[data-action=new-felarumi]")!.click();
       const input = root.querySelector<HTMLInputElement>("[data-testid=dialog-input]")!;
       input.value = "Notes";
       input.form?.requestSubmit();
       await app.settled;
-      const pending = entry(root, "Notes.felarumi");
+      const pending = entry(root, "Notes.fipen");
       expect(pending?.dataset.kind).toBe("felarumi");
       expect(pending?.textContent).toContain("Save pending");
-      await expect(session.volume.stat("/Felarumi/Notes.felarumi")).rejects.toThrow();
+      await expect(session.volume.stat("/FiPen/Notes.fipen")).rejects.toThrow();
       const docUrl = new URL(opened[0] ?? "");
       expect(docUrl.origin).toBe("https://felarumi.example");
       expect(docUrl.searchParams.get("fifolders")).toBe("1");
-      expect(docUrl.searchParams.get("name")).toBe("Notes.felarumi");
-      expect(docUrl.searchParams.get("path")).toBe("/Felarumi/Notes.felarumi");
+      expect(docUrl.searchParams.get("name")).toBe("Notes.fipen");
+      expect(docUrl.searchParams.get("path")).toBe("/FiPen/Notes.fipen");
       expect(docUrl.searchParams.get("pieceCid")).toBeNull();
 
       root.querySelector<HTMLButtonElement>("[data-testid=new-button]")!.click();
@@ -195,15 +197,42 @@ describe("DriveApp", () => {
       sheetInput.value = "Budget.felanumio";
       sheetInput.form?.requestSubmit();
       await app.settled;
-      await expect(session.volume.stat("/Felanumio/Budget.felanumio")).rejects.toThrow();
-      expect(entry(root, "Budget.felanumio")?.textContent).toContain("Save pending");
+      await expect(session.volume.stat("/FiGrid/Budget.figrid")).rejects.toThrow();
+      expect(entry(root, "Budget.figrid")?.textContent).toContain("Save pending");
       const sheetUrl = new URL(opened[1] ?? "");
       expect(sheetUrl.origin).toBe("https://felanumio.example");
-      expect(sheetUrl.searchParams.get("name")).toBe("Budget.felanumio");
-      expect(sheetUrl.searchParams.get("path")).toBe("/Felanumio/Budget.felanumio");
+      expect(sheetUrl.searchParams.get("name")).toBe("Budget.figrid");
+      expect(sheetUrl.searchParams.get("path")).toBe("/FiGrid/Budget.figrid");
     } finally {
       window.open = previous;
     }
+  });
+
+  it("still lists a legacy Felarumi folder and file", async () => {
+    const session = await openMockSession();
+    await session.volume.mkdir("/Felarumi");
+    await session.volume.put("/Felarumi/Old.felarumi", new TextEncoder().encode("{}"), { mime: "application/json" });
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const app = new DriveApp({
+      volume: session.volume,
+      owner: session.owner,
+      chain: "calibration",
+      encrypted: false,
+      volumeName: session.volumeName,
+      cas: session.cas,
+      felarumiUrl: "https://felarumi.example",
+      felanumioUrl: "https://felanumio.example",
+    });
+    app.mount(root);
+    await app.settled;
+    const folder = entry(root, "Felarumi");
+    expect(folder?.dataset.type).toBe("dir");
+    folder!.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    await app.settled;
+    const file = entry(root, "Old.felarumi");
+    expect(file?.dataset.kind).toBe("felarumi");
+    expect(file?.querySelector(".fel-icon")).toBeTruthy();
   });
 
   it("keeps a new folder staged across refresh and prompts before unload", async () => {

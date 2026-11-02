@@ -560,7 +560,7 @@ export class DriveApp {
       this.render();
       return;
     }
-    const dir = kind === "felarumi" ? "/Felarumi" : "/Felanumio";
+    const dir = kind === "felarumi" ? "/FiPen" : "/FiGrid";
     const taken = new Set(
       loadOps()
         .filter((op) => op.path && parentPath(op.path) === dir)
@@ -1004,7 +1004,7 @@ export class DriveApp {
       const sheet = action === "new-felanumio";
       this.dialog = {
         mode: action,
-        title: sheet ? "Felanumio spreadsheet" : "Felarumi document",
+        title: sheet ? "FiGrid spreadsheet" : "FiPen document",
         submit: "Create",
         value: "",
       };
@@ -1228,12 +1228,12 @@ export class DriveApp {
     }
     if (target.dataset.testid === "felarumi-url") {
       this.felarumiUrl = target.value;
-      localStorage.setItem("fifolders:felarumi-url", target.value);
+      localStorage.setItem("fifolders:fipen-url", target.value);
       return;
     }
     if (target.dataset.testid === "felanumio-url") {
       this.felanumioUrl = target.value;
-      localStorage.setItem("fifolders:felanumio-url", target.value);
+      localStorage.setItem("fifolders:figrid-url", target.value);
       return;
     }
     if (target.dataset.testid === "dialog-input" && this.dialog && this.dialog.mode !== "move") {
@@ -1548,7 +1548,7 @@ export class DriveApp {
     const byPath = new Map(entries.map((entry) => [entry.path, entry]));
     const cwd = this.cwd || "/";
     if (cwd === "/" && this.nav === "drive") {
-      for (const name of ["Felarumi", "Felanumio"]) {
+      for (const name of ["FiPen", "FiGrid", "Felarumi", "Felanumio"]) {
         const path = `/${name}`;
         if (ops.some((op) => op.path?.startsWith(`${path}/`)) && !byPath.has(path)) {
           byPath.set(path, { name, path, type: "dir", size: 0, mtime: Date.now() });

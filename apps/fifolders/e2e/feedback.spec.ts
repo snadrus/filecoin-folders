@@ -3,7 +3,7 @@ import { expect, test } from "@playwright/test";
 test("costs come first, the new button is prominent, and a document opens beside the drive", async ({ page }) => {
   await page.goto("/?onboard=1&pay=ready&datasets=1");
   await expect(page.getByTestId("costs")).toBeVisible();
-  await expect(page.getByText("Felarumi documents and Felanumio spreadsheets are included")).toBeVisible();
+  await expect(page.getByText("FiPen documents and FiGrid spreadsheets are included")).toBeVisible();
   await page.getByTestId("cost-gb").fill("4");
   await expect(page.getByTestId("cost-estimate")).toContainText("per month");
   await expect(page.getByTestId("cost-deposit")).toContainText("Connect a wallet");
@@ -24,14 +24,14 @@ test("costs come first, the new button is prominent, and a document opens beside
 
   await page.getByTestId("new-button").click();
   const popupPromise = page.context().waitForEvent("page");
-  await page.getByRole("button", { name: "Felarumi document" }).click();
+  await page.getByRole("button", { name: "FiPen document" }).click();
   await page.getByTestId("dialog-input").fill("Letter");
   await page.getByTestId("dialog-submit").click();
   const popup = await popupPromise;
-  expect(popup.url()).toContain("felarumi");
+  expect(popup.url()).toContain("fipen");
   expect(popup.url()).toContain("fifolders=1");
-  expect(decodeURIComponent(popup.url())).toContain("/Felarumi/Letter.felarumi");
-  await expect(page.getByTestId("entry").filter({ hasText: "Letter.felarumi" })).toContainText("Save pending");
+  expect(decodeURIComponent(popup.url())).toContain("/FiPen/Letter.fipen");
+  await expect(page.getByTestId("entry").filter({ hasText: "Letter.fipen" })).toContainText("Save pending");
   await expect(page.getByTestId("nav-drive")).toBeVisible();
 });
 

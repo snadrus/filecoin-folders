@@ -42,13 +42,13 @@ A volume is the registry head for `(wallet, keccak256("fil-folders"), keccak256(
 | Log scan start | block 4207373 |
 | RPC | `https://api.calibration.node.glif.io/rpc/v1` |
 
-Encryption is optional per volume. The choice is stored in the browser and applied the next time that volume is opened. Renames, moves, trash, and new folders stay in the browser until **Save N changes** in the top bar (Discard throws them away). A multi-file drop saves as one piece when **Auto-save uploads** is on (the default, in the account menu). Turning it off leaves uploads in that same unsaved list. The list is in `localStorage` and comes back after a refresh. Leaving the page with unsaved changes prompts first. Each Save is one activity row. Felarumi and Felanumio keep their own save. Each of those is one piece holding the document bytes and the manifest entry for that file, including the first save that creates the file. A manifest-only piece is only a rename, move, trash, or new folder. If another writer lands first, non-overlapping paths merge and a toast says so. A real path conflict names the paths and leaves the previous snapshot in place.
+Encryption is optional per volume. The choice is stored in the browser and applied the next time that volume is opened. Renames, moves, trash, and new folders stay in the browser until **Save N changes** in the top bar (Discard throws them away). A multi-file drop saves as one piece when **Auto-save uploads** is on (the default, in the account menu). Turning it off leaves uploads in that same unsaved list. The list is in `localStorage` and comes back after a refresh. Leaving the page with unsaved changes prompts first. Each Save is one activity row. FiPen and FiGrid keep their own save. Each of those is one piece holding the document bytes and the manifest entry for that file, including the first save that creates the file. A manifest-only piece is only a rename, move, trash, or new folder. If another writer lands first, non-overlapping paths merge and a toast says so. A real path conflict names the paths and leaves the previous snapshot in place.
 
 Trash is the `/.trash` folder. Restore uses the original path remembered in localStorage.
 
-`.felarumi` and `.felanumio` files use their own icons and open in a new tab. The default URLs are `./felarumi/` and `./felanumio/` on this same site, so the editor and FiFolders share `localStorage` and a `BroadcastChannel` named `fifolders-ops`. A developer can override those URLs from Advanced in the account menu, or with `VITE_FELARUMI_URL` and `VITE_FELANUMIO_URL`.
+`.fipen` and `.figrid` files use their own icons and open in a new tab. Older `.felarumi` and `.felanumio` files still open the same way. The default URLs are `./fipen/` and `./figrid/` on this same site. `/felarumi/` and `/felanumio/` redirect there. The editor and FiFolders share `localStorage` and a `BroadcastChannel` named `fifolders-ops`. A developer can override those URLs from Advanced in the account menu, or with `VITE_FIPEN_URL` and `VITE_FIGRID_URL` (`VITE_FELARUMI_URL` and `VITE_FELANUMIO_URL` still work).
 
-New → Felarumi document opens a blank editor at `/Felarumi/<name>.felarumi` and leaves a Save pending row. New → Felanumio spreadsheet does the same under `/Felanumio`. Nothing is uploaded until the editor writes real content into the shared ops record. The row then shows Saving… and, once the piece is in the volume, Saved.
+New → FiPen document opens a blank editor at `/FiPen/<name>.fipen` and leaves a Save pending row. New → FiGrid spreadsheet does the same under `/FiGrid`. Folders already named `/Felarumi` or `/Felanumio` stay in the list. Nothing is uploaded until the editor writes real content into the shared ops record. The row then shows Saving… and, once the piece is in the volume, Saved.
 
 The empty templates the editors start from are:
 
@@ -66,7 +66,7 @@ The empty templates the editors start from are:
 pnpm --filter fifolders build
 ```
 
-Serve `apps/fifolders/dist`. `base` is `./`. Pushes to `main` publish that directory to GitHub Pages for `fidrive.scionbase.ai` (`.github/workflows/pages.yml`). The workflow also checks out `snadrus/collab-edit` at the `p2p` ref (`workflow_dispatch` input `collab_ref`, or `repository_dispatch` client payload `ref`), applies `scripts/collab-edit-p2p.patch` when that branch does not already contain it, and copies the static editors to `dist/felarumi/` and `dist/felanumio/`. This token cannot push that patch to `collab-edit`; the Pages build applies it locally.
+Serve `apps/fifolders/dist`. `base` is `./`. Pushes to `main` publish that directory to GitHub Pages for `fidrive.scionbase.ai` (`.github/workflows/pages.yml`). The workflow also checks out `snadrus/collab-edit` at the `p2p` ref (`workflow_dispatch` input `collab_ref`, or `repository_dispatch` client payload `ref`), applies `scripts/collab-edit-p2p.patch` when that branch does not already contain it, and copies the static editors to `dist/fipen/` and `dist/figrid/`. `dist/felarumi/` and `dist/felanumio/` are redirects. This token cannot push that patch to `collab-edit`; the Pages build applies it locally.
 
 Small pieces are padded to at least 127 bytes before PDP upload and restored on read. The left bar shows the dataset total and how long the Filecoin Pay balance covers the current per-epoch rate. In-flight uploads, saves, deposits, and registry commits stay in `localStorage` under `fifolders:ops` so a refresh can show them again and drop them once the chain has the piece.
 
@@ -81,7 +81,7 @@ Unit tests use vitest and happy-dom. The browser suite runs against an in-memory
 
 ## Mark
 
-The logo is an original folder shape: a dark body, a `#0090FF` tab, and a `#0090FF` disc. It is not the Filecoin logo. Icons are [Material Symbols](https://github.com/google/material-design-icons) (Apache-2.0). Text is [Roboto](https://fonts.google.com/specimen/Roboto) (OFL). `.felarumi` and `.felanumio` icons are original SVGs in `src/icons.ts`.
+The logo is an original folder shape: a dark body, a `#0090FF` tab, and a `#0090FF` disc. It is not the Filecoin logo. Icons are [Material Symbols](https://github.com/google/material-design-icons) (Apache-2.0). Text is [Roboto](https://fonts.google.com/specimen/Roboto) (OFL). FiPen is an original fountain-pen nib over a folded-corner page in `#0090FF`. FiGrid is an original folded-corner page in `#178F4B` with a 3 by 3 grid. Both marks are in `src/icons.ts`, with matching favicons at `public/fipen.svg` and `public/figrid.svg`.
 
 ## Screenshots
 
