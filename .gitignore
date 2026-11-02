@@ -9,3 +9,6 @@ contracts/out/
 contracts/cache/
 contracts/broadcast/
 coverage/
+apps/fifolders/test-results/
+apps/fifolders/playwright-report/
+apps/fifolders/blob-report/

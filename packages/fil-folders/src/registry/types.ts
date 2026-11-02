@@ -22,7 +22,7 @@ export interface RegistryCommit {
 
 export interface Registry {
   head(owner: Address, ns: Hex, key: Hex): Promise<{ pieceCid: Uint8Array; version: bigint }>;
-  /** Uses `commit` when the signer is `owner`, otherwise `commitFor`. */
+  /** Uses `commit` when the signer is `owner`. A session-key signer always uses `commitFor`. */
   commit(input: RegistryCommit): Promise<CommittedRecord>;
   setWriter(ns: Hex, writer: Address, allowed: boolean): Promise<void>;
   isWriter(owner: Address, ns: Hex, writer: Address): Promise<boolean>;

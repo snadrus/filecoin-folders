@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- Original FiFolders mark: folder silhouette, Filecoin-blue tab and disc. Not the Filecoin logo. -->
+  <path fill="#3c4043" d="M3 11.5h9.2l2.2 2.3H29V27H3z"/>
+  <path fill="#0090FF" d="M3 8h10.2l2 2.2H3z"/>
+  <circle cx="22.5" cy="20.5" r="4.2" fill="#0090FF"/>
+</svg>

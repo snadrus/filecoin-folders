@@ -23,6 +23,7 @@ import {
   RegistryNotAuthorized,
   bytesToPieceCid,
   createViemRegistry,
+  folderCommitPermission,
   folderRegistryAbi,
   namespaceId,
   openVolume,
@@ -32,17 +33,47 @@ import {
 
 const OWNER_KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80" as const;
 const WRITER_KEY = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d" as const;
+const SESSION_KEY = "0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a" as const;
 const contractsDir = fileURLToPath(new URL("../../../contracts", import.meta.url));
 
 const owner = privateKeyToAccount(OWNER_KEY);
 const writer = privateKeyToAccount(WRITER_KEY);
+const session = privateKeyToAccount(SESSION_KEY);
+
+const mockSessionAbi = [
+  {
+    type: "function",
+    name: "setExpiry",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "user", type: "address" },
+      { name: "signer", type: "address" },
+      { name: "permission", type: "bytes32" },
+      { name: "expiry", type: "uint256" },
+    ],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "authorizationExpiry",
+    stateMutability: "view",
+    inputs: [
+      { name: "user", type: "address" },
+      { name: "signer", type: "address" },
+      { name: "permission", type: "bytes32" },
+    ],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+] as const;
 
 let anvil: ChildProcess | undefined;
 let rpc = "";
 let address: Address;
+let keysAddress: Address;
 let publicClient: PublicClient;
 let ownerWallet: WalletClient;
 let writerWallet: WalletClient;
+let sessionWallet: WalletClient;
 
 const foundryEnv = (): NodeJS.ProcessEnv => {
   const bin = resolve(process.env.HOME ?? "", ".foundry/bin");
@@ -69,7 +100,9 @@ describe("viem registry on anvil", () => {
     publicClient = createPublicClient({ chain, transport });
     ownerWallet = createWalletClient({ account: owner, chain, transport });
     writerWallet = createWalletClient({ account: writer, chain, transport });
-    address = await deploy(chain.id);
+    sessionWallet = createWalletClient({ account: session, chain, transport });
+    keysAddress = await deployArtifact(chain.id, "MockSessionKeyRegistry.sol/MockSessionKeyRegistry.json", mockSessionAbi, []);
+    address = await deployArtifact(chain.id, "FolderRegistry.sol/FolderRegistry.json", folderRegistryAbi, [owner.address, keysAddress]);
   }, 120_000);
 
   afterAll(() => {
@@ -87,6 +120,12 @@ describe("viem registry on anvil", () => {
       functionName: "MAX_PIECE_CID_BYTES",
     });
     expect(limit).toBe(BigInt(PIECE_CID_MAX_BYTES));
+    const permission = await publicClient.readContract({
+      address,
+      abi: folderRegistryAbi,
+      functionName: "PERMISSION_COMMIT",
+    });
+    expect(permission).toBe(folderCommitPermission());
   });
 
   it("commits as the owner, commits for a writer, and revokes the writer", async () => {
@@ -147,6 +186,62 @@ describe("viem registry on anvil", () => {
     ).rejects.toBeInstanceOf(RegistryNotAuthorized);
   });
 
+  it("commits for the root wallet with a session key and rejects an unauthorized one", async () => {
+    const permission = folderCommitPermission();
+    const expiry = BigInt(Math.floor(Date.now() / 1000) + 3600);
+    const setHash = await ownerWallet.writeContract({
+      address: keysAddress,
+      abi: mockSessionAbi,
+      functionName: "setExpiry",
+      args: [owner.address, session.address, permission, expiry],
+      account: owner,
+      chain: ownerWallet.chain,
+    });
+    await publicClient.waitForTransactionReceipt({ hash: setHash });
+
+    const registry = createViemRegistry({
+      address,
+      publicClient,
+      walletClient: sessionWallet,
+      signer: "session-key",
+    });
+    const ns = namespaceId();
+    const key = volumeKey("session-volume");
+    const committed = await registry.commit({
+      owner: owner.address,
+      ns,
+      key,
+      pieceCid: pieceCidToBytes("mem:session"),
+      prevPieceCid: new Uint8Array(),
+    });
+    const tx = await publicClient.getTransaction({ hash: committed.txHash! });
+    expect(tx.input.startsWith(toFunctionSelector("commitFor(address,bytes32,bytes32,bytes,bytes)"))).toBe(true);
+    expect(tx.from.toLowerCase()).toBe(session.address.toLowerCase());
+    const head = await registry.head(owner.address, ns, key);
+    expect(bytesToPieceCid(head.pieceCid)).toBe("mem:session");
+    const ownHead = await registry.head(session.address, ns, key);
+    expect(ownHead.version).toBe(0n);
+
+    const clearHash = await ownerWallet.writeContract({
+      address: keysAddress,
+      abi: mockSessionAbi,
+      functionName: "setExpiry",
+      args: [owner.address, session.address, permission, 1n],
+      account: owner,
+      chain: ownerWallet.chain,
+    });
+    await publicClient.waitForTransactionReceipt({ hash: clearHash });
+    await expect(
+      registry.commit({
+        owner: owner.address,
+        ns,
+        key,
+        pieceCid: pieceCidToBytes("mem:later"),
+        prevPieceCid: pieceCidToBytes("mem:session"),
+      }),
+    ).rejects.toBeInstanceOf(RegistryNotAuthorized);
+  });
+
   it("drives a volume and merges a conflicting commit", async () => {
     const storage = new MemoryStorage();
     const registry = createViemRegistry({ address, publicClient, walletClient: ownerWallet });
@@ -188,13 +283,19 @@ function signatures(abi: readonly { type: string; name?: string; inputs?: readon
     .sort();
 }
 
-async function deploy(chainId: number): Promise<Address> {
-  const artifact = JSON.parse(readFileSync(resolve(contractsDir, "out/FolderRegistry.sol/FolderRegistry.json"), "utf8")) as {
+async function deployArtifact(
+  chainId: number,
+  artifactPath: string,
+  abi: readonly unknown[],
+  args: readonly unknown[],
+): Promise<Address> {
+  const artifact = JSON.parse(readFileSync(resolve(contractsDir, "out", artifactPath), "utf8")) as {
     bytecode: { object: Hex };
   };
   const hash = await ownerWallet.deployContract({
-    abi: folderRegistryAbi,
+    abi: abi as never,
     bytecode: artifact.bytecode.object,
+    args: args as never,
     account: owner,
     chain: { id: chainId, name: "anvil", nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 }, rpcUrls: { default: { http: [rpc] } } },
   });

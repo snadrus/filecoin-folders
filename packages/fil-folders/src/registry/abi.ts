@@ -15,11 +15,54 @@ const committedEvent = {
 
 export const folderRegistryAbi = [
   {
+    type: "constructor",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "initialOwner", type: "address" },
+      { name: "initialSessionKeyRegistry", type: "address" },
+    ],
+  },
+  {
     type: "function",
     name: "MAX_PIECE_CID_BYTES",
     stateMutability: "view",
     inputs: [],
     outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "PERMISSION_COMMIT",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "bytes32" }],
+  },
+  {
+    type: "function",
+    name: "owner",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "address" }],
+  },
+  {
+    type: "function",
+    name: "sessionKeyRegistry",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "address" }],
+  },
+  {
+    type: "function",
+    name: "setOwner",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "nextOwner", type: "address" }],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "setSessionKeyRegistry",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "nextRegistry", type: "address" }],
+    outputs: [],
   },
   {
     type: "function",
@@ -38,7 +81,7 @@ export const folderRegistryAbi = [
     name: "commitFor",
     stateMutability: "nonpayable",
     inputs: [
-      { name: "owner", type: "address" },
+      { name: "volumeOwner", type: "address" },
       { name: "ns", type: "bytes32" },
       { name: "key", type: "bytes32" },
       { name: "pieceCid", type: "bytes" },
@@ -124,6 +167,27 @@ export const folderRegistryAbi = [
     type: "error",
     name: "VersionOverflow",
     inputs: [],
+  },
+  {
+    type: "error",
+    name: "NotContractOwner",
+    inputs: [],
+  },
+  {
+    type: "event",
+    name: "OwnerUpdated",
+    inputs: [
+      { name: "previousOwner", type: "address", indexed: true },
+      { name: "nextOwner", type: "address", indexed: true },
+    ],
+  },
+  {
+    type: "event",
+    name: "SessionKeyRegistryUpdated",
+    inputs: [
+      { name: "previousRegistry", type: "address", indexed: true },
+      { name: "nextRegistry", type: "address", indexed: true },
+    ],
   },
 ] as const;
 

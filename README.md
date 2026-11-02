@@ -1,6 +1,6 @@
 # Filecoin Folders
 
-A standalone library for folder volumes on Filecoin. A later Filecoin Drive UI can sit on top of it. This repository is not an application.
+A library for folder volumes on Filecoin, plus FiFolders, a static file manager in `apps/fifolders`.
 
 The library stores an immutable JSON manifest as a [Synapse](https://docs.filecoin.cloud/) piece. A small FEVM contract, `FolderRegistry`, points at the current root with compare-and-swap.
 
@@ -22,6 +22,7 @@ flowchart LR
 | `contracts/` | Foundry project. `FolderRegistry` plus Calibration and mainnet deploy scripts. |
 | `packages/fil-folders` | TypeScript ESM package. Browser and Node.js 22+. |
 | `examples/cli.ts` | `ls` / `put` / `get` against Calibration. |
+| `apps/fifolders` | FiFolders, a static Vite file manager on `fil-folders`. |
 
 ## Registry
 
@@ -34,7 +35,9 @@ setWriter(bytes32 ns, address writer, bool allowed)
 head(address owner, bytes32 ns, bytes32 key) returns (bytes pieceCid, uint64 version)
 ```
 
-`commit` writes the caller's head. `commitFor` writes `owner`'s head when the caller is that owner or a writer the owner approved for `ns`. `setWriter(ns, writer, false)` revokes the writer. The owner stays authorized.
+`commit` writes the caller's head. `commitFor` writes the volume owner's head when the caller is that owner, a writer approved for `ns`, or a session key whose Filecoin `SessionKeyRegistry` authorization for `PERMISSION_COMMIT` (`keccak256("fil-folders.commit")`) is still at or after `block.timestamp`. The head stays under the volume owner. `setWriter(ns, writer, false)` revokes the writer. The owner stays authorized. Session keys are not writers.
+
+The contract admin (`owner`) is separate from volume owners. The constructor takes that admin and the chain's `SessionKeyRegistry`. The admin can replace the registry with `setSessionKeyRegistry`. Mappings for heads and writers stay in slots 0 and 1.
 
 The head starts empty, version `0`. A commit stores `pieceCid` only when `prevPieceCid` matches the current bytes. Otherwise it reverts with `CasConflict(currentPieceCid, currentVersion)` and leaves the head unchanged. Success increments `version` and emits
 
@@ -62,6 +65,15 @@ PRIVATE_KEY=0x... pnpm deploy:calibration
 # RPC https://api.node.glif.io/rpc/v1
 PRIVATE_KEY=0x... pnpm deploy:mainnet
 ```
+
+Constructor arguments are the deployer address (admin) and the SessionKeyRegistry:
+
+| Network | SessionKeyRegistry |
+| --- | --- |
+| Calibration (314159) | `0x518411c2062E119Aaf7A8B12A2eDf9a939347655` |
+| Mainnet (314) | `0x74FD50525A958aF5d484601E252271f9625231aB` |
+
+The Calibration address in [deployments/calibration.json](deployments/calibration.json) is the previous contract. It has no session-key check. Deploy this build from your own machine (do not reuse that address) and point FiFolders at the new address with `VITE_FOLDER_REGISTRY` and `VITE_REGISTRY_FROM_BLOCK`.
 
 The contract is unaudited.
 
@@ -166,7 +178,7 @@ pnpm install
 pnpm test
 ```
 
-`pnpm test` runs `forge test`, the vitest suite (CRUD, mv/rm, history, conflict merge, encryption, and the anvil registry test), the package typecheck, and the example typecheck.
+`pnpm test` runs `forge test`, the fil-folders vitest suite (CRUD, mv/rm, history, conflict merge, encryption, and the anvil registry test), the package typecheck, the example typecheck, and the FiFolders unit tests. FiFolders browser tests are `pnpm --filter fifolders e2e`.
 
 ## License
 

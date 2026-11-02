@@ -16,6 +16,15 @@ export function volumeKey(name: string): Hex {
   return keccak256(stringToBytes(name));
 }
 
+/**
+ * `keccak256(utf8("fil-folders.commit"))`.
+ * Matches `FolderRegistry.PERMISSION_COMMIT`. A session key must hold this
+ * permission to `commitFor` the root wallet.
+ */
+export function folderCommitPermission(): Hex {
+  return keccak256(stringToBytes("fil-folders.commit"));
+}
+
 export function normalizeAddress(address: Address): Address {
   return address.toLowerCase() as Address;
 }

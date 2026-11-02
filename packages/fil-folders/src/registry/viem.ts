@@ -19,6 +19,12 @@ export interface ViemRegistryOptions {
   address: Address;
   publicClient: PublicClient;
   walletClient: WalletClient;
+  /**
+   * `session-key` always sends `commitFor(owner)` from this wallet.
+   * The wallet account is the session key; `owner` on the commit is the root wallet.
+   * Omit it to use `commit` when the wallet is the owner and `commitFor` otherwise.
+   */
+  signer?: "auto" | "session-key";
   /** Default start block for `committed` log scans, e.g. the deployment block. Public FEVM RPCs reject `fromBlock: 0`. */
   fromBlock?: bigint;
   /** Max blocks per `eth_getLogs` request. Lotus/Glif cap ranges (2880 epochs). Default 2000. */
@@ -37,6 +43,7 @@ class ViemRegistry implements Registry {
   readonly address: Address;
   readonly publicClient: PublicClient;
   readonly walletClient: WalletClient;
+  readonly signer: "auto" | "session-key";
   readonly fromBlock: bigint;
   readonly maxBlockRange: bigint;
 
@@ -47,6 +54,7 @@ class ViemRegistry implements Registry {
     this.address = options.address;
     this.publicClient = options.publicClient;
     this.walletClient = options.walletClient;
+    this.signer = options.signer ?? "auto";
   }
 
   async head(owner: Address, ns: Hex, key: Hex): Promise<{ pieceCid: Uint8Array; version: bigint }> {
@@ -69,7 +77,7 @@ class ViemRegistry implements Registry {
     assertPieceSize(input.pieceCid);
     assertPieceSize(input.prevPieceCid);
     const signer = signerAddress(this.walletClient);
-    const asOwner = signer.toLowerCase() === input.owner.toLowerCase();
+    const asOwner = this.signer !== "session-key" && signer.toLowerCase() === input.owner.toLowerCase();
     const piece = toHex(input.pieceCid);
     const prev = toHex(input.prevPieceCid);
     try {
