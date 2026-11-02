@@ -13,7 +13,7 @@ export {
   RegistryCasConflict,
   RegistryNotAuthorized,
 } from "./errors.js";
-export { FIL_FOLDERS_NAMESPACE, PIECE_CID_MAX_BYTES, namespaceId, volumeKey } from "./ids.js";
+export { FIL_FOLDERS_NAMESPACE, PIECE_CID_MAX_BYTES, folderCommitPermission, namespaceId, volumeKey } from "./ids.js";
 export { folderRegistryAbi } from "./registry/abi.js";
 export { MemoryRegistry, createMemoryRegistry } from "./registry/memory.js";
 export type { CommittedRecord, Registry, RegistryCommit } from "./registry/types.js";
@@ -22,6 +22,7 @@ export type { ViemRegistryOptions } from "./registry/viem.js";
 export { assertSupportedRuntime } from "./runtime.js";
 export { MemoryStorage, createMemoryStorage } from "./storage/memory.js";
 export { createSynapseStorage } from "./storage/synapse.js";
+export type { SynapseStorageOptions } from "./storage/synapse.js";
 export type { Storage } from "./storage/types.js";
 export type {
   ContentEnc,

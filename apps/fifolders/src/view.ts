@@ -1,5 +1,6 @@
 import type { HistoryEntry, Stat } from "fil-folders";
 import { felanumioSvg, felarumiSvg, logoSvg } from "./icons.js";
+import { datasetLabel, type WalletPanel } from "./onboarding-logic.js";
 import {
   type FelKind,
   type NavId,
@@ -84,10 +85,14 @@ export interface ViewModel {
   felarumiUrl: string;
   felanumioUrl: string;
   connectError: string;
+  wallets: { rdns: string; name: string }[];
+  walletRdns: string;
+  panel: WalletPanel | null;
+  setupError: string;
 }
 
 export function renderApp(model: ViewModel): string {
-  if (!model.connected) return renderConnect(model);
+  if (!model.connected) return model.panel ? renderSetup(model) : renderConnect(model);
   return `<div class="shell ${model.busy ? "is-busy" : ""}">
     ${renderTop(model)}
     ${renderNav(model)}
@@ -118,11 +123,72 @@ function renderConnect(model: ViewModel): string {
       <label class="field">Volume name
         <input data-testid="volume-name" name="volume" value="${escapeHtml(model.volumeName)}" autocomplete="off" />
       </label>
+      ${walletPicker(model)}
       <label class="check"><input data-testid="encrypt" name="encrypt" type="checkbox" ${model.encrypt ? "checked" : ""}/> Encrypt this volume</label>
-      <button class="primary" data-testid="connect-wallet" type="submit" ${model.chain === "mainnet" ? "disabled" : ""}>Connect wallet</button>
+      <button class="primary" data-testid="connect-wallet" type="submit">Connect wallet</button>
       <p class="note" data-testid="mainnet-note" ${model.chain === "mainnet" ? "" : "hidden"}>Mainnet has no FolderRegistry yet. Calibration is the network with a deployed registry.</p>
       ${model.connectError ? `<p class="error" data-testid="connect-error">${escapeHtml(model.connectError)}</p>` : ""}
     </form>
+  </div>`;
+}
+
+function walletPicker(model: ViewModel): string {
+  if (model.wallets.length < 2) return "";
+  const options = model.wallets
+    .map(
+      (wallet) =>
+        `<option value="${escapeHtml(wallet.rdns)}" ${wallet.rdns === model.walletRdns ? "selected" : ""}>${escapeHtml(wallet.name)}</option>`,
+    )
+    .join("");
+  return `<label class="field">Wallet
+    <select name="wallet" data-testid="wallet-pick">${options}</select>
+  </label>`;
+}
+
+function renderSetup(model: ViewModel): string {
+  const panel = model.panel;
+  if (!panel) return "";
+  const payment = panel.paymentsReady
+    ? `<p class="status ok" data-testid="payment-status">Storage payment ready</p>`
+    : `<button class="primary" type="button" data-testid="fix-payments" data-action="fix-payments">Enable storage payment</button>
+       <p class="note">One step deposits 5 USDFC and approves the storage operator.</p>`;
+  const session = panel.sessionReady
+    ? `<p class="status ok" data-testid="session-status">Session key ready${panel.sessionExpiry ? ` until ${escapeHtml(panel.sessionExpiry)}` : ""}</p>
+       <button type="button" data-testid="session-refresh" data-action="refresh-session">Refresh session key</button>`
+    : `<button class="primary" type="button" data-testid="authorize-session" data-action="authorize">Authorize session key</button>
+       <p class="note">One wallet confirmation. Uploads and registry commits then stay in the browser.</p>`;
+  const datasets = panel.datasets
+    .map(
+      (dataset) =>
+        `<label class="dataset"><input type="radio" name="dataset" data-testid="dataset-choice" value="${escapeHtml(dataset.id)}" ${dataset.id === panel.selectedDatasetId ? "checked" : ""}/> <span>${escapeHtml(datasetLabel(dataset))}</span></label>`,
+    )
+    .join("");
+  const create = `<button class="${panel.createPrimary ? "primary" : ""}" type="button" data-testid="create-dataset" data-action="create-dataset">Create new dataset</button>`;
+  const open =
+    panel.selectedDatasetId && panel.paymentsReady && (panel.sessionReady || panel.legacyRegistry)
+      ? `<button class="primary" type="button" data-testid="open-drive" data-action="open-drive">Open drive</button>`
+      : "";
+  const legacy = panel.legacyRegistry
+    ? `<p class="note" data-testid="legacy-registry">This FolderRegistry has no session-key entry. Commits still ask the wallet until you deploy the new contract and set VITE_FOLDER_REGISTRY.</p>`
+    : "";
+  return `<div class="connect">
+    <div class="connect-card setup-card" data-testid="setup">
+      ${logoSvg(56)}
+      <h1>FiFolders</h1>
+      <p class="account-line" data-testid="setup-address">${escapeHtml(panel.address)}</p>
+      <p class="balances" data-testid="balances"><span>${escapeHtml(panel.fil)} FIL</span><span>${escapeHtml(panel.usdfc)} USDFC</span></p>
+      ${legacy}
+      ${payment}
+      ${session}
+      <div class="datasets" data-testid="datasets">
+        <p class="note">Dataset for this wallet. Every volume stores its pieces here.</p>
+        ${datasets || `<p class="note">No datasets yet.</p>`}
+        ${create}
+      </div>
+      ${open}
+      <p class="note" data-testid="wallet-signatures">Wallet signatures ${panel.signatures}. Connect prompts ${panel.connectPrompts}.</p>
+      ${model.setupError ? `<p class="error" data-testid="setup-error">${escapeHtml(model.setupError)}</p>` : ""}
+    </div>
   </div>`;
 }
 
@@ -143,6 +209,7 @@ function renderTop(model: ViewModel): string {
       ${chainButton("mainnet", "Mainnet", model.chain)}
     </div>
     <button class="account" data-action="account" data-testid="account" type="button">${escapeHtml(shortAddress(model.owner))}</button>
+    <span class="sr-only" data-testid="wallet-signatures">${model.panel?.signatures ?? 0}</span>
     ${model.busy ? `<div class="busy" data-testid="busy"></div>` : ""}
   </header>`;
 }
@@ -357,9 +424,25 @@ function renderPreview(preview: PreviewState): string {
 }
 
 function renderAccount(model: ViewModel): string {
+  const panel = model.panel;
+  const datasets = panel
+    ? `<label class="field">Dataset
+        <select data-testid="dataset-select">${panel.datasets
+          .map(
+            (dataset) =>
+              `<option value="${escapeHtml(dataset.id)}" ${dataset.id === panel.selectedDatasetId ? "selected" : ""}>${escapeHtml(datasetLabel(dataset))}</option>`,
+          )
+          .join("")}</select>
+      </label>
+      <button type="button" data-action="create-dataset" data-testid="create-dataset">Create new dataset</button>
+      <p class="account-line" data-testid="session-status">${panel.sessionReady ? `Session key until ${escapeHtml(panel.sessionExpiry || "soon")}` : "Session key missing"}</p>
+      <p class="account-line">${escapeHtml(panel.fil)} FIL · ${escapeHtml(panel.usdfc)} USDFC${panel.paymentsReady ? "" : " · payment needed"}</p>
+      <button type="button" data-action="refresh-session" data-testid="session-refresh">Refresh session key</button>`
+    : "";
   return `<div class="menu account-menu" data-menu="account" data-testid="account-menu">
     <p class="account-line">${escapeHtml(model.owner)}</p>
     <p class="account-line">Volume ${escapeHtml(model.volumeName)} · encryption ${model.encrypted ? "on" : "off"}</p>
+    ${datasets}
     <label class="field">Felarumi URL
       <input data-testid="felarumi-url" value="${escapeHtml(model.felarumiUrl)}" />
     </label>

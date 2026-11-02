@@ -2,15 +2,8 @@ import "@fontsource/roboto/400.css";
 import "@fontsource/roboto/500.css";
 import "material-symbols/outlined.css";
 import { DriveApp, type DriveAppOptions } from "./drive-app.js";
-import {
-  connectInjected,
-  felBases,
-  openMockSession,
-  storeEncrypt,
-  storeVolumeName,
-  storedVolumeName,
-  type Session,
-} from "./session.js";
+import { prepareOnboarding, resumeOnboarding } from "./onboarding-controller.js";
+import { felBases, openMockSession, storedVolumeName, type Session } from "./session.js";
 import "./styles.css";
 
 const root = document.querySelector<HTMLElement>("#app");
@@ -44,22 +37,22 @@ const app = new DriveApp({
   felarumiUrl: bases.felarumi,
   felanumioUrl: bases.felanumio,
   encryptPref: false,
-  onConnect: async (input) => {
-    const ethereum = window.ethereum;
-    if (!ethereum) throw new Error("No injected wallet found. Install a browser wallet such as MetaMask.");
-    const session = await connectInjected({ ethereum, ...input });
-    storeVolumeName(session.volumeName);
-    storeEncrypt(session.chain, session.owner, session.volumeName, session.encrypted);
-    app.attach(optionsFrom(session, app));
-  },
-  onDisconnect() {
-    localStorage.removeItem("fifolders:volume-name");
-  },
 });
 
-if (import.meta.env.VITE_E2E === "1") {
+const onboard = new URLSearchParams(location.search).get("onboard") === "1";
+if (import.meta.env.VITE_E2E === "1" && !onboard) {
   const session = await openMockSession();
   app.attach(optionsFrom(session, app));
+} else {
+  const io = onboard
+    ? (await import("./mock-onboarding.js")).createMockOnboarding(new URLSearchParams(location.search))
+    : (await import("./live-onboarding.js")).createLiveOnboarding();
+  await prepareOnboarding(app, io);
+  try {
+    await resumeOnboarding(app, io);
+  } catch (error) {
+    app.connectError = error instanceof Error ? error.message : "Could not resume the wallet session.";
+  }
 }
 
 app.mount(root);

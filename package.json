@@ -10,8 +10,8 @@
     "test": "forge test --root contracts -vv && pnpm --filter fil-folders test && pnpm --filter fil-folders build && tsc -p tsconfig.example.json && pnpm --filter fifolders test",
     "test:contracts": "forge test --root contracts -vv",
     "example": "tsx examples/cli.ts",
-    "deploy:calibration": "cd contracts && forge create src/FolderRegistry.sol:FolderRegistry --rpc-url calibration --broadcast --private-key $PRIVATE_KEY",
-    "deploy:mainnet": "cd contracts && forge create src/FolderRegistry.sol:FolderRegistry --rpc-url filecoin --broadcast --private-key $PRIVATE_KEY"
+    "deploy:calibration": "cd contracts && forge create src/FolderRegistry.sol:FolderRegistry --rpc-url calibration --broadcast --private-key \"$PRIVATE_KEY\" --constructor-args $(cast wallet address --private-key \"$PRIVATE_KEY\") 0x518411c2062E119Aaf7A8B12A2eDf9a939347655",
+    "deploy:mainnet": "cd contracts && forge create src/FolderRegistry.sol:FolderRegistry --rpc-url filecoin --broadcast --private-key \"$PRIVATE_KEY\" --constructor-args $(cast wallet address --private-key \"$PRIVATE_KEY\") 0x74FD50525A958aF5d484601E252271f9625231aB"
   },
   "dependencies": {
     "fil-folders": "workspace:*"

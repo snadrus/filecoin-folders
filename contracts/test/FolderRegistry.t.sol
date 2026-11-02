@@ -3,9 +3,11 @@ pragma solidity 0.8.28;
 
 import {Test} from "forge-std/Test.sol";
 import {FolderRegistry} from "../src/FolderRegistry.sol";
+import {MockSessionKeyRegistry} from "./MockSessionKeyRegistry.sol";
 
 contract FolderRegistryTest is Test {
     FolderRegistry internal registry;
+    MockSessionKeyRegistry internal keys;
 
     /// @dev Matches `namespaceId("fil-folders")` / `volumeKey("demo")` in the TypeScript package.
     bytes32 internal constant NS = keccak256("fil-folders");
@@ -24,7 +26,8 @@ contract FolderRegistryTest is Test {
     event WriterSet(address indexed owner, bytes32 indexed ns, address indexed writer, bool allowed);
 
     function setUp() public {
-        registry = new FolderRegistry();
+        keys = new MockSessionKeyRegistry();
+        registry = new FolderRegistry(address(this), address(keys));
     }
 
     function test_emptyHead() public view {
@@ -282,6 +285,127 @@ contract FolderRegistryTest is Test {
         (bytes memory hb,) = registry.head(b, ns2, k2);
         assertEq(ha, hex"01");
         assertEq(hb, hex"02");
+    }
+
+    function test_permissionCommitConstant() public view {
+        assertEq(registry.PERMISSION_COMMIT(), keccak256("fil-folders.commit"));
+        assertTrue(registry.PERMISSION_COMMIT() != bytes32(0));
+    }
+
+    function test_constructorRejectsZero() public {
+        vm.expectRevert(FolderRegistry.ZeroAddress.selector);
+        new FolderRegistry(address(0), address(keys));
+        vm.expectRevert(FolderRegistry.ZeroAddress.selector);
+        new FolderRegistry(address(this), address(0));
+    }
+
+    function test_ownerCanReplaceSessionKeyRegistry() public {
+        MockSessionKeyRegistry next = new MockSessionKeyRegistry();
+        registry.setSessionKeyRegistry(address(next));
+        assertEq(address(registry.sessionKeyRegistry()), address(next));
+
+        address stranger = address(0xBEEF);
+        vm.prank(stranger);
+        vm.expectRevert(FolderRegistry.NotContractOwner.selector);
+        registry.setSessionKeyRegistry(address(keys));
+
+        vm.expectRevert(FolderRegistry.ZeroAddress.selector);
+        registry.setSessionKeyRegistry(address(0));
+    }
+
+    function test_setOwner() public {
+        registry.setOwner(address(0xCAFE));
+        assertEq(registry.owner(), address(0xCAFE));
+        vm.expectRevert(FolderRegistry.NotContractOwner.selector);
+        registry.setSessionKeyRegistry(address(keys));
+    }
+
+    function test_sessionKeyCommitForWritesClaimedUser() public {
+        address root = address(0xA11CE);
+        address session = address(0x5E55);
+        keys.setExpiry(root, session, registry.PERMISSION_COMMIT(), block.timestamp + 1000);
+
+        vm.prank(session);
+        registry.commitFor(root, NS, KEY, hex"01", "");
+
+        (bytes memory piece, uint64 version) = registry.head(root, NS, KEY);
+        assertEq(piece, hex"01");
+        assertEq(version, 1);
+        (bytes memory sessionHead, uint64 sessionVersion) = registry.head(session, NS, KEY);
+        assertEq(sessionHead.length, 0);
+        assertEq(sessionVersion, 0);
+        assertFalse(registry.isWriter(root, NS, session));
+    }
+
+    function test_sessionKeyExactExpiryIsAuthorized() public {
+        address root = address(0xA11CE);
+        address session = address(0x5E55);
+        uint256 expiry = block.timestamp + 50;
+        keys.setExpiry(root, session, registry.PERMISSION_COMMIT(), expiry);
+        vm.warp(expiry);
+
+        vm.prank(session);
+        registry.commitFor(root, NS, KEY, hex"01", "");
+        (, uint64 version) = registry.head(root, NS, KEY);
+        assertEq(version, 1);
+    }
+
+    function test_sessionKeyExpiredReverts() public {
+        address root = address(0xA11CE);
+        address session = address(0x5E55);
+        uint256 expiry = block.timestamp + 50;
+        keys.setExpiry(root, session, registry.PERMISSION_COMMIT(), expiry);
+        vm.warp(expiry + 1);
+
+        vm.prank(session);
+        vm.expectRevert(abi.encodeWithSelector(FolderRegistry.NotAuthorized.selector, session, root, NS));
+        registry.commitFor(root, NS, KEY, hex"01", "");
+        (, uint64 version) = registry.head(root, NS, KEY);
+        assertEq(version, 0);
+    }
+
+    function test_sessionKeyUnauthorizedAndWrongPermission() public {
+        address root = address(0xA11CE);
+        address session = address(0x5E55);
+
+        vm.prank(session);
+        vm.expectRevert(abi.encodeWithSelector(FolderRegistry.NotAuthorized.selector, session, root, NS));
+        registry.commitFor(root, NS, KEY, hex"01", "");
+
+        keys.setExpiry(root, session, keccak256("other"), block.timestamp + 1000);
+        vm.prank(session);
+        vm.expectRevert(abi.encodeWithSelector(FolderRegistry.NotAuthorized.selector, session, root, NS));
+        registry.commitFor(root, NS, KEY, hex"01", "");
+    }
+
+    function test_sessionKeyStillCas() public {
+        address root = address(0xA11CE);
+        address session = address(0x5E55);
+        keys.setExpiry(root, session, registry.PERMISSION_COMMIT(), block.timestamp + 1000);
+
+        vm.prank(session);
+        registry.commitFor(root, NS, KEY, hex"aa", "");
+        vm.prank(session);
+        vm.expectRevert(abi.encodeWithSelector(FolderRegistry.CasConflict.selector, hex"aa", uint64(1)));
+        registry.commitFor(root, NS, KEY, hex"bb", hex"ff");
+
+        (bytes memory piece, uint64 version) = registry.head(root, NS, KEY);
+        assertEq(piece, hex"aa");
+        assertEq(version, 1);
+
+        vm.prank(session);
+        registry.commitFor(root, NS, KEY, hex"bb", hex"aa");
+        (, version) = registry.head(root, NS, KEY);
+        assertEq(version, 2);
+    }
+
+    function test_writerStillAuthorizedWithoutSessionKey() public {
+        address writer = address(0xB0B);
+        registry.setWriter(NS, writer, true);
+        vm.prank(writer);
+        registry.commitFor(address(this), NS, KEY, hex"01", "");
+        (, uint64 version) = registry.head(address(this), NS, KEY);
+        assertEq(version, 1);
     }
 
     function _trim(bytes calldata data) internal pure returns (bytes memory out) {

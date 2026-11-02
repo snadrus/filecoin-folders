@@ -29,6 +29,7 @@ import {
   type SortKey,
   type ViewMode,
 } from "./model.js";
+import type { WalletPanel } from "./onboarding-logic.js";
 import type { CasObserver, ChainChoice } from "./session.js";
 import { renderApp, type DialogState, type UploadRow, type ViewModel } from "./view.js";
 
@@ -42,7 +43,9 @@ export interface DriveAppOptions {
   felarumiUrl: string;
   felanumioUrl: string;
   encryptPref?: boolean;
+  panel?: WalletPanel | null;
   onConnect?: (input: { chain: ChainChoice; volumeName: string; encrypt: boolean }) => Promise<void>;
+  onSetupAction?: (action: string, value?: string) => Promise<void>;
   onDisconnect?: () => void;
 }
 
@@ -82,7 +85,12 @@ export class DriveApp {
   felanumioUrl: string;
   encryptPref: boolean;
   onConnect?: DriveAppOptions["onConnect"];
+  onSetupAction?: DriveAppOptions["onSetupAction"];
   onDisconnect?: DriveAppOptions["onDisconnect"];
+  wallets: { rdns: string; name: string }[] = [];
+  walletRdns = "";
+  panel: WalletPanel | null = null;
+  setupError = "";
 
   nav: NavId = "drive";
   cwd = "/";
@@ -125,7 +133,9 @@ export class DriveApp {
     this.felanumioUrl = options.felanumioUrl;
     this.encryptPref = options.encryptPref ?? false;
     this.onConnect = options.onConnect;
+    this.onSetupAction = options.onSetupAction;
     this.onDisconnect = options.onDisconnect;
+    this.panel = options.panel ?? null;
     this.view = localStorage.getItem("fifolders:view") === "grid" ? "grid" : "list";
     this.mainnetBlocked = options.chain === "mainnet";
     if (options.volume) this.loadPrefs();
@@ -144,8 +154,39 @@ export class DriveApp {
     this.cas = options.cas;
     this.mainnetBlocked = options.chain === "mainnet";
     this.connectError = "";
+    this.setupError = "";
+    if (options.panel) this.panel = options.panel;
+    if (options.onConnect) this.onConnect = options.onConnect;
+    if (options.onSetupAction) this.onSetupAction = options.onSetupAction;
+    if (options.onDisconnect) this.onDisconnect = options.onDisconnect;
     this.loadPrefs();
     if (this.root) void this.enqueue(() => this.refresh());
+  }
+
+  setWallets(wallets: { rdns: string; name: string }[]): void {
+    this.wallets = wallets;
+    if (!this.walletRdns && wallets[0]) this.walletRdns = wallets[0].rdns;
+    if (this.root && !this.volume) this.render();
+  }
+
+  showPanel(panel: WalletPanel, error = ""): void {
+    this.panel = panel;
+    this.owner = panel.address;
+    this.setupError = error;
+    this.connectError = "";
+    this.render();
+  }
+
+  detachToConnect(): void {
+    this.volume = null;
+    this.panel = null;
+    this.owner = "";
+    this.setupError = "";
+    this.connectError = "";
+    this.entries = [];
+    this.selected = [];
+    this.accountMenu = false;
+    this.render();
   }
 
   mount(root: HTMLElement): void {
@@ -620,6 +661,24 @@ export class DriveApp {
     if (!target) return;
     const actionEl = target.closest<HTMLElement>("[data-action]");
     const action = actionEl?.getAttribute("data-action") ?? "";
+    if (
+      action === "authorize" ||
+      action === "fix-payments" ||
+      action === "create-dataset" ||
+      action === "refresh-session" ||
+      action === "open-drive"
+    ) {
+      void this.enqueue(async () => {
+        try {
+          await this.onSetupAction?.(action);
+        } catch (error) {
+          this.setupError = errorText(error);
+          this.connectError = this.volume ? "" : errorText(error);
+          this.render();
+        }
+      });
+      return;
+    }
     const inMenu = Boolean(target.closest("[data-menu]"));
     if (!inMenu) {
       this.newMenu = false;
@@ -838,6 +897,29 @@ export class DriveApp {
   private onChange(event: Event): void {
     const target = event.target as HTMLInputElement | HTMLSelectElement | null;
     if (!target) return;
+    if (target instanceof HTMLInputElement && target.name === "dataset") {
+      void this.enqueue(async () => {
+        try {
+          await this.onSetupAction?.("select-dataset", target.value);
+        } catch (error) {
+          this.setupError = errorText(error);
+          this.render();
+        }
+      });
+      return;
+    }
+    if (target instanceof HTMLSelectElement && target.dataset.testid === "dataset-select") {
+      const id = target.value;
+      void this.enqueue(async () => {
+        try {
+          await this.onSetupAction?.("select-dataset", id);
+        } catch (error) {
+          this.setupError = errorText(error);
+          this.render();
+        }
+      });
+      return;
+    }
     if (target instanceof HTMLSelectElement && target.dataset.testid === "sort-select") {
       this.sortKey = target.value as SortKey;
       this.sortDir = defaultSortDir(this.sortKey);
@@ -902,6 +984,8 @@ export class DriveApp {
       const data = new FormData(form);
       const volumeName = String(data.get("volume") ?? "").trim() || "My Drive";
       const encrypt = form.querySelector<HTMLInputElement>("[data-testid=encrypt]")?.checked ?? false;
+      const wallet = String(data.get("wallet") ?? "");
+      if (wallet) this.walletRdns = wallet;
       this.volumeName = volumeName;
       this.encryptPref = encrypt;
       if (this.chain === "mainnet") {
@@ -1114,6 +1198,10 @@ export class DriveApp {
       felarumiUrl: this.felarumiUrl,
       felanumioUrl: this.felanumioUrl,
       connectError: this.connectError,
+      wallets: this.wallets,
+      walletRdns: this.walletRdns,
+      panel: this.panel,
+      setupError: this.setupError,
     };
   }
 }

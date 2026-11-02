@@ -12,7 +12,28 @@ pnpm --filter fil-folders build
 pnpm --filter fifolders dev
 ```
 
-Connect an injected EIP-1193 wallet (MetaMask). The network toggle defaults to Calibration. Mainnet stays disabled until a FolderRegistry is deployed there.
+Connect is one button. FiFolders discovers EIP-6963 wallets and falls back to `window.ethereum`, switches or adds Calibration (or mainnet when that network is selected), and reconnects on reload with `eth_accounts` when the site is already permitted.
+
+A browser-local secp256k1 session key is authorized once with `SessionKeyRegistry.loginAndFund` (origin `fifolders`, one hour, 0.05 FIL for gas). The permission set is Synapse's default upload permissions plus `keccak256("fil-folders.commit")`. The key is stored in `localStorage` with its expiry. Refresh in the account menu replaces it. While it is valid, dataset creation, uploads, and `FolderRegistry.commitFor` are signed locally.
+
+Storage payment is a separate row. If the USDFC deposit or the Warm Storage operator approval is missing, one button runs an ERC-2612 permit and `depositWithPermitAndApproveOperator` (5 USDFC).
+
+### Wallet signatures
+
+Connect approval (`eth_requestAccounts`) is a prompt, not a signature. Chain switch is not a signature when the wallet is already on the network.
+
+| Visit | Signatures |
+| --- | --- |
+| First time, deposit and operator approval already set, encryption off | **1** (`loginAndFund`) |
+| First time, payment not ready, encryption off | **3** (`loginAndFund` + permit + deposit) |
+| First time, encryption on | **+1** `signTypedData`, then reused from `localStorage` |
+| Returning, session key still valid | **0** |
+
+The deployed Calibration registry `0x4893…9331` does not accept session keys. Until you deploy this build and set `VITE_FOLDER_REGISTRY` plus `VITE_REGISTRY_FROM_BLOCK`, the app falls back to the wallet for registry commits and says so. Session-key uploads still work against the live SessionKeyRegistry.
+
+### Dataset and volume
+
+A volume is the registry head for `(wallet, keccak256("fil-folders"), keccak256(volume name))`. A Synapse dataset is where the piece bytes live. One selected dataset serves every volume for that wallet. The choice is `fifolders:dataset:<chainId>:<address>` (last used, or the only dataset). With several datasets and no memory, Create new dataset is the primary action; the SDK picks the default provider. New datasets are tagged `{ app: "fifolders", volume: "<name>" }`. Switching the dataset in the account menu changes where new uploads go. Downloads use the piece CID. The chain record does not include byte size or a creation time; the list shows provider, piece count, and the creation date when this app stored one.
 
 | | |
 | --- | --- |
@@ -52,7 +73,7 @@ pnpm --filter fifolders test
 pnpm --filter fifolders e2e
 ```
 
-Unit tests use vitest and happy-dom. The browser suite runs against an in-memory storage and registry (`VITE_E2E=1`), not a wallet.
+Unit tests use vitest and happy-dom. The browser suite runs against an in-memory storage and registry (`VITE_E2E=1`), not a wallet. `e2e/onboarding.spec.ts` drives a mocked wallet and SessionKeyRegistry (`/?onboard=1`) and does not spend FIL or USDFC.
 
 ## Mark
 

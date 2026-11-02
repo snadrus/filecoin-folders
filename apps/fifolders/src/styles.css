@@ -186,7 +186,7 @@ button:disabled { cursor: default; opacity: 0.45; }
 .menu button:hover { background: var(--hover); }
 .anchored { position: absolute; top: 72px; left: 16px; }
 .floating { position: fixed; }
-.account-menu { position: absolute; top: 60px; right: 12px; width: 280px; padding: 12px; }
+.account-menu { position: absolute; top: 60px; right: 12px; width: 320px; padding: 12px; }
 .account-line { margin: 0 0 8px; word-break: break-all; color: var(--muted); font-size: 12px; }
 
 .backdrop { position: fixed; inset: 0; background: rgba(32, 33, 36, 0.45); display: flex; align-items: center; justify-content: center; z-index: 40; padding: 24px; }
@@ -204,7 +204,12 @@ button:disabled { cursor: default; opacity: 0.45; }
 
 .connect { min-height: 100%; display: flex; align-items: center; justify-content: center; background: var(--nav); padding: 24px; }
 .connect-card { width: min(440px, 100%); background: #fff; border-radius: 24px; padding: 32px; box-shadow: var(--shadow); }
+.setup-card { width: min(520px, 100%); display: flex; flex-direction: column; gap: 10px; }
 .connect-card h1 { margin: 12px 0 4px; font-size: 32px; font-weight: 500; }
+.balances { display: flex; gap: 16px; margin: 0; font-weight: 500; }
+.status.ok { color: #0b7a3b; margin: 0; }
+.datasets { display: flex; flex-direction: column; gap: 8px; }
+.dataset { display: flex; gap: 8px; align-items: flex-start; }
 .lede, .note { color: var(--muted); }
 .error { color: var(--danger); }
 
