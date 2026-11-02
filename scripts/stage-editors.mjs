@@ -24,7 +24,10 @@ for (const name of fs.readdirSync(editorDist)) {
   fs.copyFileSync(from, path.join(figrid, name));
 }
 fs.copyFileSync(path.join(editorDist, "sheets/app.css"), path.join(figrid, "app.css"));
-const sheetJs = fs.readFileSync(path.join(editorDist, "sheets/app.js"), "utf8").replaceAll('from "../', 'from "./').replaceAll("from '../", "from './");
+// FiGrid's bundle lives one level up from its build folder: rewrite every chunk reference (from, side-effect, dynamic).
+const sheetJs = fs
+  .readFileSync(path.join(editorDist, "sheets/app.js"), "utf8")
+  .replace(/(\bfrom\s*|\bimport\s*\(?\s*)(["'])\.\.\//g, "$1$2./");
 fs.writeFileSync(path.join(figrid, "app.js"), sheetJs);
 
 const fipenSvg = fs.readFileSync(path.join(root, "apps/fifolders/public/fipen.svg"));
