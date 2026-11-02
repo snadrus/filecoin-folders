@@ -176,7 +176,7 @@ export function createLiveOnboarding(): OnboardingIO {
     const synapse = Synapse.create({
       account: requireRoot(),
       chain: chainOf(choice),
-      transport: http(rpcOf(choice)),
+      transport: custom(requireProvider()),
       source: "fifolders",
     });
     const found = await synapse.storage.findDataSets({ address: requireRoot() });
@@ -325,7 +325,7 @@ export function createLiveOnboarding(): OnboardingIO {
       const synapse = Synapse.create({
         account: address,
         chain: chainOf(input.chain),
-        transport: http(rpcOf(input.chain)),
+        transport: custom(requireProvider()),
         source: "fifolders",
         sessionKey: session,
       });
@@ -363,7 +363,7 @@ export function createLiveOnboarding(): OnboardingIO {
       const synapse = Synapse.create({
         account: address,
         chain,
-        transport: http(rpcOf(input.chain)),
+        transport: custom(requireProvider()),
         source: "fifolders",
         sessionKey: session,
       });
