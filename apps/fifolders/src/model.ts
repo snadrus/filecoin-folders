@@ -48,7 +48,8 @@ export function escapeHtml(value: string): string {
     .replaceAll("'", "&#39;");
 }
 
-export function formatBytes(size: number): string {
+export function formatBytes(raw: number): string {
+  const size = typeof raw === "bigint" || typeof raw === "string" ? toNumber(raw) : raw;
   if (!Number.isFinite(size) || size < 0) return "—";
   if (size < 1024) return `${Math.round(size)} B`;
   const units = ["KB", "MB", "GB", "TB"];
@@ -68,7 +69,7 @@ export function meterPercent(used: number): number {
 }
 
 export function formatWhen(ms: number, now = Date.now()): string {
-  const date = new Date(ms);
+  const date = new Date(toNumber(ms));
   if (Number.isNaN(date.getTime())) return "—";
   if (new Date(now).toDateString() === date.toDateString()) {
     return date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
@@ -163,8 +164,8 @@ export function sortStats(entries: readonly Stat[], key: SortKey, dir: 1 | -1, f
     if (foldersFirst && a.type !== b.type) return a.type === "dir" ? -1 : 1;
     let cmp = 0;
     if (key === "name") cmp = a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
-    else if (key === "size") cmp = a.size - b.size;
-    else if (key === "mtime") cmp = a.mtime - b.mtime;
+    else if (key === "size") cmp = toNumber(a.size) - toNumber(b.size);
+    else if (key === "mtime") cmp = toNumber(a.mtime) - toNumber(b.mtime);
     if (cmp === 0) cmp = a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
     return cmp * dir;
   });
@@ -250,7 +251,27 @@ export function appLink(
 export function sumSizes(entries: readonly Stat[]): number {
   let total = 0;
   for (const entry of entries) {
-    if (entry.type === "file") total += entry.size;
+    // Live manifests can decode sizes as bigint; never mix them with numbers.
+    if (entry.type === "file") total += toNumber(entry.size);
   }
   return total;
+}
+
+/** Chain and CBOR values arrive as number, bigint, or string; turn them into a finite number. */
+export function toNumber(value: unknown): number {
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+  if (typeof value === "bigint") return Number(value);
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
+}
+
+/** Same for bigint math (atto-USDFC, epochs, expiries). */
+export function toBigInt(value: unknown): bigint {
+  if (typeof value === "bigint") return value;
+  if (typeof value === "number") return Number.isFinite(value) ? BigInt(Math.trunc(value)) : 0n;
+  if (typeof value === "string" && /^-?\d+$/.test(value.trim())) return BigInt(value.trim());
+  return 0n;
 }

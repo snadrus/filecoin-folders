@@ -1,3 +1,4 @@
+import { toBigInt, toNumber } from "./model.js";
 /** Filecoin storage quote and funding runway. Amounts are atto-USDFC (18 decimals). */
 
 export const DOCS_COSTS_URL = "https://docs.filecoin.cloud/developer-guides/storage/storage-costs/";
@@ -65,7 +66,8 @@ export function fourGiBLine(quote: CostQuote): bigint {
   return (quote.perTiBPerMonth * 4n) / 1024n;
 }
 
-export function formatUsd(atto: bigint): string {
+export function formatUsd(value: bigint): string {
+  const atto = toBigInt(value);
   if (atto <= 0n) return "$0.00";
   const cents = (atto * 100n + 500_000_000_000_000_000n / 2n) / 1_000_000_000_000_000_000n;
   if (cents <= 0n) return "< $0.01";
@@ -99,7 +101,13 @@ export interface RunwayInput {
   nowMs?: number;
 }
 
-export function describeRunway(input: RunwayInput): Runway {
+export function describeRunway(raw: RunwayInput): Runway {
+  const input = {
+    ...raw,
+    availableFunds: toBigInt(raw.availableFunds),
+    lockupRatePerEpoch: toBigInt(raw.lockupRatePerEpoch),
+    datasetBytes: toNumber(raw.datasetBytes),
+  };
   const bytes = Number.isFinite(input.datasetBytes) && input.datasetBytes > 0 ? input.datasetBytes : 0;
   const datasetLabel = formatBytesLocal(bytes);
   const now = input.nowMs ?? Date.now();

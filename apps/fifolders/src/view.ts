@@ -58,6 +58,8 @@ export interface ActivityRow {
   id: string;
   label: string;
   status: "pending" | "done" | "error";
+  /** Done rows: ms already elapsed of the 10 s auto-dismiss. */
+  elapsedMs?: number;
 }
 
 export interface LooseRow {
@@ -347,7 +349,8 @@ function renderNav(model: ViewModel): string {
           (item) => `<div class="activity-item" data-testid="activity-item" data-status="${item.status}">
             <span class="activity-mark" aria-hidden="true"></span>
             <span>${escapeHtml(item.label)}</span>
-            ${item.status === "error" ? `<button type="button" data-action="retry-activity" data-id="${escapeHtml(item.id)}" data-testid="retry-activity">Retry</button>` : ""}
+            ${item.status === "error" ? `<button type="button" data-action="retry-activity" data-id="${escapeHtml(item.id)}" data-testid="retry-activity">Retry</button><button type="button" class="activity-dismiss" data-action="dismiss-activity" data-id="${escapeHtml(item.id)}" data-testid="dismiss-activity" aria-label="Dismiss">×</button>` : ""}
+            ${item.status === "done" ? `<span class="activity-progress" data-testid="activity-progress" style="animation-delay:-${Math.max(0, Math.round(item.elapsedMs ?? 0))}ms"></span>` : ""}
           </div>`,
         )
         .join("")}</section>`
