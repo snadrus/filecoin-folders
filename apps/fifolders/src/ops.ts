@@ -23,6 +23,8 @@ export interface FifoldersOp {
   prevHead?: string;
   newHead?: string;
   content?: string;
+  /** Editor title at save time; names the file. */
+  title?: string;
   volume?: string;
   owner?: string;
   error?: string;

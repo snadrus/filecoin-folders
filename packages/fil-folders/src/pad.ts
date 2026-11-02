@@ -46,6 +46,7 @@ export function unpadPiece(bytes: Uint8Array): Uint8Array {
 export function withPiecePadding(inner: Storage): Storage & { inner: Storage } {
   return {
     inner,
+    ...(inner.list ? { list: () => inner.list!() } : {}),
     async put(data) {
       if (!isByteStream(data)) {
         const original = data.byteLength;

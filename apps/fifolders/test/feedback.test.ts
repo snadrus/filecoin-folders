@@ -6,7 +6,7 @@ import { appLink } from "../src/model.js";
 import { createMockOnboarding } from "../src/mock-onboarding.js";
 import { prepareOnboarding } from "../src/onboarding-controller.js";
 import { dropOp, isBlankFelContent, loadOps, newOp, OPS_KEY, upsertOp } from "../src/ops.js";
-import { describeRunway, formatUsd, monthlyEstimate, quoteFromLive, fallbackQuote } from "../src/pricing.js";
+import { describeRunway, formatUsd, quoteFromLive, fallbackQuote } from "../src/pricing.js";
 import { observeRegistry, openMockSession } from "../src/session.js";
 import { loadSavedView } from "../src/volume-persist.js";
 
@@ -35,12 +35,10 @@ async function settle(app: DriveApp): Promise<void> {
 }
 
 describe("pricing and runway", () => {
-  it("turns live storage fields into a quote and a monthly estimate", () => {
+  it("turns live storage fields into a quote", () => {
     const quote = quoteFromLive({ perTiBNoCdn: 2n * 10n ** 18n, perTiBWithCdn: 3n * 10n ** 18n, minimumPricePerMonth: 10n ** 17n, ratePerMonth: 10n ** 16n });
     expect(quote.source).toBe("live");
     expect(quote.perTiBPerMonth).toBe(2n * 10n ** 18n);
-    expect(monthlyEstimate(quote, 0)).toBe(0n);
-    expect(monthlyEstimate(fallbackQuote(), 4)).toBe((fallbackQuote().perTiBPerMonth * 4n) / 1024n + fallbackQuote().provingPerMonth);
     expect(formatUsd(0n)).toBe("$0.00");
     expect(formatUsd(1n)).toBe("< $0.01");
   });
@@ -120,18 +118,21 @@ describe("drive feedback", () => {
     await prepareOnboarding(app, io);
     app.mount(root);
     await settle(app);
-    expect(root.querySelector("[data-testid=costs]")).toBeTruthy();
-    expect(root.querySelector("[data-testid=connect-wallet]")).toBeNull();
-    root.querySelector<HTMLButtonElement>("[data-testid=costs-continue]")!.click();
-    await settle(app);
+    expect(root.querySelector("[data-testid=costs]")).toBeNull();
+    expect(root.querySelector("[data-testid=connect-wallet]")).toBeTruthy();
     root.querySelector("form")?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
     await settle(app);
+    expect(root.querySelector("[data-testid=chain-steps]")).toBeNull();
+    root.querySelector<HTMLButtonElement>("[data-testid=txlog-toggle]")!.click();
+    expect(root.querySelector("[data-testid=txlog] [data-testid=chain-steps]")).toBeTruthy();
     const steps = [...root.querySelectorAll("[data-testid=chain-step]")].map((node) => node.textContent ?? "");
     expect(steps.join(" ")).toContain("Waiting for wallet signature");
     expect(steps.join(" ")).toContain("Transaction submitted");
     expect(steps.join(" ")).toContain("Confirming");
     expect(steps.join(" ")).toContain("Authorized");
     expect(root.querySelector("[data-testid=tx-link]")?.getAttribute("href")).toContain("calibration.filfox.info");
+    root.querySelector<HTMLButtonElement>("[data-testid=txlog-toggle]")!.click();
+    expect(root.querySelector("[data-testid=txlog]")).toBeNull();
     expect(root.querySelector("[data-testid=account-label]")?.textContent).toBe("andy.eth");
     expect(root.querySelector("[data-testid=account-identicon]")).toBeTruthy();
     root.querySelector<HTMLButtonElement>("[data-testid=account]")!.click();
@@ -248,5 +249,156 @@ describe("drive feedback", () => {
     const event = new Event("beforeunload", { cancelable: true });
     window.dispatchEvent(event);
     expect(event.defaultPrevented).toBe(true);
+  });
+});
+
+describe("reported bugs", () => {
+  afterEach(() => {
+    document.body.innerHTML = "";
+    localStorage.clear();
+  });
+
+  function setupApp(): { app: DriveApp; root: HTMLElement } {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const app = new DriveApp({
+      volume: null,
+      owner: "",
+      chain: "calibration",
+      encrypted: false,
+      volumeName: "My Drive",
+      cas: { takeMerged: () => false },
+      felarumiUrl: "./felarumi/",
+      felanumioUrl: "./felanumio/",
+    });
+    return { app, root };
+  }
+
+  const panel = (selected: string) => ({
+    address: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+    fil: "1",
+    usdfc: "5",
+    deposit: "5",
+    availableFunds: "",
+    lockupRate: "",
+    paymentsReady: true,
+    sessionReady: false,
+    sessionExpiry: "",
+    datasets: [
+      { id: "1", label: "One", pieceCount: "0", created: "", size: "0", providerId: "1" },
+      { id: "2", label: "Two", pieceCount: "0", created: "", size: "0", providerId: "1" },
+    ] as never,
+    selectedDatasetId: selected,
+    createPrimary: false,
+    legacyRegistry: false,
+    signatures: 0,
+    connectPrompts: 0,
+  });
+
+  it("keeps a clicked dataset when a stale snapshot re-renders the session pop-up (bug 1)", async () => {
+    const { app, root } = setupApp();
+    const saved: string[] = [];
+    app.onPickDataset = (id) => saved.push(id);
+    app.mount(root);
+    app.showPanel(panel("1"));
+    expect(root.querySelector("[data-testid=setup]")).toBeTruthy();
+    expect(root.querySelector("[data-testid=drive-pending]")).toBeTruthy();
+    const two = [...root.querySelectorAll<HTMLInputElement>("[data-testid=dataset-choice]")].find((input) => input.value === "2")!;
+    two.checked = true;
+    two.dispatchEvent(new Event("change", { bubbles: true }));
+    app.showPanel(panel("1"));
+    const checked = root.querySelector<HTMLInputElement>("[data-testid=dataset-choice]:checked");
+    expect(checked?.value).toBe("2");
+    expect(saved).toEqual(["2"]);
+  });
+
+  it("goes straight into the newest dataset's drive with no setup page when payment and dataset exist (bugs 2, 4)", async () => {
+    const { app, root } = setupApp();
+    const io = createMockOnboarding(new URLSearchParams("pay=ready&datasets=2"));
+    await prepareOnboarding(app, io);
+    app.mount(root);
+    await settle(app);
+    root.querySelector("form")?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    await settle(app);
+    await settle(app);
+    expect(app.volume).toBeTruthy();
+    expect(root.querySelector("[data-testid=setup]")).toBeNull();
+    expect(root.querySelector("[data-testid=nav-drive]")).toBeTruthy();
+  });
+
+  it("shows a boot error instead of a blank page (bug 5)", () => {
+    const { app, root } = setupApp();
+    app.mount(root);
+    app.showBootError("RPC exploded");
+    expect(root.querySelector("[data-testid=connect-error]")?.textContent).toContain("RPC exploded");
+  });
+
+  it("lists loose pieces from a dataset that only exposes list(), like Synapse (bug 7)", async () => {
+    const memory = new MemoryStorage();
+    const listOnly = {
+      put: (data: Uint8Array) => memory.put(data),
+      get: (cid: string) => memory.get(cid),
+      list: () => memory.list(),
+    };
+    const observed = observeRegistry(new (await import("fil-folders")).MemoryRegistry("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"));
+    const { withPiecePadding } = await import("fil-folders");
+    const volume = await openVolume({ storage: withPiecePadding(listOnly as never), registry: observed.registry, owner: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266", name: "Live" });
+    await volume.put("/kept.txt", new TextEncoder().encode("kept"));
+    await listOnly.put(new TextEncoder().encode("orphan bytes"));
+    const { app, root } = setupApp();
+    app.attach({
+      volume,
+      owner: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+      chain: "calibration",
+      encrypted: false,
+      volumeName: "Live",
+      cas: observed.cas,
+      felarumiUrl: "./felarumi/",
+      felanumioUrl: "./felanumio/",
+      encryptPref: false,
+    });
+    app.mount(root);
+    await settle(app);
+    root.querySelector<HTMLButtonElement>("[data-testid=nav-loose]")!.click();
+    await settle(app);
+    expect(root.querySelectorAll("[data-testid=loose-row]").length).toBe(1);
+    expect(root.querySelector("[data-testid=loose-summary]")?.textContent).toMatch(/pieces: \d+ in folders, \d+ manifests, 1 loose/);
+  });
+});
+
+describe("editor title names the file (item 8)", () => {
+  afterEach(() => {
+    document.body.innerHTML = "";
+    localStorage.clear();
+  });
+
+  it("renames an untitled document to the editor title, and keeps a FiFolders rename", async () => {
+    const session = await openMockSession();
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const app = new DriveApp({
+      volume: session.volume,
+      owner: session.owner,
+      chain: "calibration",
+      encrypted: false,
+      volumeName: session.volumeName,
+      cas: session.cas,
+      felarumiUrl: "./felarumi/",
+      felanumioUrl: "./felanumio/",
+    });
+    const doc = (text: string) => JSON.stringify({ v: 1, type: "doc", content: [{ type: "paragraph", text }] });
+    const origin = "/FiPen/Untitled document.fipen";
+    upsertOp(newOp({ id: "fel:" + origin, kind: "fel-save", label: "x", path: origin, name: "Untitled document.fipen", volume: session.volumeName, stage: "saving", content: doc("one") }));
+    app.mount(root);
+    await settle(app);
+    expect(new TextDecoder().decode(await session.volume.get(origin))).toContain("one");
+    upsertOp(newOp({ id: "fel:" + origin, kind: "fel-save", label: "x", path: origin, name: "Untitled document.fipen", title: "Trip plan", volume: session.volumeName, stage: "saving", content: doc("two") }));
+    await (app as unknown as { refresh: () => Promise<void> }).refresh();
+    await settle(app);
+    expect(new TextDecoder().decode(await session.volume.get("/FiPen/Trip plan.fipen"))).toContain("two");
+    await expect(session.volume.stat(origin)).rejects.toThrow();
+    upsertOp(newOp({ id: "fel:" + origin, kind: "fel-save", label: "x", path: origin, name: "Untitled document.fipen", title: "Trip plan", volume: session.volumeName, stage: "saving", content: doc("three") }));
+    await (app as unknown as { refresh: () => Promise<void> }).refresh();
+    expect(new TextDecoder().decode(await session.volume.get("/FiPen/Trip plan.fipen"))).toContain("three");
   });
 });

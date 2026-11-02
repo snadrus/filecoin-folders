@@ -1,18 +1,7 @@
-export type ThemeName = "light" | "dark";
+export type ThemeName = "light";
 
-export function themeForScheme(prefersDark: boolean): ThemeName {
-  return prefersDark ? "dark" : "light";
-}
-
-export function applyTheme(theme: ThemeName, root: HTMLElement = document.documentElement): void {
-  root.dataset.theme = theme;
-  root.style.colorScheme = theme;
-}
-
-export function watchSystemTheme(apply: (theme: ThemeName) => void): () => void {
-  const media = window.matchMedia("(prefers-color-scheme: dark)");
-  const update = () => apply(themeForScheme(media.matches));
-  update();
-  media.addEventListener("change", update);
-  return () => media.removeEventListener("change", update);
+/** FiFolders always uses the bright Drive-like palette, whatever the system scheme. */
+export function applyTheme(root: HTMLElement = document.documentElement): void {
+  root.dataset.theme = "light";
+  root.style.colorScheme = "light";
 }

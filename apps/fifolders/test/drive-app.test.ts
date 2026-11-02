@@ -176,33 +176,26 @@ describe("DriveApp", () => {
       expect(root.querySelector("[data-action=new-felarumi]")?.textContent).toContain("FiPen document");
       expect(root.querySelector("[data-action=new-felanumio]")?.textContent).toContain("FiGrid spreadsheet");
       root.querySelector<HTMLButtonElement>("[data-action=new-felarumi]")!.click();
-      const input = root.querySelector<HTMLInputElement>("[data-testid=dialog-input]")!;
-      input.value = "Notes";
-      input.form?.requestSubmit();
+      expect(root.querySelector("[data-testid=dialog-input]")).toBeNull();
       await app.settled;
-      const pending = entry(root, "Notes.fipen");
+      const pending = entry(root, "Untitled document.fipen");
       expect(pending?.dataset.kind).toBe("felarumi");
       expect(pending?.textContent).toContain("Save pending");
-      await expect(session.volume.stat("/FiPen/Notes.fipen")).rejects.toThrow();
+      await expect(session.volume.stat("/FiPen/Untitled document.fipen")).rejects.toThrow();
       const docUrl = new URL(opened[0] ?? "");
       expect(docUrl.origin).toBe("https://felarumi.example");
       expect(docUrl.searchParams.get("fifolders")).toBe("1");
-      expect(docUrl.searchParams.get("name")).toBe("Notes.fipen");
-      expect(docUrl.searchParams.get("path")).toBe("/FiPen/Notes.fipen");
+      expect(docUrl.searchParams.get("name")).toBe("Untitled document.fipen");
+      expect(docUrl.searchParams.get("path")).toBe("/FiPen/Untitled document.fipen");
       expect(docUrl.searchParams.get("pieceCid")).toBeNull();
 
       root.querySelector<HTMLButtonElement>("[data-testid=new-button]")!.click();
       root.querySelector<HTMLButtonElement>("[data-action=new-felanumio]")!.click();
-      const sheetInput = root.querySelector<HTMLInputElement>("[data-testid=dialog-input]")!;
-      sheetInput.value = "Budget.felanumio";
-      sheetInput.form?.requestSubmit();
       await app.settled;
-      await expect(session.volume.stat("/FiGrid/Budget.figrid")).rejects.toThrow();
-      expect(entry(root, "Budget.figrid")?.textContent).toContain("Save pending");
+      expect(entry(root, "Untitled spreadsheet.figrid")?.textContent).toContain("Save pending");
       const sheetUrl = new URL(opened[1] ?? "");
       expect(sheetUrl.origin).toBe("https://felanumio.example");
-      expect(sheetUrl.searchParams.get("name")).toBe("Budget.figrid");
-      expect(sheetUrl.searchParams.get("path")).toBe("/FiGrid/Budget.figrid");
+      expect(sheetUrl.searchParams.get("path")).toBe("/FiGrid/Untitled spreadsheet.figrid");
     } finally {
       window.open = previous;
     }

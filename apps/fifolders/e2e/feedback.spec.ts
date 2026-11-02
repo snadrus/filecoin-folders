@@ -1,17 +1,26 @@
 import { expect, test } from "@playwright/test";
 
-test("costs come first, the new button is prominent, and a document opens beside the drive", async ({ page }) => {
+test("costs open from the storage view, the new button is prominent, and a document opens beside the drive", async ({ page }) => {
   await page.goto("/?onboard=1&pay=ready&datasets=1");
-  await expect(page.getByTestId("costs")).toBeVisible();
-  await expect(page.getByText("FiPen documents and FiGrid spreadsheets are included")).toBeVisible();
-  await page.getByTestId("cost-gb").fill("4");
-  await expect(page.getByTestId("cost-estimate")).toContainText("per month");
-  await expect(page.getByTestId("cost-deposit")).toContainText("Connect a wallet");
-  await page.getByTestId("costs-continue").click();
   await page.getByTestId("connect-wallet").click();
   await expect(page.getByTestId("nav-drive")).toBeVisible();
-  await expect(page.getByTestId("chain-steps")).toContainText("Authorized");
+  await expect(page.getByTestId("chain-steps")).toHaveCount(0);
+  await page.getByTestId("txlog-toggle").click();
+  await expect(page.getByTestId("txlog").getByTestId("chain-steps")).toContainText("Authorized");
+  await page.getByTestId("txlog-toggle").click();
   await expect(page.getByTestId("account-identicon")).toBeVisible();
+  await expect(page.getByTestId("costs")).toHaveCount(0);
+  await page.getByTestId("storage-runway").click();
+  await expect(page.getByTestId("costs")).toContainText("$2.50/TiB = a penny for 4 GB");
+  await expect(page.getByText("FiPen documents and FiGrid spreadsheets are included")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("costs")).toHaveCount(0);
+  await page.getByTestId("storage-runway").click();
+  await page.getByTestId("costs-backdrop").click({ position: { x: 5, y: 5 } });
+  await expect(page.getByTestId("costs")).toHaveCount(0);
+  await page.getByTestId("storage-runway").click();
+  await page.getByTestId("costs-close").click();
+  await expect(page.getByTestId("costs")).toHaveCount(0);
 
   const box = await page.getByTestId("new-button").boundingBox();
   expect(box?.height ?? 0).toBeGreaterThanOrEqual(56);
@@ -25,13 +34,12 @@ test("costs come first, the new button is prominent, and a document opens beside
   await page.getByTestId("new-button").click();
   const popupPromise = page.context().waitForEvent("page");
   await page.getByRole("button", { name: "FiPen document" }).click();
-  await page.getByTestId("dialog-input").fill("Letter");
-  await page.getByTestId("dialog-submit").click();
+  await expect(page.getByTestId("dialog-input")).toHaveCount(0);
   const popup = await popupPromise;
   expect(popup.url()).toContain("fipen");
   expect(popup.url()).toContain("fifolders=1");
-  expect(decodeURIComponent(popup.url())).toContain("/FiPen/Letter.fipen");
-  await expect(page.getByTestId("entry").filter({ hasText: "Letter.fipen" })).toContainText("Save pending");
+  expect(new URL(popup.url()).searchParams.get("path")).toBe("/FiPen/Untitled document.fipen");
+  await expect(page.getByTestId("entry").filter({ hasText: "Untitled document.fipen" })).toContainText("Save pending");
   await expect(page.getByTestId("nav-drive")).toBeVisible();
 });
 

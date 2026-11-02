@@ -27,32 +27,6 @@
   --soft: #f6f9ff;
 }
 
-:root[data-theme="dark"] {
-  color: #e8eaed;
-  background: #202124;
-  color-scheme: dark;
-  --accent: #0090ff;
-  --accent-dark: #8ab4f8;
-  --ink: #e8eaed;
-  --muted: #9aa0a6;
-  --line: #3c4043;
-  --nav: #292a2d;
-  --hover: #3c4043;
-  --select: #174ea6;
-  --search: #303134;
-  --danger: #f2b8b5;
-  --shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
-  --surface: #202124;
-  --chip-on: #3c4043;
-  --banner: #3c3000;
-  --restore: #174ea6;
-  --ok: #81c995;
-  --low: #fdd663;
-  --badge: #3c4043;
-  --row-line: #3c4043;
-  --soft: #292a2d;
-}
-
 * { box-sizing: border-box; }
 html, body, #app { height: 100%; margin: 0; background: var(--surface); color: var(--ink); }
 button, input, select { font: inherit; color: inherit; }
@@ -160,6 +134,12 @@ button:disabled { cursor: default; opacity: 0.45; }
 .entry[data-saving="true"] { opacity: 0.55; }
 .advanced { margin: 8px 0; }
 .cost-list { padding-left: 18px; color: var(--muted); }
+.storage-open { cursor: pointer; border-radius: 8px; }
+.storage-open:hover, .storage-open:focus-visible { background: var(--hover); color: var(--ink); }
+.costs-backdrop { position: fixed; inset: 0; background: rgba(32, 33, 36, 0.4); display: grid; place-items: center; z-index: 50; }
+.costs-modal { position: relative; background: var(--surface); border-radius: 12px; box-shadow: var(--shadow); padding: 24px 28px; max-width: 420px; width: calc(100% - 32px); }
+.costs-modal h2 { margin: 0 0 8px; }
+.costs-modal .close { position: absolute; top: 8px; right: 8px; font-size: 22px; padding: 4px 10px; }
 .slim { border-radius: 999px; padding: 6px 12px; background: var(--accent); color: #fff; }
 .sort-arrow { font-size: 16px; }
 
@@ -305,3 +285,9 @@ button:disabled { cursor: default; opacity: 0.45; }
   .details { width: 100%; }
   .workspace { flex-direction: column; }
 }
+
+.setup-backdrop { z-index: 40; }
+.setup-modal { max-width: 460px; max-height: calc(100vh - 48px); overflow: auto; }
+.txlog { position: fixed; left: 268px; bottom: 16px; width: 380px; max-height: 60vh; overflow: auto; background: var(--surface); border-radius: 12px; box-shadow: var(--shadow); padding: 12px 16px; z-index: 45; }
+.txlog header { display: flex; justify-content: space-between; align-items: center; font-weight: 500; margin-bottom: 8px; }
+.txlog .chain-steps { margin: 0; padding-left: 18px; font-size: 12px; word-break: break-all; }

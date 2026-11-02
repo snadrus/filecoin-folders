@@ -18,6 +18,7 @@ import { REGISTRY_NOT_DEPLOYED, registryReady, saveNetworkPreference } from "./n
 import { qrSvg } from "./qr.js";
 import { loadRemovals, piecesEligibleForRemoval, saveRemovals, schedulePieceRemovals, type RemovalAdapters } from "./removal.js";
 import { chainStepTitle, explorerHref, stepDetail, type ChainReport, type ChainStepView } from "./chain-step.js";
+import { defaultFelTitle, felTarget, rememberFelTarget, remapFelTargets } from "./fel-names.js";
 import { loosePieces, rememberPiece, type LoosePiece } from "./loose.js";
 import {
   TRASH_PATH,
@@ -52,7 +53,6 @@ import {
   fallbackQuote,
   formatUsd,
   fourGiBLine,
-  monthlyEstimate,
   skipLivePricing,
   type CostQuote,
 } from "./pricing.js";
@@ -177,7 +177,6 @@ export class DriveApp {
   dropPath: string | null = null;
   dragging = false;
   costsOpen = false;
-  gb = "1";
   chainSteps: ChainStepView[] = [];
   recentDone: ActivityRow[] = [];
   looseRows: LoosePiece[] = [];
@@ -225,7 +224,6 @@ export class DriveApp {
     this.mainnetBlocked = options.chain === "mainnet" && !registryReady("mainnet");
     this.downloads.onChange = () => this.render();
     this.downloads.setScope(options.volume ? `${options.owner}:${options.volumeName}` : undefined);
-    this.costsOpen = !options.volume;
     if (options.volume) {
       this.loadPrefs();
       this.#restoredFromDisk = loadStaged(this.owner, this.volumeName).ops.length > 0;
@@ -273,7 +271,32 @@ export class DriveApp {
     if (this.root && !this.volume) this.render();
   }
 
+  /** Keep the clicked dataset through any re-render while the snapshot reloads (polls used to reset it). */
+  private pickDataset(id: string): void {
+    this.pickedDataset = id;
+    this.onPickDataset?.(id);
+    if (this.panel) this.panel = { ...this.panel, selectedDatasetId: id };
+    if (this.root) this.render();
+  }
+
+  /** Last dataset the user clicked; wins over a snapshot that was read before the click. */
+  pickedDataset = "";
+  /** Saves the pick as the preferred dataset right away, not after queued wallet work. */
+  onPickDataset?: (id: string) => void;
+
+  /** Boot or uncaught failure: keep the UI on screen and say what went wrong. */
+  showBootError(message: string): void {
+    if (this.volume) this.toast(message);
+    else if (this.panel) this.setupError = message;
+    else this.connectError = message;
+    if (this.root) this.render();
+  }
+
   showPanel(panel: WalletPanel, error = ""): void {
+    const picked = this.pickedDataset;
+    if (picked && picked !== panel.selectedDatasetId && panel.datasets.some((dataset) => dataset.id === picked)) {
+      panel = { ...panel, selectedDatasetId: picked };
+    }
     this.panel = panel;
     this.owner = panel.address;
     this.setupError = error;
@@ -291,6 +314,7 @@ export class DriveApp {
   }
 
   detachToConnect(): void {
+    this.pickedDataset = "";
     this.volume = null;
     this.panel = null;
     this.owner = "";
@@ -393,7 +417,7 @@ export class DriveApp {
       const tree = await this.walk("/");
       this.storageUsed = sumSizes(tree);
       if (this.nav === "loose") {
-        this.looseRows = this.collectLoose(tree);
+        this.looseRows = await this.collectLoose(tree);
         this.entries = [];
       } else {
         this.entries = await this.loadListing();
@@ -712,6 +736,7 @@ export class DriveApp {
     const next = joinPath(parentPath(path), trimmed);
     if (next === path) return;
     await this.stage([{ op: "mv", from: path, to: next }]);
+    remapFelTargets(path, next);
     this.moveStarPrefix(path, next);
     this.mapOrigins(path, next);
     this.selected = this.selected.map((item) => remap(item, path, next));
@@ -1030,8 +1055,14 @@ export class DriveApp {
       this.render();
       return;
     }
-    if (action === "costs-continue") {
+    if (action === "costs-close") {
+      if (actionEl !== target && actionEl?.classList.contains("costs-backdrop")) return;
       this.costsOpen = false;
+      this.render();
+      return;
+    }
+    if (action === "toggle-txlog") {
+      this.txlogOpen = !this.txlogOpen;
       this.render();
       return;
     }
@@ -1117,14 +1148,9 @@ export class DriveApp {
     }
     if (action === "new-felarumi" || action === "new-felanumio") {
       this.newMenu = false;
-      const sheet = action === "new-felanumio";
-      this.dialog = {
-        mode: action,
-        title: sheet ? "FiGrid spreadsheet" : "FiPen document",
-        submit: "Create",
-        value: "",
-      };
-      this.render();
+      // No name prompt: the editor's title names the file once it saves.
+      const kind: FelKind = action === "new-felanumio" ? "felanumio" : "felarumi";
+      this.openNewFel(kind, defaultFelTitle(kind));
       return;
     }
     if (action === "close-dialog") {
@@ -1285,6 +1311,7 @@ export class DriveApp {
     const target = event.target as HTMLInputElement | HTMLSelectElement | null;
     if (!target) return;
     if (target instanceof HTMLInputElement && target.name === "dataset") {
+      this.pickDataset(target.value);
       void this.enqueue(async () => {
         try {
           await this.onSetupAction?.("select-dataset", target.value);
@@ -1297,6 +1324,7 @@ export class DriveApp {
     }
     if (target instanceof HTMLSelectElement && target.dataset.testid === "dataset-select") {
       const id = target.value;
+      this.pickDataset(id);
       void this.enqueue(async () => {
         try {
           await this.onSetupAction?.("select-dataset", id);
@@ -1332,11 +1360,6 @@ export class DriveApp {
   private onInput(event: Event): void {
     const target = event.target as HTMLInputElement | null;
     if (!target) return;
-    if (target.dataset.testid === "cost-gb") {
-      this.gb = target.value;
-      this.render();
-      return;
-    }
     if (target.dataset.testid === "search") {
       this.query = target.value;
       void this.enqueue(() => this.refresh());
@@ -1602,7 +1625,8 @@ export class DriveApp {
     });
     document.addEventListener("keydown", (event) => {
       if (event.key !== "Escape") return;
-      if (!this.newMenu && !this.accountMenu && !this.context && !this.dialog && !this.preview) return;
+      if (!this.newMenu && !this.accountMenu && !this.context && !this.dialog && !this.preview && !this.costsOpen) return;
+      this.costsOpen = false;
       this.newMenu = false;
       this.accountMenu = false;
       this.context = null;
@@ -1713,7 +1737,8 @@ export class DriveApp {
         }
       }
       if (op.kind !== "fel-save" || !op.path || !op.content || isBlankFelContent(op.content)) continue;
-      const path = op.path;
+      const target = felTarget(op.path, op.title);
+      const path = target.to;
       const next = new TextEncoder().encode(op.content);
       try {
         const current = await volume.get(path);
@@ -1726,11 +1751,22 @@ export class DriveApp {
         if (!(error instanceof NotFoundError)) throw error;
       }
       // Parent folder and file entry commit with the document bytes, one piece.
+      let renameFrom = "";
+      if (target.from !== path) {
+        try {
+          await volume.get(target.from);
+          renameFrom = target.from;
+        } catch (error) {
+          if (!(error instanceof NotFoundError)) throw error;
+        }
+      }
       const stat = await volume.tx(async (draft) => {
         const parent = parentPath(path);
         if (parent !== "/") await draft.mkdir(parent);
+        if (renameFrom) await draft.mv(renameFrom, path);
         return draft.put(path, next, { mime: "application/json" });
       });
+      rememberFelTarget(op.path, path, op.title);
       this.rememberDone({ ...op, pieceCid: stat.pieceCid, stage: "saved" });
       dropOp(op.id);
       edited = true;
@@ -1750,16 +1786,40 @@ export class DriveApp {
     this.render();
   }
 
-  private collectLoose(tree: Stat[]): LoosePiece[] {
+  /**
+   * Live datasets have no in-memory piece map, so this used to return nothing on Synapse.
+   * List the dataset's piece CIDs, then read only the ones no folder entry points at.
+   */
+  private async collectLoose(tree: Stat[]): Promise<LoosePiece[]> {
     const referenced = new Set(tree.flatMap((entry) => (entry.pieceCid ? [entry.pieceCid] : [])));
-    const storage = this.volume?.storage as { inner?: { pieces?: Map<string, Uint8Array> } } | undefined;
-    const pieces = storage?.inner?.pieces;
-    if (!pieces) return loosePieces([], referenced);
-    return loosePieces(
-      [...pieces.entries()].map(([pieceCid, bytes]) => ({ pieceCid, bytes })),
-      referenced,
-    );
+    const storage = this.volume?.storage as
+      | { inner?: { pieces?: Map<string, Uint8Array>; list?: () => Promise<string[]>; get?: (cid: string) => Promise<Uint8Array> } }
+      | undefined;
+    const inner = storage?.inner;
+    let cids: string[] = [];
+    try {
+      cids = inner?.pieces ? [...inner.pieces.keys()] : inner?.list ? await inner.list() : [];
+    } catch (error) {
+      this.toast(`Could not list dataset pieces: ${errorText(error)}`);
+    }
+    const blobs: { pieceCid: string; bytes: Uint8Array }[] = [];
+    for (const pieceCid of cids) {
+      if (referenced.has(pieceCid) || !inner?.get) continue;
+      try {
+        blobs.push({ pieceCid, bytes: await inner.get(pieceCid) });
+      } catch {
+        // Unreachable piece: still list it so the count reconciles.
+        blobs.push({ pieceCid, bytes: new Uint8Array() });
+      }
+    }
+    const rows = loosePieces(blobs, referenced);
+    const inFolders = cids.filter((cid) => referenced.has(cid)).length;
+    this.looseSummary = `${cids.length} pieces: ${inFolders} in folders, ${blobs.length - rows.length} manifests, ${rows.length} loose`;
+    return rows;
   }
+
+  looseSummary = "";
+  txlogOpen = false;
 
   private openFel(stat: Pick<Stat, "name" | "path" | "pieceCid">): void {
     const kind = felKind(stat.name);
@@ -1818,8 +1878,6 @@ export class DriveApp {
       })),
       ...this.recentDone,
     ].slice(0, 12);
-    const gb = Number(this.gb);
-    const estimateAtto = monthlyEstimate(this.quote, Number.isFinite(gb) ? gb : 0);
     let available = 0n;
     let rate = 0n;
     if (this.panel?.availableFunds) {
@@ -1861,9 +1919,6 @@ export class DriveApp {
         cdnReserve: formatUsd(this.quote.cdnReserve),
         createFee: formatUsd(this.quote.createFee),
         addPieces: `${formatUsd(this.quote.addPiecesBase)} + ${formatUsd(this.quote.addPiecesEach)} per piece`,
-        estimate: formatUsd(estimateAtto),
-        gb: this.gb,
-        deposit: this.panel ? `Current deposit ${this.panel.deposit} USDFC` : "Connect a wallet to see your deposit.",
         datasetNote: datasetBlurb(this.quote),
         depositNote: depositBlurb(this.quote, "5"),
       },
@@ -1871,6 +1926,8 @@ export class DriveApp {
       activity,
       activityPending: pending.some((op) => op.status === "pending") || this.busy,
       runway,
+      looseSummary: this.looseSummary,
+      txlogOpen: this.txlogOpen,
       loose: this.looseRows.map((piece) => ({
         pieceCid: piece.pieceCid,
         name: piece.name,
@@ -2179,7 +2236,16 @@ function captureFocus(root: HTMLElement): { testid: string; start: number; end: 
   if (!element || !root.contains(element)) return null;
   const testid = element.getAttribute("data-testid");
   if (!testid) return null;
-  return { testid, start: element.selectionStart ?? element.value.length, end: element.selectionEnd ?? element.value.length };
+  const length = typeof element.value === "string" ? element.value.length : 0;
+  let start = length;
+  let end = length;
+  try {
+    start = element.selectionStart ?? length;
+    end = element.selectionEnd ?? length;
+  } catch {
+    // Elements without text selection (select, div[tabindex]) keep focus only.
+  }
+  return { testid, start, end };
 }
 
 function restoreFocus(root: HTMLElement, saved: { testid: string; start: number; end: number } | null): void {
@@ -2187,5 +2253,9 @@ function restoreFocus(root: HTMLElement, saved: { testid: string; start: number;
   const element = root.querySelector<HTMLInputElement>(`[data-testid="${saved.testid}"]`);
   if (!element) return;
   element.focus();
-  element.setSelectionRange?.(saved.start, saved.end);
+  try {
+    element.setSelectionRange?.(saved.start, saved.end);
+  } catch {
+    // Not a text field.
+  }
 }

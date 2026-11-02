@@ -160,13 +160,16 @@ export function saveLastDataset(chainId: number, root: string, id: string): void
   localStorage.setItem(datasetStorageKey(chainId, root), id);
 }
 
-/** Last-used dataset, otherwise the only dataset. Several datasets and no memory: nothing selected. */
+/** Preferred (last picked) dataset, otherwise the newest one, so connect lands straight in a drive. */
 export function chooseDataset(datasets: { id: string }[], lastUsed: string | null): { selectedId: string | null; auto: boolean } {
   if (lastUsed && datasets.some((dataset) => dataset.id === lastUsed)) {
     return { selectedId: lastUsed, auto: true };
   }
-  if (datasets.length === 1 && datasets[0]) return { selectedId: datasets[0].id, auto: true };
-  return { selectedId: null, auto: false };
+  const settled = datasets.filter((dataset) => /^\d+$/.test(dataset.id));
+  const newest = settled.length
+    ? settled.reduce((best, dataset) => (BigInt(dataset.id) > BigInt(best.id) ? dataset : best))
+    : datasets[datasets.length - 1];
+  return newest ? { selectedId: newest.id, auto: true } : { selectedId: null, auto: false };
 }
 
 export function paymentsReady(deposited: bigint, approved: boolean): boolean {

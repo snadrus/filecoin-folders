@@ -14,6 +14,7 @@ export async function prepareOnboarding(app: DriveApp, io: OnboardingIO): Promis
     await io.connect({ rdns: app.walletRdns || null, chain: input.chain });
     await continueOnboarding(app, io, input, true);
   };
+  app.onPickDataset = (id) => io.selectDataset(id, app.chain);
   app.onSetupAction = async (action, value) => {
     const chain = app.chain;
     const volumeName = app.volumeName;
