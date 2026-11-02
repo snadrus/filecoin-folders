@@ -16,13 +16,42 @@ import type { Address, Hex } from "viem";
  * by piece CID, so pieces the provider still serves remain readable.
  */
 export const SESSION_ORIGIN = "fifolders";
-/** Seven days. The session key is refreshed from the account menu. */
+/** Seven days. Renew extends the same key; it does not mint a new one. */
 export const SESSION_TTL_SEC = 7 * 24 * 60 * 60;
+/** Block a session-key action when any permission expires inside this window. */
+export const SESSION_RENEW_MARGIN_SEC = 5 * 60;
+/** Show a non-blocking renew prompt when any permission expires inside this window. */
+export const SESSION_WARN_SEC = 24 * 60 * 60;
 /** Native FIL sent to the session key so later commits pay their own gas. */
 export const SESSION_FUND_WEI = 50_000_000_000_000_000n;
 /** USDFC deposited when storage payment is not ready. 18 decimals. */
 export const PAYMENT_DEPOSIT = 5n * 10n ** 18n;
 const SESSION_SKEW_SEC = 60n;
+
+export type SessionGate = "ok" | "soon" | "expired";
+
+/**
+ * `expired` when any required permission is missing or inside the safety margin.
+ * `soon` when every permission clears the margin but one expires within a day.
+ * Callers pass one expiry per required permission (the four FWSS permissions plus folder commit).
+ */
+export function sessionGateFromExpiries(expiries: readonly bigint[], nowSec: bigint): SessionGate {
+  if (expiries.length === 0) return "expired";
+  const margin = nowSec + BigInt(SESSION_RENEW_MARGIN_SEC);
+  if (expiries.some((expiry) => expiry <= margin)) return "expired";
+  const warn = nowSec + BigInt(SESSION_WARN_SEC);
+  if (expiries.some((expiry) => expiry <= warn)) return "soon";
+  return "ok";
+}
+
+/** Thrown by `Synapse.create` when the session key's FWSS permissions are missing or expired. */
+export const SESSION_PERMISSION_ERROR =
+  "Session key does not have the required permissions. Please login and sync expirations with the session key first.";
+
+export function isSessionPermissionError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return message.includes("Session key does not have the required permissions");
+}
 
 /**
  * Wallet signatures, not connect prompts.

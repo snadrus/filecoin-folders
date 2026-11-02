@@ -219,6 +219,9 @@ button:disabled { cursor: default; opacity: 0.45; }
 .entry.grid .fel-icon { width: 40px; height: 40px; }
 .empty { color: var(--muted); padding: 32px 8px; }
 .banner { background: var(--banner); border-radius: 8px; padding: 10px 12px; }
+.session-banner { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 8px 16px 0; }
+.session-banner.expired { background: #fde8e6; }
+.session-banner button { flex: none; }
 
 .details { width: 320px; border-left: 1px solid var(--line); padding: 16px; overflow: auto; }
 .details header, .preview header, .uploads header { display: flex; justify-content: space-between; align-items: center; gap: 8px; }

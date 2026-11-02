@@ -2,7 +2,7 @@ import type { HistoryEntry, Stat } from "fil-folders";
 import type { ChainStepView } from "./chain-step.js";
 import { felanumioSvg, felarumiSvg, logoSvg } from "./icons.js";
 import { identiconSvg } from "./identicon.js";
-import { datasetLabel, type WalletPanel } from "./onboarding-logic.js";
+import { datasetLabel, type SessionGate, type WalletPanel } from "./onboarding-logic.js";
 import {
   type FelKind,
   type NavId,
@@ -147,6 +147,8 @@ export interface ViewModel {
   stagedCount: number;
   restoreNote: string;
   autoSaveUploads: boolean;
+  /** Non-blocking session renewal. `expired` waits for Renew before the action retries. */
+  sessionPrompt: Exclude<SessionGate, "ok"> | null;
 }
 
 export function renderApp(model: ViewModel): string {
@@ -156,6 +158,7 @@ export function renderApp(model: ViewModel): string {
     ${renderTop(model)}
     ${renderNav(model)}
     <main class="workspace">
+      ${renderSessionBanner(model)}
       ${renderBrowser(model)}
       ${model.details ? renderDetails(model.details) : ""}
     </main>
@@ -240,6 +243,7 @@ function renderSetup(model: ViewModel): string {
       <p class="balances" data-testid="balances"><span>${escapeHtml(panel.fil)} FIL</span><span>${escapeHtml(panel.usdfc)} USDFC</span></p>
       ${legacy}
       ${renderChainSteps(model.chainSteps)}
+      ${renderSessionBanner(model)}
       ${payment}
       ${session}
       <div class="datasets" data-testid="datasets">
@@ -251,6 +255,16 @@ function renderSetup(model: ViewModel): string {
       <p class="note" data-testid="wallet-signatures">Wallet signatures ${panel.signatures}. Connect prompts ${panel.connectPrompts}.</p>
       ${model.setupError ? `<p class="error" data-testid="setup-error">${escapeHtml(model.setupError)}</p>` : ""}
     </div>
+  </div>`;
+}
+
+function renderSessionBanner(model: ViewModel): string {
+  if (!model.sessionPrompt) return "";
+  const expired = model.sessionPrompt === "expired";
+  const text = expired ? "Session expired — Renew (1 signature)" : "Session expires soon — Renew (1 signature)";
+  return `<div class="banner session-banner ${expired ? "expired" : "soon"}" data-testid="session-renew" data-prompt="${model.sessionPrompt}" role="status">
+    <span>${text}</span>
+    <button type="button" data-testid="session-renew-button" data-action="renew-session">Renew</button>
   </div>`;
 }
 
