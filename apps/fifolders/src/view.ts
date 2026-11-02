@@ -639,6 +639,9 @@ function renderAccount(model: ViewModel): string {
     : "";
   return `<div class="menu account-menu" data-menu="account" data-testid="account-menu">
     <p class="account-line">${escapeHtml(panel?.ens || model.owner)}</p>
+    <label class="field">Display name
+      <input data-testid="display-name" maxlength="60" placeholder="Shown in FiPen and FiGrid" value="${escapeHtml(storedDisplayName())}" />
+    </label>
     <p class="account-line">Volume ${escapeHtml(model.volumeName)} · encryption ${model.encrypted ? "on" : "off"}</p>
     <div class="chain-toggle" role="group" aria-label="Network">
       ${chainButton("calibration", "Calibration", model.chain)}
@@ -658,6 +661,14 @@ function renderAccount(model: ViewModel): string {
     </details>
     <button type="button" data-action="disconnect" data-testid="disconnect">Disconnect</button>
   </div>`;
+}
+
+function storedDisplayName(): string {
+  try {
+    return globalThis.localStorage?.getItem("fifolders:display-name") || "";
+  } catch {
+    return "";
+  }
 }
 
 function renderTxlog(model: ViewModel): string {

@@ -35,6 +35,16 @@ describe("DriveApp", () => {
     localStorage.clear();
   });
 
+  it("stores the account menu display name for FiPen and FiGrid", async () => {
+    const { root } = await mountMock();
+    root.querySelector<HTMLButtonElement>("[data-testid=account]")!.click();
+    const input = root.querySelector<HTMLInputElement>("[data-testid=display-name]")!;
+    expect(input).toBeTruthy();
+    input.value = "Andy J";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(localStorage.getItem("fifolders:display-name")).toBe("Andy J");
+  });
+
   it("creates a folder, uploads two files in one commit, renames, trashes, and restores", async () => {
     const { app, root, session } = await mountMock();
     expect(root.querySelector("[data-testid=nav-drive]")).toBeTruthy();

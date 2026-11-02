@@ -1379,6 +1379,17 @@ export class DriveApp {
   private onInput(event: Event): void {
     const target = event.target as HTMLInputElement | null;
     if (!target) return;
+    if (target.dataset.testid === "display-name") {
+      // Same-origin key read by FiPen and FiGrid for the name on your cursor and comments.
+      const name = target.value.trim().slice(0, 60);
+      try {
+        if (name) localStorage.setItem("fifolders:display-name", name);
+        else localStorage.removeItem("fifolders:display-name");
+      } catch {
+        // Private mode: the editors fall back to a generated name.
+      }
+      return;
+    }
     if (target.dataset.testid === "search") {
       this.query = target.value;
       void this.enqueue(() => this.refresh());
