@@ -160,6 +160,7 @@ describe("drive feedback", () => {
     app.mount(root);
     await settle(app);
     expect(new TextDecoder().decode(await session.volume.get("/Felarumi/Notes.felarumi"))).toContain("hello");
+    expect(session.registry.commits).toBe(1);
     expect(loadOps().some((op) => op.id === "save-1")).toBe(false);
     expect(root.textContent).toContain("saved");
   });

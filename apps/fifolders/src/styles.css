@@ -73,6 +73,10 @@ button:disabled { cursor: default; opacity: 0.45; }
 .account { display: inline-flex; align-items: center; gap: 8px; border-radius: 999px; padding: 6px 12px 6px 6px; background: var(--nav); }
 .identicon { display: block; border-radius: 50%; }
 .activity-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 4px rgba(0, 144, 255, 0.15); }
+.staged-changes { display: flex; align-items: center; gap: 8px; }
+.staged-changes .primary { padding: 8px 16px; font-weight: 600; white-space: nowrap; }
+.staged-changes .ghost { border-radius: 999px; padding: 8px 12px; color: var(--muted); }
+.restore-banner { margin: 0 0 12px; padding: 8px 12px; background: #e8f1ff; border-radius: 8px; color: var(--accent-dark); }
 .chain-steps { display: flex; flex-direction: column; gap: 2px; margin: 0; padding: 0; list-style: none; font-size: 12px; color: var(--muted); max-width: 280px; }
 .chain-steps a { color: var(--accent-dark); }
 

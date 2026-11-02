@@ -1,6 +1,6 @@
 # FiFolders
 
-A static file manager on [`fil-folders`](../../packages/fil-folders). It keeps a folder volume on Filecoin: file bytes are pieces, and a Calibration `FolderRegistry` head points at the current manifest.
+A static file manager on [`fil-folders`](../../packages/fil-folders). It keeps a folder volume on Filecoin. Each save is one CAR piece (the manifest plus any new file bytes), and a Calibration `FolderRegistry` head points at that piece.
 
 The build is plain Vite and TypeScript. `vite build` emits `dist/` with relative asset URLs, so any static host can serve it.
 
@@ -42,7 +42,7 @@ A volume is the registry head for `(wallet, keccak256("fil-folders"), keccak256(
 | Log scan start | block 4207373 |
 | RPC | `https://api.calibration.node.glif.io/rpc/v1` |
 
-Encryption is optional per volume. The choice is stored in the browser and applied the next time that volume is opened. Several uploads share one `tx()` commit. If another writer lands first, non-overlapping paths merge and a toast says so. A real path conflict names the paths and leaves the previous snapshot in place.
+Encryption is optional per volume. The choice is stored in the browser and applied the next time that volume is opened. Renames, moves, trash, and new folders stay in the browser until **Save N changes** in the top bar (Discard throws them away). A multi-file drop saves as one piece when **Auto-save uploads** is on (the default, in the account menu). Turning it off leaves uploads in that same unsaved list. The list is in `localStorage` and comes back after a refresh. Leaving the page with unsaved changes prompts first. Each Save is one activity row. Felarumi and Felanumio keep their own save and each of those is one piece. If another writer lands first, non-overlapping paths merge and a toast says so. A real path conflict names the paths and leaves the previous snapshot in place.
 
 Trash is the `/.trash` folder. Restore uses the original path remembered in localStorage.
 

@@ -12,6 +12,7 @@ interface FlatFile {
   type: "file";
   mtime: number;
   pieceCid: string;
+  located?: string;
   size: number;
   mime?: string;
   enc?: ContentEnc;
@@ -111,6 +112,7 @@ function flatten(root: DirNode): Map<string, Flat> {
           pieceCid: entry.pieceCid,
           size: entry.size,
         };
+        if (entry.located !== undefined) file.located = entry.located;
         if (entry.mime !== undefined) file.mime = entry.mime;
         if (entry.enc !== undefined) file.enc = entry.enc;
         map.set(path, file);
@@ -147,6 +149,7 @@ function unflatten(map: Map<string, Flat>, rootMtime: number): DirNode {
         size: node.size,
         mtime: node.mtime,
       };
+      if (node.located !== undefined) file.located = node.located;
       if (node.mime !== undefined) file.mime = node.mime;
       if (node.enc !== undefined) file.enc = node.enc;
       parent.entries.push(file);

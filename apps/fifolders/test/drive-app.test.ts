@@ -1,4 +1,5 @@
 import { MemoryRegistry, MemoryStorage, openVolume, type Registry } from "fil-folders";
+import { AUTOSAVE_UPLOADS_KEY } from "../src/staged.js";
 import { afterEach, describe, expect, it } from "vitest";
 import { DriveApp } from "../src/drive-app.js";
 import { observeRegistry, openMockSession } from "../src/session.js";
@@ -203,5 +204,73 @@ describe("DriveApp", () => {
     } finally {
       window.open = previous;
     }
+  });
+
+  it("keeps a new folder staged across refresh and prompts before unload", async () => {
+    const { app, root, session } = await mountMock();
+    const before = session.registry.commits;
+    root.querySelector<HTMLButtonElement>("[data-testid=new-button]")!.click();
+    root.querySelector<HTMLButtonElement>("[data-action=new-folder]")!.click();
+    const input = root.querySelector<HTMLInputElement>("[data-testid=dialog-input]")!;
+    input.value = "Photos";
+    input.form?.requestSubmit();
+    await app.settled;
+    expect(session.registry.commits).toBe(before);
+    expect(root.querySelector("[data-testid=save-changes]")?.textContent).toBe("Save 1 change");
+    const leaving = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(leaving);
+    expect(leaving.defaultPrevented).toBe(true);
+
+    const root2 = document.createElement("div");
+    document.body.appendChild(root2);
+    const app2 = new DriveApp({
+      volume: session.volume,
+      owner: session.owner,
+      chain: "calibration",
+      encrypted: false,
+      volumeName: session.volumeName,
+      cas: session.cas,
+      felarumiUrl: "https://felarumi.example",
+      felanumioUrl: "https://felanumio.example",
+    });
+    app2.mount(root2);
+    await app2.settled;
+    expect(root2.querySelector("[data-testid=staged-restore]")?.textContent).toBe("Restored 1 unsaved change");
+    expect(entry(root2, "Photos")).toBeTruthy();
+    expect(session.registry.commits).toBe(before);
+    expect(await session.volume.ls("/")).toEqual([]);
+
+    root2.querySelector<HTMLButtonElement>("[data-testid=save-changes]")!.click();
+    await app2.settled;
+    expect(session.registry.commits).toBe(before + 1);
+    expect(root2.querySelector("[data-testid=save-changes]")).toBeNull();
+    expect(root2.querySelector("[data-testid=activity]")?.textContent).toContain("Save 1 change");
+    expect((await session.volume.ls("/")).map((item) => item.name)).toContain("Photos");
+    expect(localStorage.getItem(`fifolders:staged:${session.owner.toLowerCase()}:${session.volumeName}`)).toBeNull();
+  });
+
+  it("holds uploads until Save when auto-save is off, and bundles them when it is on", async () => {
+    localStorage.setItem(AUTOSAVE_UPLOADS_KEY, "0");
+    const { app, root, session } = await mountMock();
+    const before = session.registry.commits;
+    await app.uploadFiles([
+      new File(["one"], "one.txt", { type: "text/plain" }),
+      new File(["two"], "two.txt", { type: "text/plain" }),
+    ]);
+    expect(session.registry.commits).toBe(before);
+    expect(entry(root, "one.txt")).toBeTruthy();
+    expect(entry(root, "two.txt")).toBeTruthy();
+    expect(root.querySelector("[data-testid=save-changes]")?.textContent).toBe("Save 2 changes");
+    await expect(session.volume.stat("/one.txt")).rejects.toThrow();
+
+    root.querySelector<HTMLButtonElement>("[data-testid=account]")!.click();
+    const toggle = root.querySelector<HTMLInputElement>("[data-testid=autosave-uploads]")!;
+    expect(toggle.checked).toBe(false);
+    root.querySelector<HTMLButtonElement>("[data-testid=save-changes]")!.click();
+    await app.settled;
+    expect(session.registry.commits).toBe(before + 1);
+    expect(new TextDecoder().decode(await session.volume.get("/one.txt"))).toBe("one");
+    expect(new TextDecoder().decode(await session.volume.get("/two.txt"))).toBe("two");
+    expect([...root.querySelectorAll("[data-testid=activity-item]")].filter((node) => node.textContent?.includes("Save 2 changes"))).toHaveLength(1);
   });
 });

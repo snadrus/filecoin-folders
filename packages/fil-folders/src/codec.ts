@@ -36,7 +36,19 @@ export function parseManifest(bytes: Uint8Array): Manifest {
   const mtime = record.mtime === undefined ? 0 : record.mtime;
   if (typeof mtime !== "number" || !Number.isFinite(mtime)) throw new Error("manifest mtime is invalid");
   if (!Array.isArray(record.entries)) throw new Error("manifest entries are missing");
-  return { v: 1, mtime, entries: record.entries.map((entry) => parseEntry(entry)) };
+  const manifest: Manifest = { v: 1, mtime, entries: record.entries.map((entry) => parseEntry(entry)) };
+  if (record.located !== undefined) manifest.located = parseLocated(record.located);
+  return manifest;
+}
+
+function parseLocated(value: unknown): Record<string, string> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("manifest located index is invalid");
+  const located: Record<string, string> = {};
+  for (const [cid, piece] of Object.entries(value)) {
+    if (!cid || typeof piece !== "string" || piece.length === 0) throw new Error("manifest located index is invalid");
+    located[cid] = piece;
+  }
+  return located;
 }
 
 function parseEntry(value: unknown): ManifestEntry {

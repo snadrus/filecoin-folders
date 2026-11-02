@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MemoryStorage, openVolume, MIN_PIECE_BYTES, padPiece, unpadPiece } from "../src/index.js";
+import { MemoryStorage, decodeCar, isCar, openVolume, MIN_PIECE_BYTES, padPiece, unpadPiece } from "../src/index.js";
 import { OWNER, decode, makeVolume, text } from "./helpers.js";
 
 describe("piece padding", () => {
@@ -45,7 +45,11 @@ describe("piece padding", () => {
     const big = new Uint8Array(180);
     big.set(text("big-stream-prefix"));
     await volume.put("/big.bin", big);
-    const stored = [...storage.pieces.values()].find((piece) => piece.byteLength === 180);
+    const blocks = [...storage.pieces.values()].flatMap((piece) => {
+      const raw = unpadPiece(piece);
+      return isCar(raw) ? [...decodeCar(raw).blocks.values()] : [];
+    });
+    const stored = blocks.find((block) => block.byteLength === 180);
     expect(stored).toBeTruthy();
     expect(stored![0]).not.toBe(0xff);
   });

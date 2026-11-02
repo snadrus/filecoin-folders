@@ -127,6 +127,9 @@ export interface ViewModel {
   walletRdns: string;
   panel: WalletPanel | null;
   setupError: string;
+  stagedCount: number;
+  restoreNote: string;
+  autoSaveUploads: boolean;
 }
 
 export function renderApp(model: ViewModel): string {
@@ -247,10 +250,20 @@ function renderTop(model: ViewModel): string {
       <input data-testid="search" type="search" placeholder="Search in FiFolders" value="${escapeHtml(model.query)}" />
     </label>
     ${model.activityPending ? `<span class="activity-dot" data-testid="activity-indicator" title="Saving"></span>` : ""}
+    ${renderStaged(model)}
     <button class="account" data-action="account" data-testid="account" type="button">${identiconSvg(model.owner)}<span data-testid="account-label">${escapeHtml(label)}</span></button>
     <span class="sr-only" data-testid="wallet-signatures">${model.panel?.signatures ?? 0}</span>
     ${renderChainSteps(model.chainSteps)}
   </header>`;
+}
+
+function renderStaged(model: ViewModel): string {
+  if (!model.stagedCount) return "";
+  const label = model.stagedCount === 1 ? "Save 1 change" : `Save ${model.stagedCount} changes`;
+  return `<div class="staged-changes" data-testid="staged-changes">
+    <button class="primary" type="button" data-testid="save-changes" data-action="save-changes">${label}</button>
+    <button class="ghost" type="button" data-testid="discard-changes" data-action="discard-changes">Discard</button>
+  </div>`;
 }
 
 function renderChainSteps(steps: ChainStepView[]): string {
@@ -337,7 +350,9 @@ function renderBrowser(model: ViewModel): string {
   const blocked = model.mainnetBlocked
     ? `<p class="banner" data-testid="mainnet-banner">Mainnet has no FolderRegistry yet. Switch back to Calibration to keep working in this volume.</p>`
     : "";
+  const restored = model.restoreNote ? `<p class="restore-banner" data-testid="staged-restore">${escapeHtml(model.restoreNote)}</p>` : "";
   return `<section class="browser ${model.dragging ? "dragover" : ""}" data-testid="browser" data-view="${model.view}">
+    ${restored}
     <div class="toolbar">
       <nav class="crumbs" data-testid="breadcrumbs">${crumbs}</nav>
       <div class="tools">
@@ -534,6 +549,7 @@ function renderAccount(model: ViewModel): string {
       ${chainButton("mainnet", "Mainnet", model.chain)}
     </div>
     ${datasets}
+    <label class="check"><input data-testid="autosave-uploads" type="checkbox" ${model.autoSaveUploads ? "checked" : ""}/> Auto-save uploads</label>
     <button type="button" data-action="show-costs" data-testid="show-costs">What it costs</button>
     <details class="advanced" data-testid="advanced-editors">
       <summary>Advanced</summary>

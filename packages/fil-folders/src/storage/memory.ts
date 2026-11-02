@@ -17,6 +17,12 @@ export class MemoryStorage implements Storage {
     if (!bytes) throw new Error(`unknown piece ${pieceCid}`);
     return bytes;
   }
+
+  async getRange(pieceCid: string, offset: number, length: number): Promise<Uint8Array> {
+    const bytes = await this.get(pieceCid);
+    if (offset < 0 || length < 0 || offset + length > bytes.byteLength) throw new Error("piece range is outside the payload");
+    return bytes.subarray(offset, offset + length);
+  }
 }
 
 export function createMemoryStorage(): MemoryStorage {

@@ -8,8 +8,11 @@ import {
   RegistryNotAuthorized,
   assertSupportedRuntime,
   bytesToPieceCid,
+  decodeCar,
+  isCar,
   namespaceId,
   openVolume,
+  unpadPiece,
   volumeKey,
 } from "../src/index.js";
 import { OWNER, decode, makeVolume, text } from "./helpers.js";
@@ -77,17 +80,20 @@ describe("folder crud", () => {
   it("inlines small directories and spills them past the threshold", async () => {
     const inlined = await makeVolume();
     await inlined.volume.put("/docs/a.txt", text("hi"));
-    expect(inlined.storage.pieces.size).toBe(2);
+    expect(inlined.storage.pieces.size).toBe(1);
     const inlineHead = await inlined.registry.head(OWNER, namespaceId(), volumeKey("demo"));
-    const inlineJson = decode(inlined.storage.pieces.get(bytesToPieceCid(inlineHead.pieceCid))!);
-    expect(inlineJson).toContain("docs");
-    expect(inlineJson).toContain("a.txt");
+    const inlineCar = unpadPiece(inlined.storage.pieces.get(bytesToPieceCid(inlineHead.pieceCid))!);
+    expect(isCar(inlineCar)).toBe(true);
+    const inlineManifest = decode(decodeCar(inlineCar).blocks.get(decodeCar(inlineCar).root)!);
+    expect(inlineManifest).toContain("docs");
+    expect(inlineManifest).toContain("a.txt");
 
     const spilled = await makeVolume({ dirThreshold: 0 });
     await spilled.volume.put("/docs/a.txt", text("hi"));
-    expect(spilled.storage.pieces.size).toBe(3);
+    expect(spilled.storage.pieces.size).toBe(1);
     const spillHead = await spilled.registry.head(OWNER, namespaceId(), volumeKey("demo"));
-    const spillJson = decode(spilled.storage.pieces.get(bytesToPieceCid(spillHead.pieceCid))!);
+    const spillCar = decodeCar(unpadPiece(spilled.storage.pieces.get(bytesToPieceCid(spillHead.pieceCid))!));
+    const spillJson = decode(spillCar.blocks.get(spillCar.root)!);
     expect(spillJson).toContain("docs");
     expect(spillJson).not.toContain("a.txt");
     const reopened = await openVolume({
