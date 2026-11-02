@@ -76,6 +76,30 @@ describe("CARv1 bundle", () => {
     expect(decode(await again.get("/docs/b.txt"))).toBe("bee");
   });
 
+  it("stores a new nested file and its manifest entry in one CAR", async () => {
+    const { volume, storage, registry } = await makeVolume();
+    const body = text('{"v":1,"type":"doc","content":[{"text":"hello"}]}');
+    await volume.tx(async (draft) => {
+      await draft.mkdir("/Felarumi");
+      await draft.put("/Felarumi/Notes.felarumi", body, { mime: "application/json" });
+    });
+    expect(registry.commits).toBe(1);
+    expect(storage.pieces.size).toBe(1);
+    const head = await registry.head(OWNER, namespaceId(), volumeKey("demo"));
+    const car = decodeCar(unpadPiece(storage.pieces.get(bytesToPieceCid(head.pieceCid))!));
+    const manifest = decode(car.blocks.get(car.root)!);
+    expect(manifest).toContain("Notes.felarumi");
+    expect([...car.blocks.values()].some((block) => decode(block).includes("hello"))).toBe(true);
+    expect(car.blocks.size).toBeGreaterThan(1);
+
+    await volume.mkdir("/Felarumi/empty");
+    expect(storage.pieces.size).toBe(2);
+    const metaHead = await registry.head(OWNER, namespaceId(), volumeKey("demo"));
+    const meta = decodeCar(unpadPiece(storage.pieces.get(bytesToPieceCid(metaHead.pieceCid))!));
+    expect(meta.blocks.size).toBe(1);
+    expect([...meta.blocks.values()].some((block) => decode(block).includes("hello"))).toBe(false);
+  });
+
   it("writes a metadata-only CAR and does not copy unchanged file bytes", async () => {
     const { volume, storage, registry } = await makeVolume();
     await volume.put("/notes/a.txt", text("same-bytes"));

@@ -1,4 +1,4 @@
-import { MemoryStorage, openVolume } from "fil-folders";
+import { decodeCar, MemoryStorage, openVolume, unpadPiece } from "fil-folders";
 import { afterEach, describe, expect, it } from "vitest";
 import { DriveApp } from "../src/drive-app.js";
 import { sniffMime } from "../src/loose.js";
@@ -14,6 +14,19 @@ afterEach(() => {
   localStorage.clear();
   document.body.innerHTML = "";
 });
+
+function memoryPieces(volume: { storage: unknown }): Map<string, Uint8Array> {
+  const pieces = (volume.storage as { inner?: { pieces?: Map<string, Uint8Array> } }).inner?.pieces;
+  if (!pieces) throw new Error("memory pieces missing");
+  return pieces;
+}
+
+async function headCar(volume: { storage: unknown; history: () => Promise<{ pieceCid: string }[]> }) {
+  const history = await volume.history();
+  const piece = memoryPieces(volume).get(history.at(-1)?.pieceCid ?? "");
+  if (!piece) throw new Error("head piece missing");
+  return decodeCar(unpadPiece(piece));
+}
 
 async function settle(app: DriveApp): Promise<void> {
   await Promise.resolve();
@@ -161,8 +174,47 @@ describe("drive feedback", () => {
     await settle(app);
     expect(new TextDecoder().decode(await session.volume.get("/Felarumi/Notes.felarumi"))).toContain("hello");
     expect(session.registry.commits).toBe(1);
+    const first = await headCar(session.volume);
+    expect(memoryPieces(session.volume).size).toBe(1);
+    expect(new TextDecoder().decode(first.blocks.get(first.root)!)).toContain("Notes.felarumi");
+    expect([...first.blocks.values()].some((block) => new TextDecoder().decode(block).includes("hello"))).toBe(true);
+    expect(first.blocks.size).toBeGreaterThan(1);
     expect(loadOps().some((op) => op.id === "save-1")).toBe(false);
     expect(root.textContent).toContain("saved");
+
+    upsertOp(
+      newOp({
+        id: "save-2",
+        kind: "fel-save",
+        label: "Notes.felarumi",
+        path: "/Felarumi/Notes.felarumi",
+        name: "Notes.felarumi",
+        volume: session.volumeName,
+        stage: "saving",
+        content: JSON.stringify({ v: 1, type: "doc", content: [{ type: "paragraph", text: "edited" }] }),
+      }),
+    );
+    const root2 = document.createElement("div");
+    document.body.appendChild(root2);
+    const app2 = new DriveApp({
+      volume: session.volume,
+      owner: session.owner,
+      chain: "calibration",
+      encrypted: false,
+      volumeName: session.volumeName,
+      cas: session.cas,
+      felarumiUrl: "./felarumi/",
+      felanumioUrl: "./felanumio/",
+    });
+    app2.mount(root2);
+    await settle(app2);
+    expect(new TextDecoder().decode(await session.volume.get("/Felarumi/Notes.felarumi"))).toContain("edited");
+    expect(session.registry.commits).toBe(2);
+    expect(memoryPieces(session.volume).size).toBe(2);
+    const second = await headCar(session.volume);
+    expect(new TextDecoder().decode(second.blocks.get(second.root)!)).toContain("Notes.felarumi");
+    expect([...second.blocks.values()].some((block) => new TextDecoder().decode(block).includes("edited"))).toBe(true);
+    expect(second.blocks.size).toBeGreaterThan(1);
   });
 
   it("lists a loose piece and warns before unload while an upload is pending", async () => {
