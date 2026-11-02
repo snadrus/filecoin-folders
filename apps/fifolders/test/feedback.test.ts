@@ -6,7 +6,7 @@ import { appLink } from "../src/model.js";
 import { createMockOnboarding } from "../src/mock-onboarding.js";
 import { prepareOnboarding } from "../src/onboarding-controller.js";
 import { dropOp, isBlankFelContent, loadOps, newOp, OPS_KEY, upsertOp } from "../src/ops.js";
-import { describeRunway, formatUsd, monthlyEstimate, quoteFromLive, fallbackQuote } from "../src/pricing.js";
+import { describeRunway, formatUsd, quoteFromLive, fallbackQuote } from "../src/pricing.js";
 import { observeRegistry, openMockSession } from "../src/session.js";
 import { loadSavedView } from "../src/volume-persist.js";
 
@@ -35,12 +35,10 @@ async function settle(app: DriveApp): Promise<void> {
 }
 
 describe("pricing and runway", () => {
-  it("turns live storage fields into a quote and a monthly estimate", () => {
+  it("turns live storage fields into a quote", () => {
     const quote = quoteFromLive({ perTiBNoCdn: 2n * 10n ** 18n, perTiBWithCdn: 3n * 10n ** 18n, minimumPricePerMonth: 10n ** 17n, ratePerMonth: 10n ** 16n });
     expect(quote.source).toBe("live");
     expect(quote.perTiBPerMonth).toBe(2n * 10n ** 18n);
-    expect(monthlyEstimate(quote, 0)).toBe(0n);
-    expect(monthlyEstimate(fallbackQuote(), 4)).toBe((fallbackQuote().perTiBPerMonth * 4n) / 1024n + fallbackQuote().provingPerMonth);
     expect(formatUsd(0n)).toBe("$0.00");
     expect(formatUsd(1n)).toBe("< $0.01");
   });
@@ -120,10 +118,8 @@ describe("drive feedback", () => {
     await prepareOnboarding(app, io);
     app.mount(root);
     await settle(app);
-    expect(root.querySelector("[data-testid=costs]")).toBeTruthy();
-    expect(root.querySelector("[data-testid=connect-wallet]")).toBeNull();
-    root.querySelector<HTMLButtonElement>("[data-testid=costs-continue]")!.click();
-    await settle(app);
+    expect(root.querySelector("[data-testid=costs]")).toBeNull();
+    expect(root.querySelector("[data-testid=connect-wallet]")).toBeTruthy();
     root.querySelector("form")?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
     await settle(app);
     const steps = [...root.querySelectorAll("[data-testid=chain-step]")].map((node) => node.textContent ?? "");

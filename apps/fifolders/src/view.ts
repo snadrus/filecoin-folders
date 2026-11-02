@@ -76,9 +76,6 @@ export interface CostView {
   cdnReserve: string;
   createFee: string;
   addPieces: string;
-  estimate: string;
-  gb: string;
-  deposit: string;
   datasetNote: string;
   depositNote: string;
 }
@@ -152,7 +149,6 @@ export interface ViewModel {
 }
 
 export function renderApp(model: ViewModel): string {
-  if (model.costsOpen) return renderCosts(model);
   if (!model.connected) return model.panel ? renderSetup(model) : renderConnect(model);
   return `<div class="shell">
     ${renderTop(model)}
@@ -163,6 +159,7 @@ export function renderApp(model: ViewModel): string {
       ${model.details ? renderDetails(model.details) : ""}
     </main>
     ${model.newMenu ? renderNewMenu() : ""}
+    ${model.costsOpen ? renderCosts() : ""}
     ${model.accountMenu ? renderAccount(model) : ""}
     ${model.context ? renderContext(model.context) : ""}
     ${model.dialog ? renderDialog(model.dialog) : ""}
@@ -336,7 +333,7 @@ function renderNav(model: ViewModel): string {
       ${navItem("trash", "delete", "Trash", model.nav)}
     </nav>
     ${activity}
-    <div class="storage ${runway.low ? "low" : ""}" data-testid="storage-runway">
+    <div class="storage storage-open ${runway.low ? "low" : ""}" data-testid="storage-runway" data-action="show-costs" role="button" tabindex="0" title="What it costs">
       <p class="runway-headline" data-testid="runway-headline">${runwayHtml(runway.headline, runway.datasetLabel)}</p>
       ${runway.detail ? `<p class="runway-detail" data-testid="runway-detail">${runwayHtml(runway.detail, runway.datasetLabel)}</p>` : ""}
       ${runway.showAdd ? `<button type="button" class="primary slim" data-action="add-funds" data-testid="add-funds">Add funds</button>` : ""}
@@ -627,37 +624,20 @@ function renderAccount(model: ViewModel): string {
   </div>`;
 }
 
-function renderCosts(model: ViewModel): string {
-  const costs = model.costs;
-  const back = model.connected ? "Back to drive" : "Continue";
-  return `<div class="connect">
-    <div class="connect-card setup-card costs-card" data-testid="costs">
-      ${logoSvg(56)}
-      <h1>What it costs</h1>
+function renderCosts(): string {
+  return `<div class="costs-backdrop" data-action="costs-close" data-testid="costs-backdrop">
+    <div class="costs-modal" role="dialog" aria-modal="true" aria-labelledby="costs-title" data-testid="costs">
+      <button type="button" class="close" data-action="costs-close" data-testid="costs-close" aria-label="Close">×</button>
+      <h2 id="costs-title">What it costs</h2>
       <p class="lede">FiPen documents and FiGrid spreadsheets are included — you only pay Filecoin storage.</p>
+      <p><strong>Per month:</strong></p>
       <ul class="cost-list">
-        <li>Storage is ${escapeHtml(costs.perTiB)} per TiB each month for one copy, and only while the pieces exist. About ${escapeHtml(costs.fourGiB)} per 4 GiB each month.</li>
-        <li>Proving is ${escapeHtml(costs.proving)} per dataset each month once it holds data.</li>
-        <li>A new dataset needs a refundable ${escapeHtml(costs.reserve)} USDFC reserve (${escapeHtml(costs.cdnReserve)} with CDN). A ${escapeHtml(costs.createFee)} create fee is drawn from that reserve.</li>
-        <li>Adding pieces is ${escapeHtml(costs.addPieces)}.</li>
-        <li>30 days of storage is always prepaid and locked. Session keys also need a little FIL for gas (0.05 FIL).</li>
+        <li>$2.50/TiB = a penny for 4 GB</li>
+        <li>$0.12 per dataset ($0.50 at start)</li>
+        <li>A penny per piece added</li>
       </ul>
-      <label class="field">Estimate for
-        <input data-testid="cost-gb" inputmode="decimal" value="${escapeHtml(costs.gb)}" /> GiB
-      </label>
-      <p data-testid="cost-estimate">${escapeHtml(costs.estimate)} per month</p>
-      <p data-testid="cost-deposit">${escapeHtml(costs.deposit)}</p>
-      ${renderRunwayBlock(model.runway)}
       <p class="note"><a href="${DOCS_COSTS_URL}" target="_blank" rel="noreferrer">How Filecoin storage is priced</a></p>
-      <button class="primary" type="button" data-testid="costs-continue" data-action="costs-continue">${back}</button>
     </div>
-  </div>`;
-}
-
-function renderRunwayBlock(runway: Runway): string {
-  return `<div class="storage ${runway.low ? "low" : ""}" data-testid="storage-runway">
-    <p data-testid="runway-headline">${runwayHtml(runway.headline, runway.datasetLabel)}</p>
-    ${runway.detail ? `<p data-testid="runway-detail">${runwayHtml(runway.detail, runway.datasetLabel)}</p>` : ""}
   </div>`;
 }
 

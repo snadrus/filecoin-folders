@@ -5,13 +5,10 @@ import { DriveApp, type DriveAppOptions } from "./drive-app.js";
 import { readNetworkPreference } from "./network.js";
 import { prepareOnboarding, resumeOnboarding } from "./onboarding-controller.js";
 import { felBases, openMockSession, storedVolumeName, type Session } from "./session.js";
-import { watchSystemTheme } from "./theme.js";
+import { applyTheme } from "./theme.js";
 import "./styles.css";
 
-watchSystemTheme((theme) => {
-  document.documentElement.dataset.theme = theme;
-  document.documentElement.style.colorScheme = theme;
-});
+applyTheme();
 
 const root = document.querySelector<HTMLElement>("#app");
 if (!root) throw new Error("missing #app");

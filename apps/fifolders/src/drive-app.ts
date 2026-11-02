@@ -52,7 +52,6 @@ import {
   fallbackQuote,
   formatUsd,
   fourGiBLine,
-  monthlyEstimate,
   skipLivePricing,
   type CostQuote,
 } from "./pricing.js";
@@ -177,7 +176,6 @@ export class DriveApp {
   dropPath: string | null = null;
   dragging = false;
   costsOpen = false;
-  gb = "1";
   chainSteps: ChainStepView[] = [];
   recentDone: ActivityRow[] = [];
   looseRows: LoosePiece[] = [];
@@ -225,7 +223,6 @@ export class DriveApp {
     this.mainnetBlocked = options.chain === "mainnet" && !registryReady("mainnet");
     this.downloads.onChange = () => this.render();
     this.downloads.setScope(options.volume ? `${options.owner}:${options.volumeName}` : undefined);
-    this.costsOpen = !options.volume;
     if (options.volume) {
       this.loadPrefs();
       this.#restoredFromDisk = loadStaged(this.owner, this.volumeName).ops.length > 0;
@@ -1030,7 +1027,8 @@ export class DriveApp {
       this.render();
       return;
     }
-    if (action === "costs-continue") {
+    if (action === "costs-close") {
+      if (actionEl !== target && actionEl?.classList.contains("costs-backdrop")) return;
       this.costsOpen = false;
       this.render();
       return;
@@ -1332,11 +1330,6 @@ export class DriveApp {
   private onInput(event: Event): void {
     const target = event.target as HTMLInputElement | null;
     if (!target) return;
-    if (target.dataset.testid === "cost-gb") {
-      this.gb = target.value;
-      this.render();
-      return;
-    }
     if (target.dataset.testid === "search") {
       this.query = target.value;
       void this.enqueue(() => this.refresh());
@@ -1602,7 +1595,8 @@ export class DriveApp {
     });
     document.addEventListener("keydown", (event) => {
       if (event.key !== "Escape") return;
-      if (!this.newMenu && !this.accountMenu && !this.context && !this.dialog && !this.preview) return;
+      if (!this.newMenu && !this.accountMenu && !this.context && !this.dialog && !this.preview && !this.costsOpen) return;
+      this.costsOpen = false;
       this.newMenu = false;
       this.accountMenu = false;
       this.context = null;
@@ -1818,8 +1812,6 @@ export class DriveApp {
       })),
       ...this.recentDone,
     ].slice(0, 12);
-    const gb = Number(this.gb);
-    const estimateAtto = monthlyEstimate(this.quote, Number.isFinite(gb) ? gb : 0);
     let available = 0n;
     let rate = 0n;
     if (this.panel?.availableFunds) {
@@ -1861,9 +1853,6 @@ export class DriveApp {
         cdnReserve: formatUsd(this.quote.cdnReserve),
         createFee: formatUsd(this.quote.createFee),
         addPieces: `${formatUsd(this.quote.addPiecesBase)} + ${formatUsd(this.quote.addPiecesEach)} per piece`,
-        estimate: formatUsd(estimateAtto),
-        gb: this.gb,
-        deposit: this.panel ? `Current deposit ${this.panel.deposit} USDFC` : "Connect a wallet to see your deposit.",
         datasetNote: datasetBlurb(this.quote),
         depositNote: depositBlurb(this.quote, "5"),
       },
@@ -2179,7 +2168,16 @@ function captureFocus(root: HTMLElement): { testid: string; start: number; end: 
   if (!element || !root.contains(element)) return null;
   const testid = element.getAttribute("data-testid");
   if (!testid) return null;
-  return { testid, start: element.selectionStart ?? element.value.length, end: element.selectionEnd ?? element.value.length };
+  const length = typeof element.value === "string" ? element.value.length : 0;
+  let start = length;
+  let end = length;
+  try {
+    start = element.selectionStart ?? length;
+    end = element.selectionEnd ?? length;
+  } catch {
+    // Elements without text selection (select, div[tabindex]) keep focus only.
+  }
+  return { testid, start, end };
 }
 
 function restoreFocus(root: HTMLElement, saved: { testid: string; start: number; end: number } | null): void {
@@ -2187,5 +2185,9 @@ function restoreFocus(root: HTMLElement, saved: { testid: string; start: number;
   const element = root.querySelector<HTMLInputElement>(`[data-testid="${saved.testid}"]`);
   if (!element) return;
   element.focus();
-  element.setSelectionRange?.(saved.start, saved.end);
+  try {
+    element.setSelectionRange?.(saved.start, saved.end);
+  } catch {
+    // Not a text field.
+  }
 }

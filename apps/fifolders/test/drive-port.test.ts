@@ -16,7 +16,7 @@ import { readNetworkPreference, REGISTRY_NOT_DEPLOYED, registryReady, saveNetwor
 import { qrSvg } from "../src/qr.js";
 import { confirmWalletTransaction, resolveTransactionReceipt } from "../src/receipts.js";
 import { DeletionConfirmationPendingError, piecesEligibleForRemoval, schedulePieceRemovals } from "../src/removal.js";
-import { applyTheme, themeForScheme } from "../src/theme.js";
+import { applyTheme } from "../src/theme.js";
 import { connectWalletConnect, walletChoices, walletConnectConfig } from "../src/wallets.js";
 import { openMockSession } from "../src/session.js";
 
@@ -346,13 +346,11 @@ describe("wallet transactions, indexing, downloads, theme, network, wallets", ()
     expect(queue.pending).toHaveLength(0);
   });
 
-  it("follows the system color scheme with the app palette", () => {
-    expect(themeForScheme(true)).toBe("dark");
-    expect(themeForScheme(false)).toBe("light");
+  it("always uses the light palette", () => {
     const root = document.createElement("html");
-    applyTheme("dark", root);
-    expect(root.dataset.theme).toBe("dark");
-    expect(root.style.colorScheme).toBe("dark");
+    applyTheme(root);
+    expect(root.dataset.theme).toBe("light");
+    expect(root.style.colorScheme).toBe("light");
   });
 
   it("remembers the network and treats an unset mainnet registry as not deployed", () => {

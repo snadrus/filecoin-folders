@@ -61,14 +61,6 @@ export function quoteFromLive(live: LivePricing): CostQuote {
   };
 }
 
-/** Monthly USDFC for `gb` GiB of one copy, plus proving once any data is stored. */
-export function monthlyEstimate(quote: CostQuote, gb: number): bigint {
-  if (!Number.isFinite(gb) || gb <= 0) return 0n;
-  const milli = BigInt(Math.round(gb * 1000));
-  const storage = (quote.perTiBPerMonth * milli) / 1024n / 1000n;
-  return storage + quote.provingPerMonth;
-}
-
 export function fourGiBLine(quote: CostQuote): bigint {
   return (quote.perTiBPerMonth * 4n) / 1024n;
 }

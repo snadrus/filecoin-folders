@@ -2,8 +2,6 @@ import { expect, test } from "@playwright/test";
 
 test("first visit signs in once when payment and a dataset already exist", async ({ page }) => {
   await page.goto("/?onboard=1&pay=ready&datasets=1");
-  await expect(page.getByTestId("costs")).toBeVisible();
-  await page.getByTestId("costs-continue").click();
   await page.getByTestId("connect-wallet").click();
   await expect(page.getByTestId("nav-drive")).toBeVisible();
   await expect(page.getByTestId("wallet-signatures")).toHaveText("1");
@@ -15,7 +13,6 @@ test("first visit signs in once when payment and a dataset already exist", async
 
 test("missing payment and dataset take one fix and no extra signature to create", async ({ page }) => {
   await page.goto("/?onboard=1");
-  await page.getByTestId("costs-continue").click();
   await page.getByTestId("connect-wallet").click();
   await expect(page.getByTestId("setup")).toBeVisible();
   await expect(page.getByTestId("session-status")).toContainText("Session key ready");
@@ -40,7 +37,6 @@ test("missing payment and dataset take one fix and no extra signature to create"
 
 test("an expired session key renews with one signature and retries the upload", async ({ page }) => {
   await page.goto("/?onboard=1&pay=ready&datasets=1");
-  await page.getByTestId("costs-continue").click();
   await page.getByTestId("connect-wallet").click();
   await expect(page.getByTestId("nav-drive")).toBeVisible();
   await expect(page.getByTestId("wallet-signatures")).toHaveText("1");
@@ -70,7 +66,6 @@ test("an expired session key renews with one signature and retries the upload", 
 
 test("an expired session key stays on the connect screen", async ({ page }) => {
   await page.goto("/?onboard=1&pay=ready&datasets=1");
-  await page.getByTestId("costs-continue").click();
   await page.getByTestId("connect-wallet").click();
   await expect(page.getByTestId("nav-drive")).toBeVisible();
   await page.evaluate(() => {
@@ -82,6 +77,5 @@ test("an expired session key stays on the connect screen", async ({ page }) => {
     localStorage.setItem("fifolders:mock-registry", JSON.stringify({}));
   });
   await page.reload();
-  await page.getByTestId("costs-continue").click();
   await expect(page.getByTestId("connect-wallet")).toBeVisible();
 });
