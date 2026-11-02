@@ -20,7 +20,7 @@ export { FIL_FOLDERS_NAMESPACE, PIECE_CID_MAX_BYTES, folderCommitPermission, nam
 export { folderRegistryAbi } from "./registry/abi.js";
 export { MemoryRegistry, createMemoryRegistry } from "./registry/memory.js";
 export type { CommittedRecord, Registry, RegistryCommit } from "./registry/types.js";
-export { createViemRegistry } from "./registry/viem.js";
+export { createViemRegistry, DEFAULT_MAX_BLOCK_RANGE } from "./registry/viem.js";
 export type { ViemRegistryOptions } from "./registry/viem.js";
 export { assertSupportedRuntime } from "./runtime.js";
 export { MIN_PIECE_BYTES, padPiece, unpadPiece, withPiecePadding } from "./pad.js";

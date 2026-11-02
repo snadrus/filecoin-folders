@@ -372,7 +372,11 @@ export function createLiveOnboarding(): OnboardingIO {
       const before = await readPayments(choice, address);
       if (!force && paymentsReady(before.deposited, before.approved)) return;
       report?.({ flow: "payment", phase: "signing" });
-      const hash = await synapse.payments.depositWithPermitAndApproveOperator({ amount: PAYMENT_DEPOSIT });
+      // Funded but not max-approved (what uploads need): approve only, no second deposit.
+      const hash =
+        before.deposited > 0n && !before.approved
+          ? await synapse.payments.approveService()
+          : await synapse.payments.depositWithPermitAndApproveOperator({ amount: PAYMENT_DEPOSIT });
       if (!paymentsReady(before.deposited, before.approved)) signatures += SIGNATURES.paymentFix;
       await watchReceipt(choice, hash, "payment", report);
       report?.({ flow: "payment", phase: "done", hash });
@@ -588,9 +592,7 @@ export function createLiveOnboarding(): OnboardingIO {
     });
     const info = (await synapse.payments.accountInfo()) as { funds?: bigint; availableFunds?: bigint; lockupRate?: bigint };
     const approval = await synapse.payments.serviceApproval();
-    const approved =
-      (typeof approval === "object" && approval !== null && "isApproved" in approval && Boolean(approval.isApproved)) ||
-      (Array.isArray(approval) && Boolean(approval[0]));
+    const approved = isMaxApproved(approval);
     const availableFunds = info.availableFunds ?? info.funds ?? 0n;
     return { deposited: availableFunds, approved, availableFunds, lockupRate: info.lockupRate ?? 0n };
   }
@@ -669,4 +671,20 @@ function readMeta(choice: ChainChoice, id: string): { created?: string; size?: s
   } catch {
     return null;
   }
+}
+
+const MAX_UINT256 = 2n ** 256n - 1n;
+/** synapse-core LOCKUP_PERIOD: 30 days of 30 s epochs. */
+const FWSS_LOCKUP_PERIOD = 30n * 2880n;
+
+/** Same rule as synapse-core isFwssMaxApproved, which uploads check via prepare(). */
+export function isMaxApproved(approval: unknown): boolean {
+  if (Array.isArray(approval)) {
+    const [isApproved, rateAllowance, lockupAllowance, , , maxLockupPeriod] = approval as unknown[];
+    return isMaxApproved({ isApproved, rateAllowance, lockupAllowance, maxLockupPeriod });
+  }
+  if (!approval || typeof approval !== "object") return false;
+  const a = approval as { isApproved?: unknown; rateAllowance?: unknown; lockupAllowance?: unknown; maxLockupPeriod?: unknown };
+  const big = (value: unknown) => (typeof value === "bigint" ? value : typeof value === "number" ? BigInt(Math.trunc(value)) : 0n);
+  return Boolean(a.isApproved) && big(a.rateAllowance) === MAX_UINT256 && big(a.lockupAllowance) >= MAX_UINT256 / 2n && big(a.maxLockupPeriod) >= FWSS_LOCKUP_PERIOD;
 }

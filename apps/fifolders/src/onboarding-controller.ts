@@ -21,7 +21,11 @@ export async function prepareOnboarding(app: DriveApp, io: OnboardingIO): Promis
     const encrypt = app.encryptPref;
     const report = (step: ChainReport) => app.noteChain(step);
     if (action === "authorize" || action === "refresh-session") await io.authorize(chain, action === "refresh-session", report);
-    else if (action === "fix-payments") await io.fixPayments(chain, report, false);
+    else if (action === "fix-payments") {
+      await io.fixPayments(chain, report, false);
+      await continueOnboarding(app, io, { chain, volumeName, encrypt }, true);
+      return;
+    }
     else if (action === "add-funds") {
       await io.fixPayments(chain, report, true);
       app.showPanel(await io.snapshot({ chain, volumeName }));
@@ -89,7 +93,7 @@ export async function resumeOnboarding(app: DriveApp, io: OnboardingIO): Promise
   const found = await io.silent(chain);
   if (!found) return false;
   const panel = await io.snapshot({ chain, volumeName: app.volumeName });
-  if (!panel.sessionReady && !panel.legacyRegistry) return false;
+  if (!panel.sessionReady) return false;
   if (!canEnter(panel)) {
     app.showPanel(panel);
     return true;
@@ -105,7 +109,12 @@ async function continueOnboarding(
   autoAuthorize: boolean,
 ): Promise<void> {
   let panel = await io.snapshot(input);
-  if (autoAuthorize && !panel.sessionReady && !panel.legacyRegistry) {
+  // Storage payment comes first: show "Enable storage payment" before any upload can fail on it.
+  if (!panel.paymentsReady) {
+    app.showPanel(panel);
+    return;
+  }
+  if (autoAuthorize && !panel.sessionReady) {
     try {
       await io.authorize(input.chain, false, (step) => app.noteChain(step));
       panel = await io.snapshot(input);

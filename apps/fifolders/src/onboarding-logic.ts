@@ -178,7 +178,8 @@ export function paymentsReady(deposited: bigint, approved: boolean): boolean {
 
 export function canEnter(panel: Pick<WalletPanel, "paymentsReady" | "sessionReady" | "selectedDatasetId" | "legacyRegistry">): boolean {
   if (!panel.paymentsReady || !panel.selectedDatasetId) return false;
-  return panel.legacyRegistry || panel.sessionReady;
+  // Uploads always sign with the session key, so a legacy registry no longer skips it.
+  return panel.sessionReady;
 }
 
 export function formatToken(value: bigint, decimals = 18, digits = 4): string {
