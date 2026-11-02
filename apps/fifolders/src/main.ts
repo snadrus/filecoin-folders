@@ -32,6 +32,7 @@ function optionsFrom(session: Session, previous: DriveApp): DriveAppOptions {
 }
 
 function bootMessage(error: unknown, fallback: string): string {
+  console.error("FiFolders boot", error);
   return error instanceof Error && error.message ? error.message : fallback;
 }
 

@@ -40,6 +40,7 @@ export async function prepareOnboarding(app: DriveApp, io: OnboardingIO): Promis
         }
         app.finishOp(op);
       } catch (error) {
+        console.error("FiFolders dataset", error);
         const message = isSessionPermissionError(error)
           ? "Session expired — Renew (1 signature)"
           : error instanceof Error
@@ -109,6 +110,7 @@ async function continueOnboarding(
       await io.authorize(input.chain, false, (step) => app.noteChain(step));
       panel = await io.snapshot(input);
     } catch (error) {
+      console.error("FiFolders authorize", error);
       app.showPanel(panel, error instanceof Error ? error.message : "The session key was not authorized.");
       return;
     }

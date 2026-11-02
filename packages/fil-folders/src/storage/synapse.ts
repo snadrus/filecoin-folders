@@ -89,7 +89,9 @@ export function createSynapseStorage(synapse: SynapseLike, options: SynapseStora
           ? await resolveContexts(extended, options)
           : [];
       if (contexts.length && typeof extended.prepare === "function") {
-        const prepared = await extended.prepare({ context: contexts, pieceSizes: [BigInt(bytes.byteLength)] });
+        // synapse-sdk 0.40 reads `dataSize` (bigint); the old `pieceSizes` left it undefined and the SDK's
+        // lockup math threw "Cannot mix BigInt and other types" on every upload.
+        const prepared = await extended.prepare({ context: contexts, dataSize: BigInt(bytes.byteLength) });
         if (prepared?.costs && prepared.costs.ready === false) {
           throw new Error(fundingShortfall(prepared.costs, contexts.length));
         }
