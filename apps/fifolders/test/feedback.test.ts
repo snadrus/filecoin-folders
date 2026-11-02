@@ -365,3 +365,40 @@ describe("reported bugs", () => {
     expect(root.querySelector("[data-testid=loose-summary]")?.textContent).toMatch(/pieces: \d+ in folders, \d+ manifests, 1 loose/);
   });
 });
+
+describe("editor title names the file (item 8)", () => {
+  afterEach(() => {
+    document.body.innerHTML = "";
+    localStorage.clear();
+  });
+
+  it("renames an untitled document to the editor title, and keeps a FiFolders rename", async () => {
+    const session = await openMockSession();
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const app = new DriveApp({
+      volume: session.volume,
+      owner: session.owner,
+      chain: "calibration",
+      encrypted: false,
+      volumeName: session.volumeName,
+      cas: session.cas,
+      felarumiUrl: "./felarumi/",
+      felanumioUrl: "./felanumio/",
+    });
+    const doc = (text: string) => JSON.stringify({ v: 1, type: "doc", content: [{ type: "paragraph", text }] });
+    const origin = "/FiPen/Untitled document.fipen";
+    upsertOp(newOp({ id: "fel:" + origin, kind: "fel-save", label: "x", path: origin, name: "Untitled document.fipen", volume: session.volumeName, stage: "saving", content: doc("one") }));
+    app.mount(root);
+    await settle(app);
+    expect(new TextDecoder().decode(await session.volume.get(origin))).toContain("one");
+    upsertOp(newOp({ id: "fel:" + origin, kind: "fel-save", label: "x", path: origin, name: "Untitled document.fipen", title: "Trip plan", volume: session.volumeName, stage: "saving", content: doc("two") }));
+    await (app as unknown as { refresh: () => Promise<void> }).refresh();
+    await settle(app);
+    expect(new TextDecoder().decode(await session.volume.get("/FiPen/Trip plan.fipen"))).toContain("two");
+    await expect(session.volume.stat(origin)).rejects.toThrow();
+    upsertOp(newOp({ id: "fel:" + origin, kind: "fel-save", label: "x", path: origin, name: "Untitled document.fipen", title: "Trip plan", volume: session.volumeName, stage: "saving", content: doc("three") }));
+    await (app as unknown as { refresh: () => Promise<void> }).refresh();
+    expect(new TextDecoder().decode(await session.volume.get("/FiPen/Trip plan.fipen"))).toContain("three");
+  });
+});

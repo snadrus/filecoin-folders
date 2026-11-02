@@ -79,3 +79,20 @@ test("an expired session key stays on the connect screen", async ({ page }) => {
   await page.reload();
   await expect(page.getByTestId("connect-wallet")).toBeVisible();
 });
+
+test("refresh with corrupt cached state still renders the app (bug 5)", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.goto("/?onboard=1");
+  await page.evaluate(() => {
+    localStorage.setItem("fifolders:ops", "{not json");
+    localStorage.setItem("fifolders:mock-datasets", "{bad");
+    localStorage.setItem("fifolders:fel-alias", "[1,2");
+    localStorage.setItem("fifolders:piece-catalog", "nope");
+  });
+  await page.reload();
+  await expect(page.getByTestId("connect-wallet")).toBeVisible();
+  const background = await page.evaluate(() => getComputedStyle(document.documentElement).backgroundColor);
+  expect(background).toBe("rgb(255, 255, 255)");
+  expect(errors).toEqual([]);
+});

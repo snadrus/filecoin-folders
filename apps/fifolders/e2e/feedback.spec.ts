@@ -34,13 +34,12 @@ test("costs open from the storage view, the new button is prominent, and a docum
   await page.getByTestId("new-button").click();
   const popupPromise = page.context().waitForEvent("page");
   await page.getByRole("button", { name: "FiPen document" }).click();
-  await page.getByTestId("dialog-input").fill("Letter");
-  await page.getByTestId("dialog-submit").click();
+  await expect(page.getByTestId("dialog-input")).toHaveCount(0);
   const popup = await popupPromise;
   expect(popup.url()).toContain("fipen");
   expect(popup.url()).toContain("fifolders=1");
-  expect(decodeURIComponent(popup.url())).toContain("/FiPen/Letter.fipen");
-  await expect(page.getByTestId("entry").filter({ hasText: "Letter.fipen" })).toContainText("Save pending");
+  expect(new URL(popup.url()).searchParams.get("path")).toBe("/FiPen/Untitled document.fipen");
+  await expect(page.getByTestId("entry").filter({ hasText: "Untitled document.fipen" })).toContainText("Save pending");
   await expect(page.getByTestId("nav-drive")).toBeVisible();
 });
 

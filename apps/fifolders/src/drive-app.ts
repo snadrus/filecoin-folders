@@ -18,6 +18,7 @@ import { REGISTRY_NOT_DEPLOYED, registryReady, saveNetworkPreference } from "./n
 import { qrSvg } from "./qr.js";
 import { loadRemovals, piecesEligibleForRemoval, saveRemovals, schedulePieceRemovals, type RemovalAdapters } from "./removal.js";
 import { chainStepTitle, explorerHref, stepDetail, type ChainReport, type ChainStepView } from "./chain-step.js";
+import { defaultFelTitle, felTarget, rememberFelTarget, remapFelTargets } from "./fel-names.js";
 import { loosePieces, rememberPiece, type LoosePiece } from "./loose.js";
 import {
   TRASH_PATH,
@@ -735,6 +736,7 @@ export class DriveApp {
     const next = joinPath(parentPath(path), trimmed);
     if (next === path) return;
     await this.stage([{ op: "mv", from: path, to: next }]);
+    remapFelTargets(path, next);
     this.moveStarPrefix(path, next);
     this.mapOrigins(path, next);
     this.selected = this.selected.map((item) => remap(item, path, next));
@@ -1146,14 +1148,9 @@ export class DriveApp {
     }
     if (action === "new-felarumi" || action === "new-felanumio") {
       this.newMenu = false;
-      const sheet = action === "new-felanumio";
-      this.dialog = {
-        mode: action,
-        title: sheet ? "FiGrid spreadsheet" : "FiPen document",
-        submit: "Create",
-        value: "",
-      };
-      this.render();
+      // No name prompt: the editor's title names the file once it saves.
+      const kind: FelKind = action === "new-felanumio" ? "felanumio" : "felarumi";
+      this.openNewFel(kind, defaultFelTitle(kind));
       return;
     }
     if (action === "close-dialog") {
@@ -1740,7 +1737,8 @@ export class DriveApp {
         }
       }
       if (op.kind !== "fel-save" || !op.path || !op.content || isBlankFelContent(op.content)) continue;
-      const path = op.path;
+      const target = felTarget(op.path, op.title);
+      const path = target.to;
       const next = new TextEncoder().encode(op.content);
       try {
         const current = await volume.get(path);
@@ -1753,11 +1751,22 @@ export class DriveApp {
         if (!(error instanceof NotFoundError)) throw error;
       }
       // Parent folder and file entry commit with the document bytes, one piece.
+      let renameFrom = "";
+      if (target.from !== path) {
+        try {
+          await volume.get(target.from);
+          renameFrom = target.from;
+        } catch (error) {
+          if (!(error instanceof NotFoundError)) throw error;
+        }
+      }
       const stat = await volume.tx(async (draft) => {
         const parent = parentPath(path);
         if (parent !== "/") await draft.mkdir(parent);
+        if (renameFrom) await draft.mv(renameFrom, path);
         return draft.put(path, next, { mime: "application/json" });
       });
+      rememberFelTarget(op.path, path, op.title);
       this.rememberDone({ ...op, pieceCid: stat.pieceCid, stage: "saved" });
       dropOp(op.id);
       edited = true;
