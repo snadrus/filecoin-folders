@@ -174,8 +174,6 @@ export class DriveApp {
   preview: PreviewModel | null = null;
   uploads: UploadRow[] = [];
   toasts: { id: string; text: string; action?: string; actionLabel?: string }[] = [];
-  /** Left-sidebar dataset switcher open. */
-  datasetMenu = false;
   /** Addresses already told which dataset was auto-picked this page load. */
   #autoPickToasted = new Set<string>();
   /** Switch the open drive to another dataset (reload tree from chain). */
@@ -271,6 +269,16 @@ export class DriveApp {
     void this.refresh();
   }
 
+  /** Re-read the owner's identity from chain (cached); the account menu repaints when it changes. */
+  private refreshIdentity(): void {
+    const owner = this.owner;
+    if (!/^0x[0-9a-fA-F]{40}$/.test(owner) || import.meta.env.VITE_E2E === "1" || import.meta.env.MODE === "test") return;
+    void import("./identity/live-io.js")
+      .then(({ createLiveIdentityIO }) => createLiveIdentityIO(this.chain).load(owner))
+      .then(() => this.render())
+      .catch(() => undefined);
+  }
+
   attach(options: DriveAppOptions): void {
     if (
       this.readOnly &&
@@ -298,6 +306,7 @@ export class DriveApp {
     this.setupError = "";
     if (options.panel) this.panel = options.panel;
     if (options.onConnect) this.onConnect = options.onConnect;
+    this.refreshIdentity();
     if (options.onSetupAction) this.onSetupAction = options.onSetupAction;
     if (options.onDisconnect) this.onDisconnect = options.onDisconnect;
     this.costsOpen = false;
@@ -754,7 +763,7 @@ export class DriveApp {
   }
 
   private async switchDataset(id: string): Promise<void> {
-    this.datasetMenu = false;
+    this.accountMenu = false;
     if (!id || id === this.panel?.selectedDatasetId) {
       this.render();
       return;
@@ -1200,8 +1209,7 @@ export class DriveApp {
     if (!inMenu) {
       this.newMenu = false;
       this.context = null;
-      if (action !== "account") this.accountMenu = false;
-      if (action !== "dataset-toggle" && action !== "open-datasets") this.datasetMenu = false;
+      if (action !== "account" && action !== "open-datasets") this.accountMenu = false;
     }
     if (action === "new-toggle") {
       this.newMenu = !this.newMenu;
@@ -1210,12 +1218,12 @@ export class DriveApp {
       this.render();
       return;
     }
-    if (action === "dataset-toggle" || action === "open-datasets") {
-      this.datasetMenu = action === "open-datasets" ? true : !this.datasetMenu;
+    if (action === "open-datasets") {
+      this.accountMenu = true;
       this.newMenu = false;
-      this.accountMenu = false;
-      if (action === "open-datasets") this.toasts = this.toasts.filter((toast) => toast.action !== "open-datasets");
+      this.toasts = this.toasts.filter((toast) => toast.action !== "open-datasets");
       this.render();
+      this.root?.querySelector("#wallet-datasets")?.scrollIntoView?.({ block: "nearest" });
       return;
     }
     if (action === "switch-dataset") {
@@ -1555,17 +1563,6 @@ export class DriveApp {
   private onInput(event: Event): void {
     const target = event.target as HTMLInputElement | null;
     if (!target) return;
-    if (target.dataset.testid === "display-name") {
-      // Same-origin key read by FiPen and FiGrid for the name on your cursor and comments.
-      const name = target.value.trim().slice(0, 60);
-      try {
-        if (name) localStorage.setItem("fifolders:display-name", name);
-        else localStorage.removeItem("fifolders:display-name");
-      } catch {
-        // Private mode: the editors fall back to a generated name.
-      }
-      return;
-    }
     if (target.dataset.testid === "search") {
       this.query = target.value;
       void this.enqueue(() => this.refresh());
@@ -1861,9 +1858,8 @@ export class DriveApp {
     });
     document.addEventListener("pointerdown", (event) => {
       const target = event.target as HTMLElement | null;
-      if (target?.closest("[data-menu], [data-action=account], [data-action=new-toggle], [data-action=dataset-toggle], [data-action=open-datasets]")) return;
-      if (!this.newMenu && !this.accountMenu && !this.context && !this.datasetMenu) return;
-      this.datasetMenu = false;
+      if (target?.closest("[data-menu], [data-action=account], [data-action=new-toggle], [data-action=open-datasets]")) return;
+      if (!this.newMenu && !this.accountMenu && !this.context) return;
       this.newMenu = false;
       this.accountMenu = false;
       this.context = null;
@@ -1871,8 +1867,7 @@ export class DriveApp {
     });
     document.addEventListener("keydown", (event) => {
       if (event.key !== "Escape") return;
-      if (!this.newMenu && !this.accountMenu && !this.context && !this.dialog && !this.preview && !this.costsOpen && !this.datasetMenu) return;
-      this.datasetMenu = false;
+      if (!this.newMenu && !this.accountMenu && !this.context && !this.dialog && !this.preview && !this.costsOpen) return;
       this.costsOpen = false;
       this.newMenu = false;
       this.accountMenu = false;
@@ -2235,7 +2230,6 @@ export class DriveApp {
       preview: this.preview,
       uploads: this.uploads,
       toasts: this.toasts,
-      datasetMenu: this.datasetMenu,
       dropPath: this.dropPath,
       dragging: this.dragging,
       felarumiUrl: this.felarumiUrl,
