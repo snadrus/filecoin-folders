@@ -103,3 +103,6 @@ As a user who pressed Delete by mistake, I see "“name” moved to trash · Und
 
 ### S66 Uploads panel collapses
 After uploads finish, the Uploads panel shrinks to "N uploads complete" (expandable, closable), like Drive; it stays open while uploading or if any failed.
+
+### S67 Offline notice
+When my connection drops, FiFolders, FiPen and FiGrid show "You're offline" (like Drive/Docs/Sheets) and it clears when I reconnect.
