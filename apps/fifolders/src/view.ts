@@ -140,6 +140,8 @@ export interface ViewModel {
   walletPrompts: WalletPromptView[];
   /** Shown while the drive is browsable but wallet setup still runs. */
   setupNote: string;
+  loadState?: "idle" | "loading" | "ok" | "error";
+  loadError?: string;
   setupStep: { action: string; label: string } | null;
   dropPath: string | null;
   dragging: boolean;
@@ -445,7 +447,14 @@ function renderBrowser(model: ViewModel): string {
     .join("");
   const rows = model.nav === "loose" ? model.loose.map((piece) => renderLoose(piece)).join("") : model.entries.map((entry) => renderEntry(entry, model)).join("");
   const filled = model.nav === "loose" ? model.loose.length : model.entries.length;
-  const empty = filled ? "" : `<p class="empty" data-testid="empty">${escapeHtml(emptyCopy(model))}</p>`;
+  const empty =
+    model.loadState === "error"
+      ? `<div class="empty" data-testid="load-error" role="alert">Could not load your drive from Filecoin. Your files are safe on chain.${model.loadError ? ` <small>${escapeHtml(model.loadError)}</small>` : ""} <button type="button" data-action="retry-load" data-testid="retry-load">Retry</button></div>`
+      : model.loadState === "loading" && !filled
+        ? `<div class="empty" data-testid="drive-loading" role="status"><span class="spinner" aria-hidden="true"></span> Loading your drive from Filecoin…</div>`
+        : filled
+          ? ""
+          : `<p class="empty" data-testid="empty">${escapeHtml(emptyCopy(model))}</p>`;
   const blocked = model.mainnetBlocked
     ? `<p class="banner" data-testid="mainnet-banner">Registry not deployed</p>`
     : "";

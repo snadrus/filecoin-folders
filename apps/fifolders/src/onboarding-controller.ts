@@ -16,6 +16,9 @@ export async function prepareOnboarding(app: DriveApp, io: OnboardingIO): Promis
     void peekDrive(app, io, input.encrypt);
     await continueOnboarding(app, io, input, true);
   };
+  app.onRetryLoad = async () => {
+    await peekDrive(app, io);
+  };
   app.onPickDataset = (id) => io.selectDataset(id, app.chain);
   app.onSetupAction = async (action, value) => {
     const chain = app.chain;
@@ -112,6 +115,7 @@ export async function peekDrive(app: DriveApp, io: OnboardingIO, encrypt = app.e
     return true;
   } catch (error) {
     console.warn("FiFolders public read", error);
+    app.notePublicReadError(error instanceof Error ? error.message : String(error));
     return false;
   }
 }

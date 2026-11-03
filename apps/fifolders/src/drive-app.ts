@@ -239,6 +239,19 @@ export class DriveApp {
 
   /** Drive is showing a public, signature-free read while wallet setup runs. */
   readOnly = false;
+  /** Tree load state: never show an empty drive while the load is running or after it failed. */
+  loadState: "idle" | "loading" | "ok" | "error" = "idle";
+  loadError = "";
+  /** Re-runs the public chain read when no volume is open yet. */
+  onRetryLoad: (() => Promise<void>) | null = null;
+
+  /** Public tree read failed before any volume opened: show an error with Retry, never an empty drive. */
+  notePublicReadError(message: string): void {
+    if (this.volume) return;
+    this.loadState = "error";
+    this.loadError = message;
+    this.render();
+  }
   #saveWanted = false;
 
   /** Show the drive from a public read; edits stage locally until {@link attach} brings the writable volume. */
@@ -247,6 +260,9 @@ export class DriveApp {
     this.attach(options);
     this.readOnly = true;
     this.render();
+    // Read now, not behind the queue: a pending wallet prompt (session key) holds the queue and
+    // would leave the drive looking empty until the user answered it.
+    void this.refresh();
   }
 
   attach(options: DriveAppOptions): void {
@@ -284,6 +300,8 @@ export class DriveApp {
     this.staged = [];
     this.#baseline = null;
     this.restoreNote = "";
+    this.loadState = "idle";
+    this.loadError = "";
     this.loadPrefs();
     this.#restoredFromDisk = loadStaged(this.owner, this.volumeName).ops.length > 0;
     if (this.root) void this.enqueue(() => this.refresh());
@@ -470,8 +488,13 @@ export class DriveApp {
   private async refresh(): Promise<void> {
     if (!this.volume) {
       this.entries = [];
+      if (this.loadState !== "error") this.loadState = this.panel ? "loading" : "idle";
       this.render();
       return;
+    }
+    if (this.loadState !== "ok") {
+      this.loadState = "loading";
+      this.render();
     }
     try {
       await this.reconcileOps();
@@ -486,6 +509,8 @@ export class DriveApp {
         const visible = new Set(this.entries.map((entry) => entry.path));
         this.selected = this.selected.filter((path) => visible.has(path));
       }
+      this.loadState = "ok";
+      this.loadError = "";
       this.saveCurrentView();
       if (import.meta.env.VITE_E2E === "1") await persistMemoryVolume(this.volume, this.owner, this.volumeName);
     } catch (error) {
@@ -497,6 +522,10 @@ export class DriveApp {
         return;
       } else {
         this.toast(errorText(error));
+      }
+      if (this.loadState !== "ok") {
+        this.loadState = "error";
+        this.loadError = errorText(error);
       }
     }
     await this.readSessionPrompt();
@@ -1157,6 +1186,14 @@ export class DriveApp {
       this.newMenu = false;
       this.costsOpen = true;
       this.render();
+      return;
+    }
+    if (action === "retry-load") {
+      this.loadState = "loading";
+      this.loadError = "";
+      this.render();
+      if (!this.volume && this.onRetryLoad) void this.onRetryLoad();
+      else void this.enqueue(() => this.refresh());
       return;
     }
     if (action === "retry-activity") {
@@ -1858,7 +1895,8 @@ export class DriveApp {
       }
     }
     const volume = this.volume;
-    if (!volume) return;
+    // A public read cannot commit; queued editor saves wait for the writable volume.
+    if (!volume || this.readOnly) return;
     let edited = false;
     for (const op of loadOps()) {
       if ((op.kind === "upload" || op.kind === "commit") && op.path && op.pieceCid) {
@@ -2072,6 +2110,8 @@ export class DriveApp {
         detail: [intent.purpose, `(${intent.cost})`].filter(Boolean).join(" "),
       })),
       setupNote: this.readOnly ? "Finishing wallet setup… you can browse meanwhile" : "",
+      loadState: !this.volume && this.panel && this.loadState === "idle" ? "loading" : this.loadState,
+      loadError: this.loadError,
       setupStep: this.readOnly ? this.readOnlyStep() : null,
       txlogOpen: this.txlogOpen,
       loose: this.looseRows.map((piece) => ({

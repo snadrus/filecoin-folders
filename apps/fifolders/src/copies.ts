@@ -154,8 +154,8 @@ export async function recoverReplication(
       phase: "interrupted",
       error:
         checkpoint.phase === "waiting"
-          ? "The page closed before this queued upload started. Select the original file to upload it."
-          : "The page closed before receipt of the file was saved. Select the original file to try again.",
+          ? "A queued upload never started (the page closed). Files already in your drive are unaffected. Select the original file to upload it, or dismiss this."
+          : "An upload's progress record is incomplete (the page closed). Files already in your drive are unaffected; open the drive to check whether it landed, or select the original file to upload it again.",
     };
   }
   if (checkpoint.checks >= CONFIRMATION_CHECK_LIMIT || checkpoint.nextCheckAt > now) return checkpoint;
@@ -226,7 +226,7 @@ function settle(checkpoint: UploadCheckpoint): UploadCheckpoint {
       : phase === "complete"
         ? undefined
         : phase === "interrupted"
-          ? "Not all storage submission receipts were saved. Background upload work has stopped. Check status can discover existing confirmations, but cannot resume unfinished upload steps."
+          ? "Some storage receipts for this upload were not recorded. Files already in your drive are unaffected. Check status to find existing confirmations, or select the original file to upload it again."
           : checkpoint.error,
   };
 }
