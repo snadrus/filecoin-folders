@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { LIVE } from "./helpers";
-import { hasWallet, installWallet } from "./wallet";
+import { CHAIN_ID, filBalance, hasWallet, installWallet } from "./wallet";
+import { formatEther } from "viem";
 
 // Real Calibration reads + an injected EIP-1193 wallet that signs in Node (key never reaches the page or logs).
 // eth_sendTransaction is refused by default: payment approval, deposits, datasets and uploads need Andy's approval.
@@ -114,6 +115,56 @@ test("S44 wallet switches account or chain mid-session: session restarts in plac
   expect(signing()).toBe(before);
 });
 
-test("S45 payment approval / deposit / dataset / upload on live", async () => {
-  test.skip(true, "blocked: needs Andy approval for spend");
+// Spends on Calibration only (Andy approved, test FIL/USDFC). Opt-in: STORIES_SPEND=1.
+test("S45 payment approval, session key, upload on live (Calibration spend)", async ({ page }) => {
+  test.skip(!process.env.STORIES_SPEND, "spends test FIL on Calibration; set STORIES_SPEND=1");
+  test.setTimeout(600_000);
+  const fil0 = await filBalance();
+  const w = await installWallet(page, { allowTx: () => w.chainId === CHAIN_ID });
+  await page.goto("/");
+  await page.getByTestId("connect-wallet").click();
+  await expect(page.getByTestId("nav-drive")).toBeVisible({ timeout: 60_000 });
+  await page.getByTestId("account").click();
+  const menu = page.getByTestId("account-menu");
+  const fix = menu.getByTestId("fix-payments");
+  await expect(fix.or(menu.getByTestId("payment-status")).first()).toBeVisible({ timeout: 60_000 });
+  await expect(menu.getByTestId("session-status")).toBeVisible({ timeout: 60_000 });
+  console.log("S45 menu before:", (await menu.innerText()).split("\n").filter((l) => /USDFC|payment|Session|Approve|Enable/i.test(l)).join(" | "));
+  if (await fix.count()) {
+    await expect(fix).toHaveText(/—.+\(.+\)/);
+    await fix.click();
+    await expect(page.getByTestId("wallet-prompt").or(page.getByTestId("activity")).first()).toBeVisible({ timeout: 20_000 });
+    await expect(menu.getByTestId("payment-status").or(page.getByTestId("payment-status")).first()).toBeVisible({ timeout: 300_000 });
+  }
+  if (!(await page.getByTestId("account-menu").isVisible())) await page.getByTestId("account").click();
+  const auth = page.getByTestId("account-menu").getByTestId("authorize-session");
+  if (await auth.count()) {
+    await auth.click();
+    await expect(page.getByTestId("account-menu").getByTestId("session-status").or(page.getByTestId("session-status")).first()).toContainText("until", { timeout: 300_000 });
+  }
+  await page.keyboard.press("Escape");
+  await page.getByTestId("nav-drive").click();
+  const name = `s45-${Date.now()}.txt`;
+  await page.getByTestId("file-input").setInputFiles({ name, mimeType: "text/plain", buffer: Buffer.from("S45 Calibration upload test\n") });
+  await expect(page.getByText(name).first()).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("upload-panel").locator(".upload-row").filter({ hasText: name })).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("upload-panel").locator(".upload-row").filter({ hasText: name })).not.toHaveAttribute("data-status", "uploading", { timeout: 420_000 });
+  console.log("S45 upload row:", await page.getByTestId("upload-panel").locator(".upload-row").filter({ hasText: name }).getAttribute("data-status"));
+  await expect(page.getByTestId("activity-indicator")).toHaveCount(0, { timeout: 420_000 });
+  const txs = w.calls.filter((c) => c.outcome.startsWith("tx ")).map((c) => c.outcome.slice(3));
+  const fil1 = await filBalance();
+  console.log(`S45 spend: ${formatEther(fil0 - fil1)} tFIL gas; txs: ${txs.join(", ") || "none"}; signatures: ${w.calls.filter((c) => c.method === "eth_signTypedData_v4" || c.method === "personal_sign").length}`);
+  await expect(page.getByTestId("setup-error")).toHaveCount(0);
+});
+
+
+test("S10b fresh browser, same wallet: the drive tree is recovered from chain", async ({ page }) => {
+  test.skip(!process.env.STORIES_SPEND, "needs a committed volume (S45 makes one); set STORIES_SPEND=1");
+  test.setTimeout(300_000);
+  const w = await installWallet(page);
+  await page.goto("/");
+  await page.getByTestId("connect-wallet").click();
+  await expect(page.getByTestId("nav-drive")).toBeVisible({ timeout: 60_000 });
+  await expect(page.getByText(/^s45-\d+\.txt$/).first()).toBeVisible({ timeout: 240_000 });
+  expect(w.calls.filter((c) => c.outcome.startsWith("tx ")).length).toBe(0);
 });

@@ -18,6 +18,14 @@ function loadKey(): Hex | null {
   return (v.startsWith("0x") ? v : `0x${v}`) as Hex;
 }
 
+/** Calibration balance in attoFIL (for spend accounting). */
+export async function filBalance(): Promise<bigint> {
+  const key = loadKey();
+  if (!key) return 0n;
+  const rpc = createPublicClient({ chain: filecoinCalibration, transport: http(RPC) });
+  return rpc.getBalance({ address: privateKeyToAccount(key).address });
+}
+
 export const hasWallet = () => loadKey() !== null;
 
 export type Mode = { kind: "approve" } | { kind: "reject" } | { kind: "delay"; ms: number } | { kind: "hang" };
@@ -101,7 +109,9 @@ export async function installWallet(page: Page, opts: { allowTx?: TestWallet["al
           if (!w.allowTx(tx)) return fail(4001, "Blocked by test harness: spending needs Andy approval.");
           const req = await rpc.prepareTransactionRequest({ account, to: tx.to, data: tx.data, value: tx.value ? BigInt(tx.value) : undefined, chain: filecoinCalibration });
           const signed = await account.signTransaction(req as any);
-          return { result: await rpc.sendRawTransaction({ serializedTransaction: signed }) };
+          const hash = await rpc.sendRawTransaction({ serializedTransaction: signed });
+          rec.outcome = `tx ${hash}`;
+          return { result: hash };
         }
         default: {
           if (w.chainId !== CHAIN_ID && method.startsWith("eth_")) return fail(-32603, "test wallet is on another chain");
