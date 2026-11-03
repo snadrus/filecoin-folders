@@ -2,7 +2,7 @@ import type { HistoryEntry, Stat } from "fil-folders";
 import type { ChainStepView } from "./chain-step.js";
 import { felanumioSvg, felarumiSvg, logoSvg } from "./icons.js";
 import { identiconSvg } from "./identicon.js";
-import { datasetLabel, type SessionGate, type WalletPanel } from "./onboarding-logic.js";
+import { datasetLabel, latestDatasetId, type SessionGate, type WalletPanel } from "./onboarding-logic.js";
 import {
   type FelKind,
   type NavId,
@@ -28,6 +28,8 @@ export interface UploadRow {
 export interface ToastRow {
   id: string;
   text: string;
+  action?: string;
+  actionLabel?: string;
 }
 
 export interface PreviewState {
@@ -137,6 +139,8 @@ export interface ViewModel {
   preview: PreviewState | null;
   uploads: UploadRow[];
   toasts: ToastRow[];
+  /** Left-sidebar dataset switcher open. */
+  datasetMenu?: boolean;
   walletPrompts: WalletPromptView[];
   /** Shown while the drive is browsable but wallet setup still runs. */
   setupNote: string;
@@ -396,6 +400,7 @@ function renderNav(model: ViewModel): string {
     <button class="new" data-testid="new-button" data-action="new-toggle" type="button" ${model.mainnetBlocked ? "disabled" : ""}>
       <span class="material-symbols-outlined" aria-hidden="true">add</span> New
     </button>
+    ${renderDatasetSwitcher(model)}
     <nav class="places">
       ${navItem("drive", "folder", "My Drive", model.nav)}
       ${navItem("recent", "schedule", "Recent", model.nav)}
@@ -413,6 +418,50 @@ function renderNav(model: ViewModel): string {
     <input data-testid="file-input" class="sr-only" type="file" multiple />
     <input data-testid="folder-input" class="sr-only" type="file" multiple webkitdirectory />
   </aside>`;
+}
+
+/** Sidebar dataset picker: every dataset the wallet owns, current one checked, newest marked. */
+function renderDatasetSwitcher(model: ViewModel): string {
+  const panel = model.panel;
+  if (!panel || !panel.datasets.length) return "";
+  const current = panel.selectedDatasetId;
+  const latest = latestDatasetId(panel.datasets);
+  const ordered = [...panel.datasets].sort((a, b) => {
+    if (Boolean(a.drive) !== Boolean(b.drive)) return a.drive ? -1 : 1;
+    const na = /^\d+$/.test(a.id), nb = /^\d+$/.test(b.id);
+    if (na && nb) return BigInt(b.id) > BigInt(a.id) ? 1 : BigInt(b.id) < BigInt(a.id) ? -1 : 0;
+    return na ? 1 : nb ? -1 : 0;
+  });
+  const items = ordered
+    .map((dataset) => {
+      const on = dataset.id === current;
+      const label = /^\d+$/.test(dataset.id) ? `#${dataset.id}` : "Pending";
+      const bits = [`${dataset.pieceCount} pieces`];
+      if (dataset.size && dataset.size !== "—") bits.push(dataset.size);
+      if (dataset.created && dataset.created !== "—") bits.push(dataset.created);
+      return `<button type="button" role="menuitemradio" aria-checked="${on}" class="dataset-item ${on ? "on" : ""} ${dataset.drive ? "is-drive" : "not-drive"}" data-drive="${dataset.drive ? "1" : "0"}" data-action="switch-dataset" data-id="${escapeHtml(dataset.id)}" data-testid="dataset-item">
+        <span class="material-symbols-outlined dataset-check" aria-hidden="true">${on ? "check" : ""}</span>
+        <span class="dataset-text"><span class="dataset-id">Dataset ${escapeHtml(label)}${dataset.id === latest ? ` <span class="dataset-tag" data-testid="dataset-latest">latest</span>` : ""}</span>
+        ${dataset.drive ? `<span class="dataset-drive" data-testid="dataset-drive"><span class="material-symbols-outlined" aria-hidden="true">folder</span> FiFolders drive${dataset.driveName ? ` · ${escapeHtml(dataset.driveName)}` : ""}</span>` : ""}
+        <span class="dataset-meta">${escapeHtml(bits.join(" · "))}</span></span>
+      </button>`;
+    })
+    .join("");
+  const menu = model.datasetMenu
+    ? `<div class="menu dataset-menu" role="menu" data-menu="datasets" data-testid="dataset-menu">
+        <p class="dataset-menu-title">Your datasets (${panel.datasets.length})</p>
+        ${items}
+      </div>`
+    : "";
+  const shown = current ? (/^\d+$/.test(current) ? `#${current}` : "Pending") : "None";
+  return `<div class="dataset-switch">
+    <button type="button" class="dataset-toggle" data-action="dataset-toggle" data-testid="dataset-switcher" aria-haspopup="menu" aria-expanded="${Boolean(model.datasetMenu)}" title="Switch dataset">
+      <span class="material-symbols-outlined" aria-hidden="true">database</span>
+      <span class="dataset-toggle-text">Dataset ${escapeHtml(shown)}</span>
+      <span class="material-symbols-outlined" aria-hidden="true">expand_more</span>
+    </button>
+    ${menu}
+  </div>`;
 }
 
 function runwayHtml(text: string, datasetLabel: string): string {
@@ -742,7 +791,7 @@ function renderCosts(): string {
 function renderToasts(toasts: ToastRow[]): string {
   if (!toasts.length) return "";
   return `<div class="toasts" data-testid="toasts" aria-live="polite">${toasts
-    .map((toast) => `<div class="toast" data-testid="toast">${escapeHtml(toast.text)}<button type="button" data-action="dismiss-toast" data-id="${toast.id}" aria-label="Dismiss">×</button></div>`)
+    .map((toast) => `<div class="toast" data-testid="toast">${escapeHtml(toast.text)}${toast.action ? `<button type="button" class="toast-action" data-action="${escapeHtml(toast.action)}" data-testid="toast-action">${escapeHtml(toast.actionLabel ?? "Open")}</button>` : ""}<button type="button" data-action="dismiss-toast" data-id="${toast.id}" aria-label="Dismiss">×</button></div>`)
     .join("")}</div>`;
 }
 

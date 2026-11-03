@@ -85,6 +85,10 @@ export interface DatasetRecord {
   pieceCount: string;
   size: string;
   created: string;
+  /** Holds a FiFolders manifest (a FolderRegistry commit points at one of its pieces). */
+  drive?: boolean;
+  /** Volume name for that manifest, when known. */
+  driveName?: string;
 }
 
 export interface WalletPanel {
@@ -105,6 +109,8 @@ export interface WalletPanel {
   selectedDatasetId: string;
   /** True when the only sensible next step is creating a dataset. */
   createPrimary: boolean;
+  /** True when no saved preference matched and the newest dataset was picked for the user. */
+  autoPicked?: boolean;
   legacyRegistry: boolean;
   signatures: number;
   connectPrompts: number;
@@ -160,16 +166,30 @@ export function saveLastDataset(chainId: number, root: string, id: string): void
   localStorage.setItem(datasetStorageKey(chainId, root), id);
 }
 
-/** Preferred (last picked) dataset, otherwise the newest one, so connect lands straight in a drive. */
-export function chooseDataset(datasets: { id: string }[], lastUsed: string | null): { selectedId: string | null; auto: boolean } {
+/** Preferred (last picked) dataset, otherwise the newest FiFolders drive, otherwise the newest one, so connect lands straight in a drive. */
+export function chooseDataset(datasets: { id: string; drive?: boolean }[], lastUsed: string | null): { selectedId: string | null; auto: boolean } {
   if (lastUsed && datasets.some((dataset) => dataset.id === lastUsed)) {
     return { selectedId: lastUsed, auto: true };
   }
-  const settled = datasets.filter((dataset) => /^\d+$/.test(dataset.id));
+  const drives = datasets.filter((dataset) => dataset.drive && /^\d+$/.test(dataset.id));
+  const settled = drives.length ? drives : datasets.filter((dataset) => /^\d+$/.test(dataset.id));
   const newest = settled.length
     ? settled.reduce((best, dataset) => (BigInt(dataset.id) > BigInt(best.id) ? dataset : best))
     : datasets[datasets.length - 1];
   return newest ? { selectedId: newest.id, auto: true } : { selectedId: null, auto: false };
+}
+
+/** Newest settled (numeric) dataset id, used for the "latest" marker. */
+export function latestDatasetId(datasets: { id: string }[]): string {
+  const settled = datasets.filter((dataset) => /^\d+$/.test(dataset.id));
+  if (!settled.length) return "";
+  return settled.reduce((best, dataset) => (BigInt(dataset.id) > BigInt(best.id) ? dataset : best)).id;
+}
+
+/** Auto-pick only counts when nothing saved matched one of the wallet's datasets. */
+export function wasAutoPicked(datasets: { id: string }[], remembered: string | null, selectedId: string | null): boolean {
+  if (!selectedId) return false;
+  return !(remembered && datasets.some((dataset) => dataset.id === remembered));
 }
 
 export function paymentsReady(deposited: bigint, approved: boolean): boolean {
@@ -202,4 +222,38 @@ export function formatExpiry(expirySec: bigint): string {
 export function datasetLabel(dataset: DatasetRecord): string {
   const created = dataset.created && dataset.created !== "—" ? ` · ${dataset.created}` : "";
   return `${dataset.provider} · ${dataset.pieceCount} pieces · ${dataset.size}${created}`;
+}
+
+export interface DriveMark {
+  pieces: string;
+  drive: boolean;
+  driveName?: string;
+}
+
+export function driveMarkKey(chainId: number, root: string, id: string): string {
+  return `fifolders:dataset-drive:${chainId}:${root.toLowerCase()}:${id}`;
+}
+
+/** Cached detection; stale once the dataset's piece count changes. */
+export function loadDriveMark(chainId: number, root: string, id: string, pieces: string): DriveMark | null {
+  try {
+    const mark = JSON.parse(localStorage.getItem(driveMarkKey(chainId, root, id)) || "null") as DriveMark | null;
+    return mark && mark.pieces === pieces ? mark : null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveDriveMark(chainId: number, root: string, id: string, mark: DriveMark): void {
+  localStorage.setItem(driveMarkKey(chainId, root, id), JSON.stringify(mark));
+}
+
+/** Mark datasets whose piece list contains a known manifest piece CID (cid -> volume name or ""). */
+export function markDrives<T extends { id: string }>(datasets: T[], pieces: Map<string, string[]>, manifests: Map<string, string>): (T & { drive: boolean; driveName?: string })[] {
+  return datasets.map((dataset) => {
+    const hit = (pieces.get(dataset.id) ?? []).find((cid) => manifests.has(cid));
+    if (hit === undefined) return { ...dataset, drive: false };
+    const name = manifests.get(hit) || "";
+    return name ? { ...dataset, drive: true, driveName: name } : { ...dataset, drive: true };
+  });
 }

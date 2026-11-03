@@ -20,6 +20,22 @@ export async function prepareOnboarding(app: DriveApp, io: OnboardingIO): Promis
     await peekDrive(app, io);
   };
   app.onPickDataset = (id) => io.selectDataset(id, app.chain);
+  app.onSwitchDataset = async (id) => {
+    const chain = app.chain;
+    const volumeName = app.volumeName;
+    io.selectDataset(id, chain);
+    const wasWritable = Boolean(app.volume && !app.readOnly);
+    app.resetForDataset();
+    const panel = await io.snapshot({ chain, volumeName });
+    app.showPanel(panel);
+    // Writable session: reopen on the new dataset. Otherwise browse it read-only from chain.
+    if (wasWritable && canEnter(panel)) {
+      await openDrive(app, io, { chain, volumeName, encrypt: app.encryptPref });
+      return;
+    }
+    const peeked = await peekDrive(app, io);
+    if (!peeked && !app.volume && canEnter(panel)) await openDrive(app, io, { chain, volumeName, encrypt: app.encryptPref });
+  };
   app.onSetupAction = async (action, value) => {
     const chain = app.chain;
     const volumeName = app.volumeName;
