@@ -15,6 +15,8 @@ export const DISPLAY_NAME_MAX = 60;
 export const BIO_MAX = 280;
 /** FolderRegistry on Filecoin Calibration (deployments/calibration.json). */
 export const CALIBRATION_REGISTRY = "0x4893FfF3611240fbB4Be68eFe4AA0Ec634279331" as const;
+/** FolderRegistry v2 on Calibration (deployments/calibration-v2.json). Read first; v1 is the fallback until the next save moves the pointer. */
+export const CALIBRATION_REGISTRY_V2 = "0x9C06335D7DE588Caa104ee4FC3bb7cd8Aba62443" as const;
 export const CALIBRATION_RPC = "https://api.calibration.node.glif.io/rpc/v1";
 
 export type Hex = `0x${string}`;
@@ -36,6 +38,8 @@ export interface IdentityV1 {
   avatar?: IdentityAvatar;
   bio?: string;
   updatedAt: string;
+  /** Previous profile piece CID (history link; "" = first). Optional. */
+  prev?: string;
   [extra: string]: unknown;
 }
 export type Identity = IdentityV1;

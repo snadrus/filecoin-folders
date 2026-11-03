@@ -73,8 +73,11 @@ export async function savePointedPiece(owner: Address, bytes: Uint8Array, opts: 
 }
 
 /** Save a profile: validate owner match, encode, store, point. */
-export function saveIdentity(identity: IdentityV1, opts: SaveIdentityOptions): Promise<IdentitySaved> {
-  return savePointedPiece(identity.address, encodeIdentity(identity), { ...opts, key: IDENTITY_PROFILE_KEY_ID });
+export async function saveIdentity(identity: IdentityV1, opts: SaveIdentityOptions): Promise<IdentitySaved> {
+  // History lives in the pieces: each profile names the piece it replaces (no chain log scan needed).
+  const head = await opts.registry.head(identity.address, IDENTITY_NS, IDENTITY_PROFILE_KEY_ID).catch(() => null);
+  const prev = head ? new TextDecoder().decode(head.pieceCid) : "";
+  return savePointedPiece(identity.address, encodeIdentity({ ...identity, prev }), { ...opts, key: IDENTITY_PROFILE_KEY_ID });
 }
 
 /** Payment/dataset gate before a Synapse upload. Never approves or deposits. */

@@ -116,6 +116,8 @@ export class Volume {
   #pieceBytes = new Map<string, Uint8Array>();
   #unixfsCars = new Map<string, CarBlocks>();
   #ranges = new Map<string, Map<string, { offset: number; length: number }>>();
+  /** Root manifest `prev` / `t`, keyed by root piece CID. */
+  #rootMeta = new Map<string, { prev?: string; t?: number }>();
 
   constructor(options: OpenVolumeOptions, storage: Storage) {
     this.owner = options.owner;
@@ -248,23 +250,19 @@ export class Volume {
   }
 
   /**
-   * Committed registry events for this volume. A path limits the result to
-   * versions where that file or directory changed.
+   * Versions of this volume, oldest first. Walks manifest `prev` links from the registry head on
+   * Filecoin (no chain log scan). Manifests written before `prev` existed (registry v1) continue via
+   * the v1 `Committed` log scan. A path limits the result to versions where that file or directory changed.
    */
-  async history(path?: string): Promise<HistoryEntry[]> {
-    const events = [...(await this.registry.committed({ owner: this.owner, ns: this.ns, key: this.key }))].sort((a, b) =>
-      a.version < b.version ? -1 : a.version > b.version ? 1 : 0,
-    );
-    if (path === undefined) {
-      return events.map((event) => this.#historyEntry(event));
-    }
+  async history(path?: string, options: { limit?: number } = {}): Promise<HistoryEntry[]> {
+    const events = await this.#versions(options.limit ?? 500);
+    if (path === undefined) return events;
     const norm = normalizePath(path);
     const out: HistoryEntry[] = [];
     let previous: string | null = null;
     let started = false;
     for (const event of events) {
-      const cid = bytesToPieceCid(event.pieceCid);
-      const tree = cid === "" ? emptyDir() : await this.#load(cid);
+      const tree = event.pieceCid === "" ? emptyDir() : await this.#load(event.pieceCid);
       const next = fingerprint(tree, norm);
       if (!started) {
         started = true;
@@ -274,9 +272,54 @@ export class Volume {
       }
       const change: HistoryEntry["change"] = previous === null && next !== null ? "added" : next === null ? "removed" : "updated";
       previous = next;
-      out.push({ ...this.#historyEntry(event), path: norm, change });
+      out.push({ ...event, path: norm, change });
     }
     return out;
+  }
+
+  async #versions(limit: number): Promise<HistoryEntry[]> {
+    const head = await this.registry.head(this.owner, this.ns, this.key);
+    const newest: { pieceCid: string; prev?: string; t?: number; txHash?: Hex }[] = [];
+    let cursor = bytesToPieceCid(head.pieceCid);
+    const seen = new Set<string>();
+    while (cursor && !seen.has(cursor) && newest.length < limit) {
+      seen.add(cursor);
+      await this.#load(cursor);
+      const meta = this.#rootMeta.get(cursor) ?? {};
+      newest.push({ pieceCid: cursor, prev: meta.prev, t: meta.t });
+      if (meta.prev === undefined) break;
+      cursor = meta.prev;
+    }
+    const oldest = newest.at(-1);
+    if (oldest && oldest.prev === undefined && newest.length < limit) {
+      // Pre-`prev` manifests: follow the v1 Committed events' prevPieceCid links.
+      const records = await this.registry.committed({ owner: this.owner, ns: this.ns, key: this.key }).catch(() => []);
+      const pick = (cid: string, below: bigint | null) =>
+        records
+          .filter((r) => bytesToPieceCid(r.pieceCid) === cid && r.timestamp > 0n && (below === null || r.version < below))
+          .sort((a, b) => (a.version > b.version ? -1 : 1))[0];
+      let record = pick(oldest.pieceCid, null);
+      if (record) {
+        oldest.prev = bytesToPieceCid(record.prevPieceCid);
+        oldest.t ??= Number(record.timestamp);
+        if (record.txHash) oldest.txHash = record.txHash;
+      }
+      while (record && oldest.prev !== undefined && bytesToPieceCid(record.prevPieceCid) && newest.length < limit) {
+        const prevCid = bytesToPieceCid(record.prevPieceCid);
+        const next = pick(prevCid, record.version);
+        if (!next) {
+          newest.push({ pieceCid: prevCid });
+          break;
+        }
+        newest.push({ pieceCid: prevCid, prev: bytesToPieceCid(next.prevPieceCid), t: Number(next.timestamp), ...(next.txHash ? { txHash: next.txHash } : {}) });
+        record = next;
+      }
+    }
+    return newest.reverse().map((item, index) => {
+      const entry: HistoryEntry = { version: BigInt(index + 1), pieceCid: item.pieceCid, prevPieceCid: item.prev ?? "", timestamp: item.t ?? 0 };
+      if (item.txHash) entry.txHash = item.txHash;
+      return entry;
+    });
   }
 
   /**
@@ -446,7 +489,7 @@ export class Volume {
     let base = baseTree;
     let ours = next;
     for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
-      const pieceCid = await this.#storeRoot(ours);
+      const pieceCid = await this.#storeRoot(ours, prevPiece);
       try {
         const record = await this.registry.commit({
           owner: this.owner,
@@ -473,8 +516,9 @@ export class Volume {
     }
   }
 
-  async #storeRoot(dir: DirNode): Promise<string> {
-    const stored = await this.#persistDir(dir, true);
+  async #storeRoot(dir: DirNode, prev: string): Promise<string> {
+    const t = Math.floor(this.#now() / 1000);
+    const stored = await this.#persistDir(dir, true, { prev, t });
     if (!stored.root) throw new Error("root manifest was not stored");
     const car = encodeCar(stored.root, stored.blocks);
     const uploaded = await this.storage.put(car);
@@ -484,10 +528,11 @@ export class Volume {
     for (const [cid, block] of stored.blocks) this.#blockIndex.set(cid, block);
     stampLocated(dir, uploaded.pieceCid, stored.blocks);
     for (const cid of stored.blocks.keys()) this.#blobs.delete(cid);
+    this.#rootMeta.set(uploaded.pieceCid, { prev, t });
     return uploaded.pieceCid;
   }
 
-  async #persistDir(dir: DirNode, isRoot: boolean): Promise<{ root?: string; entries: ManifestEntry[]; size: number; blocks: Map<string, Uint8Array> }> {
+  async #persistDir(dir: DirNode, isRoot: boolean, root?: { prev: string; t: number }): Promise<{ root?: string; entries: ManifestEntry[]; size: number; blocks: Map<string, Uint8Array> }> {
     const entries: ManifestEntry[] = [];
     const blocks = new Map<string, Uint8Array>();
     let size = 0;
@@ -519,6 +564,10 @@ export class Volume {
     const located = isRoot ? locatedIndex(dir, blocks) : undefined;
     const manifest: Manifest = { v: 1, mtime: dir.mtime, entries };
     if (located && Object.keys(located).length > 0) manifest.located = located;
+    if (root) {
+      manifest.prev = root.prev;
+      manifest.t = root.t;
+    }
     const bytes = manifestBytes(manifest);
     if (isRoot || bytes.byteLength > this.dirThreshold) {
       const root = await contentCid(bytes);
@@ -545,11 +594,13 @@ export class Volume {
       const root = car.blocks.get(car.root);
       if (!root) throw new Error("CAR root block is missing");
       const manifest = parseManifest(root);
+      this.#rootMeta.set(pieceCid, { prev: manifest.prev, t: manifest.t });
       const tree = await this.#hydrate(manifest, { piece: pieceCid, located: manifest.located });
       this.#cache.set(pieceCid, tree);
       return tree;
     }
     const manifest = parseManifest(bytes);
+    if (!ctx) this.#rootMeta.set(pieceCid, { prev: manifest.prev, t: manifest.t });
     const tree = await this.#hydrate(manifest, ctx ?? { piece: pieceCid, located: manifest.located });
     this.#cache.set(pieceCid, tree);
     return tree;
@@ -620,17 +671,6 @@ export class Volume {
     if (!this.#cryptoKey) return name;
     if (!nameIv) throw new Error("encrypted volume entry is missing nameIv");
     return decodeUtf8(await decryptBytes(this.#cryptoKey, base64UrlToBytes(name), nameIv, NAME_AAD));
-  }
-
-  #historyEntry(event: { version: bigint; pieceCid: Uint8Array; prevPieceCid: Uint8Array; timestamp: bigint; txHash?: Hex }): HistoryEntry {
-    const entry: HistoryEntry = {
-      version: event.version,
-      pieceCid: bytesToPieceCid(event.pieceCid),
-      prevPieceCid: bytesToPieceCid(event.prevPieceCid),
-      timestamp: Number(event.timestamp),
-    };
-    if (event.txHash) entry.txHash = event.txHash;
-    return entry;
   }
 }
 

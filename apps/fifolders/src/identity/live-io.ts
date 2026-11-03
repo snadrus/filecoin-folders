@@ -5,7 +5,7 @@ import { createPublicClient, createWalletClient, custom, getAddress, http, type 
 import { discoverWallets } from "../eip6963.js";
 import { readNetworkPreference } from "../network.js";
 import { CALIBRATION_FROM_BLOCK, CALIBRATION_REGISTRY, CALIBRATION_RPC, MAINNET_RPC, ensureChain, type ChainChoice } from "../session.js";
-import { INTENTS, watchWalletPrompts, withWalletIntent } from "../wallet-prompts.js";
+import { INTENTS, watchWalletPrompts, withWalletIntent, labelMigration } from "../wallet-prompts.js";
 import { IdentityBlocked, type IdentityIO } from "./io.js";
 import { resolvePerson } from "../person.js";
 
@@ -77,6 +77,7 @@ export function createLiveIdentityIO(choice: ChainChoice = readNetworkPreference
       const synapse = Synapse.create({ account: owner, chain, transport: custom(p), source: "fifolders" } as never);
       const storage = createSynapseStorage(synapse as never, { dataSetId: BigInt(dataset!.dataSetId) });
       const registry = createViemRegistry({
+      wrapMigration: labelMigration,
         ...registryOf(choice),
         publicClient: client,
         walletClient: createWalletClient({ account: owner, chain, transport: custom(p) }),

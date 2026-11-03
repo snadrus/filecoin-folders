@@ -13,6 +13,10 @@ import {
 import { RegistryCallError, RegistryCasConflict, RegistryNotAuthorized } from "../errors.js";
 import { PIECE_CID_MAX_BYTES } from "../ids.js";
 import { committedEvent, folderRegistryAbi } from "./abi.js";
+import { committedEventV2, folderRegistryV2Abi } from "./abi-v2.js";
+import { REGISTRY_SUCCESSORS } from "./deployments.js";
+import { createMigratingRegistry } from "./migrating.js";
+import { bytesEqual } from "../bytes.js";
 import type { CommittedRecord, Registry, RegistryCommit } from "./types.js";
 
 export interface ViemRegistryOptions {
@@ -34,6 +38,15 @@ export interface ViemRegistryOptions {
    * Defaults to `globalThis.localStorage` when present; pass `null` to disable.
    */
   scanCache?: Pick<Storage, "getItem" | "setItem"> | null;
+  /** Contract ABI. 1 = FolderRegistry (default), 2 = FolderRegistryV2 (version CAS, minimal event). */
+  abiVersion?: 1 | 2;
+  /**
+   * A v1 address with a known v2 successor ({@link REGISTRY_SUCCESSORS}) returns a migrating registry:
+   * v2 head first, v1 fallback, one-time move on the next commit. Default true; false pins plain v1.
+   */
+  migrate?: boolean;
+  /** Wraps the one-time v1 → v2 move (label the wallet prompt). */
+  wrapMigration?: <T>(info: { owner: Address; ns: Hex; key: Hex }, fn: () => Promise<T>) => Promise<T>;
 }
 
 /** Glif's public Calibration endpoint caps `eth_getLogs` at 360 blocks. */
@@ -50,7 +63,13 @@ interface CachedScan {
  * `commitFor` is used for an approved writer.
  */
 export function createViemRegistry(options: ViemRegistryOptions): Registry {
-  return new ViemRegistry(options);
+  const successor = options.abiVersion === 2 || options.migrate === false ? undefined : REGISTRY_SUCCESSORS[options.address.toLowerCase()];
+  if (!successor) return new ViemRegistry(options);
+  return createMigratingRegistry({
+    current: new ViemRegistry({ ...options, address: successor.address, fromBlock: successor.fromBlock, abiVersion: 2 }),
+    legacy: new ViemRegistry({ ...options, abiVersion: 1 }),
+    wrapMigration: options.wrapMigration,
+  });
 }
 
 class ViemRegistry implements Registry {
@@ -61,8 +80,10 @@ class ViemRegistry implements Registry {
   readonly fromBlock: bigint;
   readonly maxBlockRange: bigint;
   readonly scanCache: Pick<Storage, "getItem" | "setItem"> | null;
+  readonly v2: boolean;
 
   constructor(options: ViemRegistryOptions) {
+    this.v2 = options.abiVersion === 2;
     this.fromBlock = options.fromBlock ?? 0n;
     this.maxBlockRange = options.maxBlockRange ?? DEFAULT_MAX_BLOCK_RANGE;
     this.scanCache =
@@ -100,14 +121,20 @@ class ViemRegistry implements Registry {
     const signer = signerAddress(this.walletClient);
     const asOwner = this.signer !== "session-key" && signer.toLowerCase() === input.owner.toLowerCase();
     const piece = toHex(input.pieceCid);
-    const prev = toHex(input.prevPieceCid);
+    let prev: Hex | bigint = toHex(input.prevPieceCid);
+    if (this.v2) {
+      // v2 CAS is on the head version: check the observed piece here, the contract re-checks the version.
+      const current = await this.head(input.owner, input.ns, input.key);
+      if (!bytesEqual(current.pieceCid, input.prevPieceCid)) throw new RegistryCasConflict(current.pieceCid, current.version);
+      prev = current.version;
+    }
     try {
       const hash = await this.#write(
         asOwner ? "commit" : "commitFor",
         asOwner ? [input.ns, input.key, piece, prev] : [input.owner, input.ns, input.key, piece, prev],
       );
-      const receipt = await this.publicClient.waitForTransactionReceipt({ hash });
-      const decoded = committedFromReceipt(receipt.logs);
+      const receipt = await waitReceipt(this.publicClient, hash);
+      const decoded = committedFromReceipt(receipt.logs, this.v2);
       return {
         owner: input.owner,
         ns: input.ns,
@@ -127,7 +154,7 @@ class ViemRegistry implements Registry {
   async setWriter(ns: Hex, writer: Address, allowed: boolean): Promise<void> {
     try {
       const hash = await this.#write("setWriter", [ns, writer, allowed]);
-      await this.publicClient.waitForTransactionReceipt({ hash });
+      await waitReceipt(this.publicClient, hash);
     } catch (error) {
       rethrowRegistry(error);
     }
@@ -156,13 +183,13 @@ class ViemRegistry implements Registry {
       const start = query.fromBlock ?? this.fromBlock;
       const cacheKey = `fil-folders:committed:${this.address.toLowerCase()}:${query.owner.toLowerCase()}:${query.ns}:${query.key ?? "*"}:${start}`;
       const cached = this.#readCache(cacheKey);
-      const logs = [];
+      const logs: never[] = [];
       let scannedTo = start - 1n;
       if (cached && BigInt(cached.to) <= latest) scannedTo = BigInt(cached.to);
       for (let from = scannedTo + 1n; from <= latest; from += this.maxBlockRange) {
         const to = from + this.maxBlockRange - 1n < latest ? from + this.maxBlockRange - 1n : latest;
         logs.push(
-          ...(await this.publicClient.getLogs({ address: this.address, event: committedEvent, args, fromBlock: from, toBlock: to })),
+          ...((await this.publicClient.getLogs({ address: this.address, event: (this.v2 ? committedEventV2 : committedEvent) as typeof committedEvent, args, fromBlock: from, toBlock: to })) as never[]),
         );
         scannedTo = to;
       }
@@ -204,9 +231,8 @@ class ViemRegistry implements Registry {
           args.ns === undefined ||
           args.key === undefined ||
           args.pieceCid === undefined ||
-          args.prevPieceCid === undefined ||
           args.version === undefined ||
-          args.timestamp === undefined
+          (!this.v2 && (args.prevPieceCid === undefined || args.timestamp === undefined))
         ) {
           throw new Error("Committed log is missing fields");
         }
@@ -215,9 +241,10 @@ class ViemRegistry implements Registry {
           ns: args.ns,
           key: args.key,
           pieceCid: hexToBytes(args.pieceCid),
-          prevPieceCid: hexToBytes(args.prevPieceCid),
+          // v2 events carry no prev / timestamp: history comes from manifest `prev` links.
+          prevPieceCid: args.prevPieceCid ? hexToBytes(args.prevPieceCid) : new Uint8Array(),
           version: args.version,
-          timestamp: args.timestamp,
+          timestamp: args.timestamp ?? 0n,
         };
         if (log.transactionHash) record.txHash = log.transactionHash;
         if (log.blockNumber != null) record.blockNumber = log.blockNumber;
@@ -231,7 +258,7 @@ class ViemRegistry implements Registry {
     if (!account) throw new Error("walletClient has no account");
     return this.walletClient.writeContract({
       address: this.address,
-      abi: folderRegistryAbi,
+      abi: this.v2 ? folderRegistryV2Abi : folderRegistryAbi,
       functionName,
       args,
       account,
@@ -255,16 +282,16 @@ function hexToBytes(hex: Hex): Uint8Array {
   return toBytes(hex);
 }
 
-function committedFromReceipt(logs: readonly { data: Hex; topics: readonly Hex[] }[]): { version: bigint; timestamp: bigint } | undefined {
+function committedFromReceipt(logs: readonly { data: Hex; topics: readonly Hex[] }[], v2 = false): { version: bigint; timestamp: bigint } | undefined {
   for (const log of logs) {
     try {
       const decoded = decodeEventLog({
-        abi: folderRegistryAbi,
+        abi: (v2 ? folderRegistryV2Abi : folderRegistryAbi) as typeof folderRegistryAbi,
         data: log.data,
         topics: log.topics as [Hex, ...Hex[]],
       });
       if (decoded.eventName === "Committed") {
-        return { version: decoded.args.version, timestamp: decoded.args.timestamp };
+        return { version: decoded.args.version, timestamp: (decoded.args as { timestamp?: bigint }).timestamp ?? 0n };
       }
     } catch {
       // unrelated log
@@ -332,4 +359,17 @@ function fromCached(item: CachedScan["records"][number]): CommittedRecord {
   if (item.txHash) record.txHash = item.txHash;
   if (item.blockNumber) record.blockNumber = BigInt(item.blockNumber);
   return record;
+}
+
+/** FEVM RPCs can fail a receipt poll with "requested epoch was a null round"; keep waiting. */
+async function waitReceipt(client: PublicClient, hash: Hex) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await client.waitForTransactionReceipt({ hash });
+    } catch (error) {
+      const text = String((error as { message?: string })?.message ?? error) + String((error as { details?: string })?.details ?? "");
+      if (attempt >= 5 || !/null round/i.test(text)) throw error;
+      await new Promise((r) => setTimeout(r, 3000));
+    }
+  }
 }

@@ -25,6 +25,8 @@ import {
   createViemRegistry,
   folderCommitPermission,
   folderRegistryAbi,
+  folderRegistryV2Abi,
+  createMigratingRegistry,
   namespaceId,
   openVolume,
   pieceCidToBytes,
@@ -265,6 +267,52 @@ describe("viem registry on anvil", () => {
         await draft.put("/a.txt", text("fourth"));
       }),
     ).rejects.toBeInstanceOf(CasConflictError);
+  });
+
+  it("v2: matches ABI, version CAS, minimal event, session key, and migrates a v1 volume with linked history", async () => {
+    const v2 = await deployArtifact(31337, "FolderRegistryV2.sol/FolderRegistryV2.json", folderRegistryV2Abi, [owner.address, keysAddress]);
+    const artifact = JSON.parse(readFileSync(resolve(contractsDir, "out/FolderRegistryV2.sol/FolderRegistryV2.json"), "utf8")) as { abi: { type: string; name?: string; inputs?: { type: string }[] }[] };
+    expect(signatures(artifact.abi)).toEqual(signatures([...folderRegistryV2Abi]));
+
+    const legacy = createViemRegistry({ address, publicClient, walletClient: ownerWallet, migrate: false, scanCache: null });
+    const current = createViemRegistry({ address: v2, publicClient, walletClient: ownerWallet, abiVersion: 2, scanCache: null });
+    const storage = new MemoryStorage();
+    const old = await openVolume({ storage, registry: legacy, owner: owner.address, name: "migrate-me" });
+    await old.put("/a.txt", text("v1-a"));
+    await old.put("/a.txt", text("v1-b"));
+    const moved: string[] = [];
+    const registry = createMigratingRegistry({ current, legacy, wrapMigration: async (info, fn) => (moved.push(info.key), fn()) });
+    const volume = await openVolume({ storage, registry, owner: owner.address, name: "migrate-me" });
+    expect(decode(await volume.get("/a.txt"))).toBe("v1-b");
+    await volume.put("/b.txt", text("v2"));
+    expect(moved.length).toBe(1);
+    const head = await current.head(owner.address, namespaceId(), volumeKey("migrate-me"));
+    expect(head.version).toBe(1n);
+    const records = await current.committed({ owner: owner.address, ns: namespaceId(), key: volumeKey("migrate-me"), fromBlock: 0n });
+    expect(records.length).toBe(1);
+    expect(records[0]!.prevPieceCid.byteLength).toBe(0);
+    const tx = await publicClient.getTransaction({ hash: records[0]!.txHash! });
+    expect(tx.input.startsWith(toFunctionSelector("commit(bytes32,bytes32,bytes,uint64)"))).toBe(true);
+    const receipt = await publicClient.getTransactionReceipt({ hash: records[0]!.txHash! });
+    expect(receipt.logs[0]!.topics.length).toBe(4);
+
+    const log = await volume.history();
+    expect(log.map((e) => e.version)).toEqual([1n, 2n, 3n]);
+    expect(log[2]!.prevPieceCid).toBe(log[1]!.pieceCid);
+    expect(log[1]!.prevPieceCid).toBe(log[0]!.pieceCid);
+
+    // Stale CAS on v2.
+    await expect(current.commit({ owner: owner.address, ns: namespaceId(), key: volumeKey("migrate-me"), pieceCid: pieceCidToBytes("x"), prevPieceCid: new Uint8Array() })).rejects.toBeInstanceOf(RegistryCasConflict);
+
+    // Session key authorized in the shared SessionKeyRegistry works on v2 without re-authorizing.
+    const expiry = BigInt(Math.floor(Date.now() / 1000) + 3600);
+    const setHash = await ownerWallet.writeContract({ address: keysAddress, abi: mockSessionAbi, functionName: "setExpiry", args: [owner.address, session.address, folderCommitPermission(), expiry], account: owner, chain: ownerWallet.chain });
+    await publicClient.waitForTransactionReceipt({ hash: setHash });
+    const asSession = createViemRegistry({ address: v2, publicClient, walletClient: sessionWallet, abiVersion: 2, signer: "session-key", scanCache: null });
+    const viaSession = createMigratingRegistry({ current: asSession, legacy });
+    const sv = await openVolume({ storage, registry: viaSession, owner: owner.address, name: "migrate-me" });
+    await sv.put("/c.txt", text("session"));
+    expect((await current.head(owner.address, namespaceId(), volumeKey("migrate-me"))).version).toBe(2n);
   });
 });
 

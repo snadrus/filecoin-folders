@@ -38,6 +38,8 @@ export function parseManifest(bytes: Uint8Array): Manifest {
   if (!Array.isArray(record.entries)) throw new Error("manifest entries are missing");
   const manifest: Manifest = { v: 1, mtime, entries: record.entries.map((entry) => parseEntry(entry)) };
   if (record.located !== undefined) manifest.located = parseLocated(record.located);
+  if (typeof record.prev === "string") manifest.prev = record.prev;
+  if (typeof record.t === "number" && Number.isFinite(record.t)) manifest.t = record.t;
   return manifest;
 }
 

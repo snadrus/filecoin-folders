@@ -84,7 +84,17 @@ export const INTENTS = {
     cost: "one manifest commit; gas ~0.01 FIL + a penny for the manifest piece",
   }),
   unlock: { title: "Unlock encrypted folder", purpose: "your signature derives the folder key", cost: "free" },
+  migrateDrive: { title: "Move drive pointer to new registry", purpose: "one-time move to FolderRegistry v2 (smaller chain data); history stays linked", cost: "gas ~0.01 FIL" },
+  migrateIdentity: { title: "Move identity pointer to new registry", purpose: "one-time move to FolderRegistry v2", cost: "gas ~0.01 FIL" },
 } as const;
+
+/** keccak256("fil-identity"). */
+const IDENTITY_NS = "0x4ba7e36ce925bbe5d8a219757e1186149701b3ee9649e24538dccda15e7c59e5";
+
+/** `wrapMigration` for fil-folders registries: labels the one-time v1 → v2 pointer move. */
+export function labelMigration<T>(info: { ns: string }, fn: () => Promise<T>): Promise<T> {
+  return withWalletIntent(info.ns.toLowerCase() === IDENTITY_NS ? INTENTS.migrateIdentity : INTENTS.migrateDrive, fn);
+}
 
 let intent: WalletIntent | null = null;
 
