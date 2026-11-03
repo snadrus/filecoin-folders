@@ -1610,7 +1610,9 @@ export class DriveApp {
         this.render();
         return;
       }
-      void this.enqueue(() => this.runContext(action, paths, targetPath));
+      // Reads never wait behind the write queue (a pending wallet setup or save can hold it for minutes).
+      if (action === "versions" || action === "details" || action === "download") void this.runContext(action, paths, targetPath);
+      else void this.enqueue(() => this.runContext(action, paths, targetPath));
       return;
     }
     const entry = target.closest<HTMLElement>("[data-testid=entry]");

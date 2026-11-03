@@ -425,3 +425,22 @@ test("S69 Manage versions (Drive): lists a file's versions newest first; Restore
   await rows.first().dblclick();
   await expect(page.getByTestId("preview-text")).toContainText("first draft");
 });
+
+test("S71 reads don't wait behind wallet setup: Manage versions and Details open while the session key prompt is still open", async ({ page }) => {
+  await connect(page, "/?onboard=1&pay=ready&datasets=1&authdelay=60000");
+  await page.evaluate(() => {
+    for (const key of Object.keys(localStorage)) if (key.startsWith("fifolders:session:")) localStorage.removeItem(key);
+  });
+  await page.reload();
+  await expect(page.getByTestId("setup-note")).toBeVisible();
+  await page.getByTestId("file-input").setInputFiles([{ name: "a.txt", mimeType: "text/plain", buffer: Buffer.from("a") }]);
+  const row = page.getByTestId("entry").filter({ hasText: "a.txt" });
+  await expect(row).toHaveCount(1);
+  await row.click({ button: "right" });
+  await page.getByRole("button", { name: "Manage versions" }).click();
+  await expect(page.getByTestId("versions-dialog")).toBeVisible({ timeout: 3_000 });
+  await page.keyboard.press("Escape");
+  await row.click({ button: "right" });
+  await page.getByRole("button", { name: "Details" }).click();
+  await expect(page.getByTestId("details")).toBeVisible({ timeout: 3_000 });
+});
