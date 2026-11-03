@@ -399,3 +399,24 @@ test("S68 same-name upload asks Replace / Keep all (Drive); Replace makes a new 
   await expect(dialog).toHaveCount(0);
   await expect(rows).toHaveCount(2);
 });
+
+test("S69 Manage versions (Drive): lists a file's versions newest first; Restore brings back an older one", async ({ page }) => {
+  await connect(page);
+  const input = page.getByTestId("file-input");
+  const rows = page.getByTestId("entry");
+  await input.setInputFiles([{ name: "notes.txt", mimeType: "text/plain", buffer: Buffer.from("first draft") }]);
+  await expect(rows).toHaveCount(1);
+  await input.setInputFiles([{ name: "notes.txt", mimeType: "text/plain", buffer: Buffer.from("second draft!") }]);
+  await page.getByTestId("upload-conflict-ok").click();
+  await expect(rows.first()).toContainText("13 B");
+  await rows.first().click({ button: "right" });
+  await page.getByRole("button", { name: "Manage versions" }).click();
+  const dialog = page.getByTestId("versions-dialog");
+  await expect(dialog.getByTestId("version-row")).toHaveCount(2);
+  await expect(dialog.getByTestId("version-row").first()).toContainText("Current version");
+  await dialog.getByTestId("version-row").nth(1).getByRole("button", { name: "Restore" }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(rows.first()).toContainText("11 B");
+  await rows.first().dblclick();
+  await expect(page.getByTestId("preview-text")).toContainText("first draft");
+});

@@ -1,5 +1,6 @@
 import { friendlyError } from "./friendly-error.js";
 import { askUploadConflict } from "./upload-conflict.js";
+import { showVersions } from "./versions-dialog.js";
 import { felFileName } from "./blank.js";
 import {
   CarArchiveError,
@@ -1673,6 +1674,40 @@ export class DriveApp {
     if (action === "restore") return this.restorePaths(paths);
     if (action === "delete-forever") return this.deleteForever(paths);
     if (action === "details") return this.showDetails(target);
+    if (action === "versions") return this.manageVersions(target);
+  }
+
+  /** Drive's "Manage versions": committed versions of one file; download any, restore an older one as a new version. */
+  private async manageVersions(path: string): Promise<void> {
+    const real = this.volume;
+    if (!real) return;
+    const history = (await real.history(path)).filter((entry) => entry.change !== "removed").reverse();
+    const when = (ts: number) => (ts ? new Date(ts * (ts < 10_000_000_000 ? 1000 : 1)).toLocaleString() : "Unknown time");
+    const name = baseName(path);
+    showVersions(
+      this.root?.ownerDocument ?? document,
+      name,
+      history.map((entry, index) => ({ label: `Version ${history.length - index}`, when: when(entry.timestamp), current: index === 0 })),
+      {
+        download: async (index) => {
+          const bytes = await real.getAt(history[index]!.pieceCid, path);
+          const url = URL.createObjectURL(toBlob(bytes, guessMime(name, "")));
+          const link = document.createElement("a");
+          link.href = url;
+          link.download = name;
+          document.body.appendChild(link);
+          link.click();
+          link.remove();
+          setTimeout(() => URL.revokeObjectURL(url), 2000);
+        },
+        restore: async (index) => {
+          const bytes = await real.getAt(history[index]!.pieceCid, path);
+          await this.enqueue(() => this.stage([{ op: "put", path, bytes: bytesToB64(bytes), mime: guessMime(name, "") }], { autosave: true }));
+          this.toast(`Restored version ${history.length - index} of “${name}”`);
+          this.render();
+        },
+      },
+    );
   }
 
   private onDblClick(event: MouseEvent): void {

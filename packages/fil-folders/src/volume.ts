@@ -223,6 +223,19 @@ export class Volume {
     return decryptBytes(this.#cryptoKey, bytes, node.enc.iv, FILE_AAD);
   }
 
+  /** A file's bytes as of an older snapshot (a `history()` entry's pieceCid), for "Manage versions". */
+  async getAt(rootPieceCid: string, path: string): Promise<Uint8Array> {
+    const norm = normalizePath(path);
+    const tree = rootPieceCid === "" ? emptyDir() : await this.#load(rootPieceCid);
+    const node = find(tree, norm);
+    if (!node) throw new NotFoundError(norm);
+    if (node.type !== "file") throw new IsADirectoryError(norm);
+    const bytes = await this.#readFile(node);
+    if (!node.enc) return bytes;
+    if (!this.#cryptoKey) throw new Error("volume is encrypted; pass encryption to openVolume");
+    return decryptBytes(this.#cryptoKey, bytes, node.enc.iv, FILE_AAD);
+  }
+
   async ls(path = "/"): Promise<Stat[]> {
     return list(await this.#read(), path);
   }

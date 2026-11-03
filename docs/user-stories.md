@@ -109,3 +109,6 @@ When my connection drops, FiFolders, FiPen and FiGrid show "You're offline" (lik
 
 ### S68 Same-name upload
 Uploading a file whose name already exists asks, like Drive, "Replace existing file" (it becomes a new version) or "Keep all items" (adds "name (1)"); Escape or Cancel uploads nothing.
+
+### S69 Manage versions
+From a file's menu, "Manage versions" lists its saved versions newest first (Drive parity); I can download any version or restore an older one, which becomes the newest version.

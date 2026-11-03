@@ -742,6 +742,7 @@ function renderContext(context: ContextState): string {
     ${item("copy", "content_copy", "Make a copy")}
     ${item("star", "star", context.starred ? "Unstar" : "Star")}
     ${trashItems}
+    ${context.directory ? "" : item("versions", "history", "Manage versions")}
     ${item("details", "info", "Details")}
   </div>`;
 }

@@ -25,3 +25,15 @@ describe("history", () => {
     expect(await volume.history("/b.txt")).toEqual([expect.objectContaining({ version: 2n, change: "added", path: "/b.txt" })]);
   });
 });
+
+describe("getAt", () => {
+  it("reads a file as it was at an older snapshot (Manage versions)", async () => {
+    const { volume } = await makeVolume();
+    await volume.put("/a.txt", text("one"));
+    await volume.put("/a.txt", text("two"));
+    const versions = await volume.history("/a.txt");
+    expect(new TextDecoder().decode(await volume.getAt(versions[0]!.pieceCid, "/a.txt"))).toBe("one");
+    expect(new TextDecoder().decode(await volume.getAt(versions[1]!.pieceCid, "/a.txt"))).toBe("two");
+    await expect(volume.getAt(versions[0]!.pieceCid, "/missing.txt")).rejects.toThrow();
+  });
+});
