@@ -81,8 +81,11 @@ test.describe("FiPen sharing, comments, names", () => {
     const page = await ctx.newPage();
     await newDoc(page);
     await expect(page.locator("#name-btn")).toHaveText("Andy J");
-    page.once("dialog", (d) => d.accept("Zed"));
+    // Clicking your name opens the identity pop-up; "Just use a different name here" is the per-session override.
     await page.locator("#name-btn").click();
+    await expect(page.getByTestId("identity-pop-configure").or(page.getByTestId("identity-pop-edit")).first()).toBeVisible();
+    page.once("dialog", (d) => d.accept("Zed"));
+    await page.getByTestId("identity-pop-local").click();
     await expect(page.locator("#name-btn")).toHaveText("Zed");
     await ctx.close();
   });

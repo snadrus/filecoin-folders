@@ -54,7 +54,7 @@ Suites: **mock** = local build with the mock chain (`VITE_E2E=1`) + staged edito
 | S27 | Comment via right-click; no quoted text. | Context menu → Comment → card shows the comment, not the selected text. | both |
 | S28 | Mobile comment bubble. | Touch device + selection → "💬 Comment" bubble. | both |
 | S29 | Guest names. | "Adjective Animal"; same wallet → same name (xoshiro128++ seed); different wallet → different name. | both |
-| S30 | Display-name override. | FiFolders display name wins over the guest name; a name typed in FiPen wins over both. | both |
+| S30 | Display-name override. | FiFolders display name wins over the guest name; clicking your name opens the identity pop-up, whose "Just use a different name here" wins over both. | both |
 
 ## Two users (trystero over Nostr relays, two browser contexts)
 
