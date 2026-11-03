@@ -98,7 +98,16 @@ export interface RunwayInput {
   datasetBytes: number;
   /** When false, the wallet is not connected and no pay account can be read. */
   known: boolean;
+  /** The wallet has a dataset (even an empty one). Datasets bill a monthly fee while they exist. */
+  hasDataset?: boolean;
+  /** Per-dataset monthly fee, atto-USDFC. Defaults to the fallback ($0.12/month). */
+  datasetFeePerMonth?: bigint;
   nowMs?: number;
+}
+
+/** Shown for a dataset with no pieces: it still bills the per-dataset fee. */
+export function emptyDatasetHeadline(feePerMonth: bigint = FALLBACK_PROVING_PER_MONTH): string {
+  return `Empty dataset — ${formatUsd(feePerMonth)}/month dataset fee`;
 }
 
 export function describeRunway(raw: RunwayInput): Runway {
@@ -111,6 +120,22 @@ export function describeRunway(raw: RunwayInput): Runway {
   const bytes = Number.isFinite(input.datasetBytes) && input.datasetBytes > 0 ? input.datasetBytes : 0;
   const datasetLabel = formatBytesLocal(bytes);
   const now = input.nowMs ?? Date.now();
+  const fee = raw.datasetFeePerMonth && toBigInt(raw.datasetFeePerMonth) > 0n ? toBigInt(raw.datasetFeePerMonth) : FALLBACK_PROVING_PER_MONTH;
+  if (bytes === 0 && raw.hasDataset) {
+    const headline = emptyDatasetHeadline(fee);
+    if (!input.known) return { headline, detail: "Connect a wallet to see how long it is paid up.", low: false, showAdd: false, datasetLabel };
+    // The on-chain rate is the truth when present; otherwise the dataset fee is the floor.
+    const perEpoch = input.lockupRatePerEpoch > 0n ? input.lockupRatePerEpoch : fee / BigInt(EPOCHS_PER_MONTH);
+    if (perEpoch <= 0n) return { headline, detail: "", low: false, showAdd: false, datasetLabel };
+    const epochs = input.availableFunds / perEpoch;
+    const days = Number(epochs / BigInt(EPOCHS_PER_DAY));
+    if (input.availableFunds <= 0n) return { headline, detail: "No funds deposited — add funds to keep it.", low: true, showAdd: true, datasetLabel };
+    if (epochs > BigInt(Number.MAX_SAFE_INTEGER) || days >= 100 * 365) return { headline, detail: "Paid up for 100+ years", low: false, showAdd: false, datasetLabel };
+    if (days < 60) return { headline, detail: `Add funds soon — ${spanLabel(days)}`, low: true, showAdd: true, datasetLabel };
+    const when = new Date(now + Number(epochs) * EPOCH_SECONDS * 1000);
+    const month = when.toLocaleString("en-US", { month: "long", timeZone: "UTC" });
+    return { headline, detail: `Paid up through about ${month} ${when.getUTCFullYear()}`, low: false, showAdd: false, datasetLabel };
+  }
   if (!input.known) {
     if (bytes === 0) {
       return { headline: "Nothing stored yet — no ongoing cost", detail: "", low: false, showAdd: false, datasetLabel };
@@ -125,6 +150,10 @@ export function describeRunway(raw: RunwayInput): Runway {
   }
   if (bytes === 0 && input.lockupRatePerEpoch <= 0n) {
     return { headline: "Nothing stored yet — no ongoing cost", detail: "", low: false, showAdd: false, datasetLabel };
+  }
+  if (input.lockupRatePerEpoch <= 0n && raw.hasDataset) {
+    // Rate not read yet: the dataset fee still applies, never claim $0.00/month.
+    return describeRunway({ ...raw, lockupRatePerEpoch: fee / BigInt(EPOCHS_PER_MONTH) });
   }
   if (input.lockupRatePerEpoch <= 0n) {
     return {
