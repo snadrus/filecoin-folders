@@ -376,3 +376,9 @@ button:disabled { cursor: default; opacity: 0.45; }
 .account-text { display: inline-flex; flex-direction: column; align-items: flex-start; line-height: 1.15; }
 .account-text small { color: var(--muted); font-size: 11px; }
 .cell.owner { display: inline-flex; align-items: center; gap: 6px; }
+
+.participant-copies { margin: 8px 0 12px; padding: 10px 14px; border: 1px solid #dadce0; border-radius: 8px; background: #f8fafd; }
+.participant-copies h3 { margin: 0 0 6px; font-size: 14px; font-weight: 600; }
+.participant-copies ul { list-style: none; margin: 0; padding: 0; }
+.participant-copies .copy-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; flex-wrap: wrap; }
+.participant-copies .copy-what { flex: 1 1 240px; }

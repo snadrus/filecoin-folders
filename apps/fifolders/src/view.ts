@@ -155,6 +155,8 @@ export interface ViewModel {
   uploads: UploadRow[];
   toasts: ToastRow[];
   walletPrompts: WalletPromptView[];
+  /** Copies participants saved while the owner was away; the owner can bring each into their drive. */
+  participantCopies?: { id: string; title: string; from: string; mode: "version" | "side" }[];
   /** Shown while the drive is browsable but wallet setup still runs. */
   setupNote: string;
   loadState?: "idle" | "loading" | "ok" | "error";
@@ -553,6 +555,7 @@ function renderBrowser(model: ViewModel): string {
       </div>
     </div>
     ${blocked}
+    ${renderParticipantCopies(model)}
     ${
       model.view === "list"
         ? `<div class="list" role="table">
@@ -916,5 +919,24 @@ function renderUploads(uploads: UploadRow[]): string {
         </div>`,
       )
       .join("")}
+  </section>`;
+}
+
+function renderParticipantCopies(model: ViewModel): string {
+  const copies = model.participantCopies ?? [];
+  if (!copies.length || model.nav !== "drive") return "";
+  const rows = copies
+    .map(
+      (copy) => `<li class="copy-row" data-testid="participant-copy">
+        <span class="material-symbols-outlined" aria-hidden="true">file_copy</span>
+        <span class="copy-what"><strong>${escapeHtml(copy.title || "Untitled")}</strong> — ${escapeHtml(copy.from)} saved a copy while you were away${copy.mode === "version" ? "" : " (it changed since, so it goes beside the original)"}</span>
+        <button type="button" class="text-btn" data-action="copy-take" data-copy-id="${escapeHtml(copy.id)}">${copy.mode === "version" ? "Save as new version" : "Copy to my drive"}</button>
+        <button type="button" class="text-btn" data-action="copy-dismiss" data-copy-id="${escapeHtml(copy.id)}">Dismiss</button>
+      </li>`,
+    )
+    .join("");
+  return `<section class="participant-copies" data-testid="participant-copies" aria-label="Participant copies">
+    <h3>Participant copies</h3>
+    <ul>${rows}</ul>
   </section>`;
 }
