@@ -11,14 +11,19 @@ export interface VersionRow {
 export function showVersions(
   doc: Document,
   name: string,
-  rows: VersionRow[],
+  rows: VersionRow[] | null,
   actions: { download(index: number): Promise<void>; restore(index: number): Promise<void> },
+  loadError = "",
 ): void {
   doc.querySelector("[data-testid=versions-dialog]")?.remove();
   const back = doc.createElement("div");
   back.className = "backdrop";
   back.dataset.testid = "versions-dialog";
-  const list = rows.length
+  const list = rows === null
+    ? `<li data-testid="versions-loading"><span class="spinner" aria-hidden="true"></span> Loading versions…</li>`
+    : loadError
+    ? ""
+    : rows.length
     ? rows
         .map(
           (row, index) => `<li class="version-row" data-testid="version-row">
@@ -34,7 +39,7 @@ export function showVersions(
     <h2 id="mv-title">Manage versions</h2>
     <p class="note">“${esc(name)}” · older versions stay readable while their pieces are still stored.</p>
     <ul class="version-list">${list}</ul>
-    <p class="error" data-testid="versions-error" hidden></p>
+    <p class="error" data-testid="versions-error" role="alert"${loadError ? "" : " hidden"}>${esc(loadError)}</p>
     <div class="dialog-actions"><button type="button" class="primary" data-v="close">Close</button></div>
   </div>`;
   const close = () => {

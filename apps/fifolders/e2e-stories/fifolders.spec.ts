@@ -50,6 +50,11 @@ test("S04 drive is browsable read-only while setup transactions are pending; edi
   await page.reload();
   await expect(page.getByTestId("nav-drive")).toBeVisible();
   await expect(page.getByTestId("setup-note")).toContainText("you can browse meanwhile");
+  // S70: the note sits above the file list; it must not take a column of its own and squeeze the list.
+  await expect(page.getByTestId("browser").getByTestId("setup-note")).toHaveCount(1);
+  const ws = (await page.locator("main.workspace").boundingBox())!;
+  const list = (await page.getByTestId("browser").boundingBox())!;
+  expect(list.width).toBeGreaterThan(ws.width * 0.9);
   await page.getByTestId("nav-recent").click();
   await page.getByTestId("nav-drive").click();
   await page.getByTestId("file-input").setInputFiles({ name: "early.txt", mimeType: "text/plain", buffer: Buffer.from("hi") });
