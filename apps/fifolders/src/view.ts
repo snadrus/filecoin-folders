@@ -17,6 +17,8 @@ import {
   materialIcon,
   shortAddress,
 } from "./model.js";
+import { gatewayUrl, groupByFolder } from "./drive-pieces.js";
+import type { UnixfsEntry } from "./unixfs.js";
 import { DOCS_COSTS_URL, type Runway } from "./pricing.js";
 
 export interface UploadRow {
@@ -71,6 +73,12 @@ export interface LooseRow {
   size: number;
   uploaded: number;
   mime: string;
+  folder?: string;
+  ipfsRoot?: string;
+  origin?: "drive";
+  unixfs?: "file" | "directory" | "car";
+  children?: UnixfsEntry[];
+  expanded?: boolean;
 }
 
 export interface CostView {
@@ -425,7 +433,8 @@ function renderDatasetSection(model: ViewModel): string {
   const current = panel.selectedDatasetId;
   const latest = latestDatasetId(panel.datasets);
   const ordered = [...panel.datasets].sort((a, b) => {
-    if (Boolean(a.drive) !== Boolean(b.drive)) return a.drive ? -1 : 1;
+    const rank = (d: typeof a) => (d.drive ? 0 : d.source === "filecoin-drive" ? 1 : 2);
+    if (rank(a) !== rank(b)) return rank(a) - rank(b);
     const na = /^\d+$/.test(a.id), nb = /^\d+$/.test(b.id);
     if (na && nb) return BigInt(b.id) > BigInt(a.id) ? 1 : BigInt(b.id) < BigInt(a.id) ? -1 : 0;
     return na ? 1 : nb ? -1 : 0;
@@ -437,10 +446,11 @@ function renderDatasetSection(model: ViewModel): string {
       const bits = [`${dataset.pieceCount} pieces`];
       if (dataset.size && dataset.size !== "—") bits.push(dataset.size);
       if (dataset.created && dataset.created !== "—") bits.push(dataset.created);
-      return `<button type="button" role="menuitemradio" aria-checked="${on}" class="dataset-item ${on ? "on" : ""} ${dataset.drive ? "is-drive" : "not-drive"}" data-drive="${dataset.drive ? "1" : "0"}" data-action="switch-dataset" data-id="${escapeHtml(dataset.id)}" data-testid="dataset-item">
+      return `<button type="button" role="menuitemradio" aria-checked="${on}" class="dataset-item ${on ? "on" : ""} ${dataset.drive || dataset.source === "filecoin-drive" ? "is-drive" : "not-drive"}" data-drive="${dataset.drive ? "1" : "0"}" data-action="switch-dataset" data-id="${escapeHtml(dataset.id)}" data-testid="dataset-item">
         <span class="material-symbols-outlined dataset-check" aria-hidden="true">${on ? "check" : ""}</span>
         <span class="dataset-text"><span class="dataset-id">Dataset ${escapeHtml(label)}${dataset.id === latest ? ` <span class="dataset-tag" data-testid="dataset-latest">latest</span>` : ""}</span>
         ${dataset.drive ? `<span class="dataset-drive" data-testid="dataset-drive"><span class="material-symbols-outlined" aria-hidden="true">folder</span> FiFolders drive${dataset.driveName ? ` · ${escapeHtml(dataset.driveName)}` : ""}</span>` : ""}
+        ${dataset.source === "filecoin-drive" ? `<span class="dataset-drive fcdrive" data-testid="dataset-filecoin-drive"><span class="material-symbols-outlined" aria-hidden="true">cloud</span> Filecoin Drive</span>` : ""}
         <span class="dataset-meta">${escapeHtml(bits.join(" · "))}</span></span>
       </button>`;
     })
@@ -481,7 +491,7 @@ function renderBrowser(model: ViewModel): string {
         `${index ? `<span class="crumb-sep">/</span>` : ""}<button type="button" data-testid="breadcrumb" data-action="crumb" data-path="${encodeURIComponent(crumb.path)}">${escapeHtml(crumb.label)}</button>`,
     )
     .join("");
-  const rows = model.nav === "loose" ? model.loose.map((piece) => renderLoose(piece)).join("") : model.entries.map((entry) => renderEntry(entry, model)).join("");
+  const rows = model.nav === "loose" ? renderLooseList(model.loose) : model.entries.map((entry) => renderEntry(entry, model)).join("");
   const filled = model.nav === "loose" ? model.loose.length : model.entries.length;
   const empty =
     model.loadState === "error"
@@ -558,8 +568,68 @@ function renderEntry(entry: Stat, model: ViewModel): string {
   return `<div class="entry ${model.view}" role="row" data-testid="entry" data-path="${encodeURIComponent(entry.path)}" data-type="${entry.type}" data-kind="${kind}" data-selected="${selected ? "true" : "false"}" data-drop="${drop}" data-saving="${badge ? "true" : "false"}" draggable="true">${body}</div>`;
 }
 
+/** Filecoin Drive pieces group under their folder path; other loose pieces list flat after them. */
+function renderLooseList(rows: LooseRow[]): string {
+  const drive = rows.filter((row) => row.origin === "drive");
+  const other = rows.filter((row) => row.origin !== "drive");
+  if (!drive.length) return other.map((piece) => renderLoose(piece)).join("");
+  const groups = groupByFolder(drive)
+    .map(
+      (group) => `<div class="loose-group" data-testid="loose-folder" data-folder="${escapeHtml(group.folder)}">
+        <div class="loose-folder"><span class="material-symbols-outlined" aria-hidden="true">folder</span> ${escapeHtml(group.folder ? `/${group.folder}` : "/ (root)")} <span class="badge">Filecoin Drive</span></div>
+        ${group.rows.map((piece) => renderLoose(piece)).join("")}
+      </div>`,
+    )
+    .join("");
+  const rest = other.length ? `<div class="loose-group"><div class="loose-folder"><span class="material-symbols-outlined" aria-hidden="true">inventory_2</span> Other pieces</div>${other.map((piece) => renderLoose(piece)).join("")}</div>` : "";
+  return groups + rest;
+}
+
+function renderUnixfsEntries(piece: LooseRow, entries: UnixfsEntry[], prefix: string, depth: number): string {
+  return entries
+    .map((entry) => {
+      const path = prefix ? `${prefix}/${entry.name}` : entry.name;
+      const isDir = entry.kind === "directory";
+      return `<div class="entry list unixfs-entry" role="row" data-testid="unixfs-entry" style="padding-left:${24 + depth * 20}px">
+        <span class="cell name-cell"><span class="material-symbols-outlined file-icon" aria-hidden="true">${isDir ? "folder" : "draft"}</span><span class="name">${escapeHtml(entry.name)}</span></span>
+        <span class="cell owner"><code class="cid">${escapeHtml(shortCid(entry.cid))}</code></span>
+        <span class="cell mtime"></span>
+        <span class="cell size">${isDir ? "—" : escapeHtml(formatBytes(entry.size))}</span>
+        <span class="cell loose-actions">
+          ${isDir ? "" : `<button type="button" data-action="loose-entry-download" data-cid="${escapeHtml(piece.pieceCid)}" data-path="${escapeHtml(path)}" data-testid="unixfs-download">Download</button>`}
+          ${piece.ipfsRoot ? `<a href="${escapeHtml(gatewayUrl(piece.ipfsRoot, path))}" target="_blank" rel="noreferrer" data-testid="unixfs-gateway">Gateway</a>` : ""}
+        </span>
+      </div>${isDir && entry.children ? renderUnixfsEntries(piece, entry.children, path, depth + 1) : ""}`;
+    })
+    .join("");
+}
+
+function shortCid(cid: string): string {
+  return cid.length > 16 ? `${cid.slice(0, 8)}…${cid.slice(-6)}` : cid;
+}
+
 function renderLoose(piece: LooseRow): string {
   const when = piece.uploaded ? formatWhen(piece.uploaded) : "—";
+  if (piece.origin === "drive") {
+    const dir = piece.unixfs === "directory";
+    const kind = dir ? "Folder (UnixFS)" : piece.unixfs === "car" ? "Imported CAR" : piece.mime;
+    return `<div class="entry list loose-drive" role="row" data-testid="loose-row" data-origin="drive" data-cid="${escapeHtml(piece.pieceCid)}">
+      <span class="cell name-cell">
+        ${dir ? `<button type="button" class="expander" data-action="loose-expand" data-cid="${escapeHtml(piece.pieceCid)}" data-testid="loose-expand" aria-expanded="${Boolean(piece.expanded)}"><span class="material-symbols-outlined" aria-hidden="true">${piece.expanded ? "expand_more" : "chevron_right"}</span></button>` : ""}
+        <span class="material-symbols-outlined file-icon" aria-hidden="true">${dir ? "folder_zip" : piece.unixfs === "car" ? "deployed_code" : "draft"}</span>
+        <span class="name-stack"><span class="name">${escapeHtml(piece.name)}</span>
+        ${piece.ipfsRoot ? `<small class="cid" data-testid="loose-ipfs" title="${escapeHtml(piece.ipfsRoot)}">IPFS ${escapeHtml(shortCid(piece.ipfsRoot))}</small>` : ""}</span>
+      </span>
+      <span class="cell owner">${escapeHtml(kind)}</span>
+      <span class="cell mtime">${escapeHtml(when)}</span>
+      <span class="cell size">${escapeHtml(formatBytes(piece.size))}</span>
+      <span class="cell loose-actions">
+        <button type="button" data-action="loose-download" data-cid="${escapeHtml(piece.pieceCid)}" data-testid="loose-download">${dir ? "Download CAR" : "Download"}</button>
+        ${dir ? "" : `<button type="button" data-action="loose-open" data-cid="${escapeHtml(piece.pieceCid)}" data-testid="loose-open">Open</button>`}
+        ${piece.ipfsRoot ? `<a href="${escapeHtml(gatewayUrl(piece.ipfsRoot))}" target="_blank" rel="noreferrer" data-testid="loose-gateway">Gateway</a>` : ""}
+      </span>
+    </div>${dir && piece.expanded && piece.children ? renderUnixfsEntries(piece, piece.children, "", 1) : ""}`;
+  }
   return `<div class="entry list" role="row" data-testid="loose-row" data-cid="${escapeHtml(piece.pieceCid)}">
     <span class="cell name-cell"><span class="name">${escapeHtml(piece.name)}</span></span>
     <span class="cell owner">${escapeHtml(piece.mime)}</span>

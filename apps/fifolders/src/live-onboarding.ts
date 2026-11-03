@@ -22,6 +22,7 @@ import {
 } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { discoverWallets, type AnnouncedWallet } from "./eip6963.js";
+import { FILECOIN_DRIVE_SOURCE, loadPieceDetails, setPieceDetailSource, type PieceDetail } from "./drive-pieces.js";
 import { REGISTRY_NOT_DEPLOYED, registryReady } from "./network.js";
 import { WALLETCONNECT_RDNS, connectWalletConnect, walletChoices, walletConnectConfig, type WalletConnectLike } from "./wallets.js";
 import { saveCheckpoint, type UploadCheckpoint } from "./copies.js";
@@ -292,6 +293,36 @@ export function createLiveOnboarding(): OnboardingIO {
    * FolderRegistry (chunked, cached log scan) plus the current head, matched against each
    * dataset's piece list. Results cache per dataset+piece count; best effort, never blocks long.
    */
+  /** Loose pieces view reads Filecoin Drive per-piece metadata for the open dataset. */
+  function installPieceDetails(choice: ChainChoice, datasetId: string, synapse: { storage: unknown }): void {
+    if (!/^\d+$/.test(datasetId)) {
+      setPieceDetailSource(null);
+      return;
+    }
+    const chain = chainOf(choice);
+    setPieceDetailSource(() =>
+      loadPieceDetails({
+        network: choice,
+        dataSetId: datasetId,
+        genesisTimestamp: (chain as unknown as { genesisTimestamp?: number }).genesisTimestamp ?? 0,
+        chainFallback: async () => {
+          const storage = synapse.storage as {
+            createContext?: (o: unknown) => Promise<{ getPieces?: () => AsyncIterable<{ pieceId: bigint; pieceCid: { toString(): string } }> }>;
+          };
+          const context = await storage.createContext?.({ dataSetId: BigInt(datasetId), withCDN: false });
+          if (!context?.getPieces) return [];
+          const { getAllPieceMetadata } = await import("@filoz/synapse-core/warm-storage");
+          const out: PieceDetail[] = [];
+          for await (const piece of context.getPieces()) {
+            const metadata = (await getAllPieceMetadata(publicClient(choice) as never, { dataSetId: BigInt(datasetId), pieceId: piece.pieceId }).catch(() => ({}))) as Record<string, string>;
+            out.push({ pieceCid: piece.pieceCid.toString(), pieceId: piece.pieceId.toString(), metadata });
+          }
+          return out;
+        },
+      }),
+    );
+  }
+
   async function detectDrives(choice: ChainChoice, volumeName: string, datasets: DatasetRecord[], owner?: Address): Promise<DatasetRecord[]> {
     const address = owner ?? requireRoot();
     const chainId = chainOf(choice).id;
@@ -576,6 +607,7 @@ export function createLiveOnboarding(): OnboardingIO {
         : datasetId
           ? { dataSetId: BigInt(datasetId) }
           : {};
+      installPieceDetails(input.chain, datasetId, synapse);
       const storage = withProviderFallback(createSynapseStorage(synapse, {
         ...storageOptions,
         copies: 2,
@@ -660,6 +692,7 @@ export function createLiveOnboarding(): OnboardingIO {
         datasetId = chooseDataset(await detectDrives(input.chain, input.volumeName, live, address), null).selectedId ?? "";
       }
       if (!datasetId || datasetId.startsWith("provider:")) return null;
+      installPieceDetails(input.chain, datasetId, synapse);
       const storage = withProviderFallback(createSynapseStorage(synapse, { dataSetId: BigInt(datasetId), copies: 2 }), input.chain);
       const observed = observeRegistry(
         createViemRegistry({
@@ -801,6 +834,7 @@ function toDataset(choice: ChainChoice, dataset: {
     pieceCount: (dataset.activePieceCount ?? 0n).toString(),
     size: meta?.size ?? "—",
     created: dataset.metadata?.created?.slice(0, 10) || meta?.created || "—",
+    ...(dataset.metadata?.source === FILECOIN_DRIVE_SOURCE ? { source: FILECOIN_DRIVE_SOURCE } : {}),
   };
 }
 
