@@ -4,6 +4,8 @@ export type ChainPhase = "signing" | "submitted" | "confirming" | "done";
 export interface ChainReport {
   flow: ChainFlow;
   phase: ChainPhase;
+  /** Plain name with purpose and cost for the Transaction log. */
+  label?: string;
   hash?: string;
   blocks?: number;
   elapsedSec?: number;

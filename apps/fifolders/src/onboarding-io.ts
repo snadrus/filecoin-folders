@@ -25,5 +25,10 @@ export interface OnboardingIO {
    * Returns null when the open volume must stay (in-memory mock storage).
    */
   reopen(input: { chain: ChainChoice; volumeName: string; encrypt: boolean }): Promise<Session | null>;
+  /**
+   * Public, signature-free read of the preferred dataset's volume (folders are public).
+   * Null when unknown, encrypted or not yet created. Writes on it are never attempted.
+   */
+  peek?(input: { chain: ChainChoice; volumeName: string; owner?: string }): Promise<Session | null>;
   disconnect(): void;
 }

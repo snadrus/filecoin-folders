@@ -18,7 +18,7 @@ import { REGISTRY_NOT_DEPLOYED, registryReady, saveNetworkPreference } from "./n
 import { qrSvg } from "./qr.js";
 import { loadRemovals, piecesEligibleForRemoval, saveRemovals, schedulePieceRemovals, type RemovalAdapters } from "./removal.js";
 import { chainStepTitle, explorerHref, stepDetail, type ChainReport, type ChainStepView } from "./chain-step.js";
-import { onWalletPrompts, walletPrompts } from "./wallet-prompts.js";
+import { INTENTS, intentText, onWalletPrompts, sessionIntent, withWalletIntent, type WalletPrompt, walletPrompts } from "./wallet-prompts.js";
 import { ACTIVITY_DISMISS_MS, dismissActivity, loadDismissed } from "./activity.js";
 import { defaultFelTitle, felTarget, rememberFelTarget, remapFelTargets } from "./fel-names.js";
 import { loosePieces, rememberPiece, type LoosePiece } from "./loose.js";
@@ -237,7 +237,30 @@ export class DriveApp {
     return this.#tail;
   }
 
+  /** Drive is showing a public, signature-free read while wallet setup runs. */
+  readOnly = false;
+  #saveWanted = false;
+
+  /** Show the drive from a public read; edits stage locally until {@link attach} brings the writable volume. */
+  attachReadOnly(options: DriveAppOptions): void {
+    if (this.volume && !this.readOnly) return;
+    this.attach(options);
+    this.readOnly = true;
+    this.render();
+  }
+
   attach(options: DriveAppOptions): void {
+    if (
+      this.readOnly &&
+      options.volume &&
+      this.volume &&
+      options.owner.toLowerCase() === this.owner.toLowerCase() &&
+      options.volumeName === this.volumeName
+    ) {
+      this.upgrade(options);
+      return;
+    }
+    this.readOnly = false;
     this.volume = options.volume;
     this.owner = options.owner;
     this.chain = options.chain;
@@ -264,6 +287,29 @@ export class DriveApp {
     this.loadPrefs();
     this.#restoredFromDisk = loadStaged(this.owner, this.volumeName).ops.length > 0;
     if (this.root) void this.enqueue(() => this.refresh());
+    if (options.volume) void this.recoverPendingUpload();
+  }
+
+  /** Swap the public read for the writable volume, keep staged edits, then run any save that waited. */
+  private upgrade(options: DriveAppOptions): void {
+    this.volume = options.volume;
+    this.cas = options.cas;
+    this.chain = options.chain;
+    this.encrypted = options.encrypted;
+    this.readOnly = false;
+    if (options.panel) this.panel = options.panel;
+    if (options.onConnect) this.onConnect = options.onConnect;
+    if (options.onSetupAction) this.onSetupAction = options.onSetupAction;
+    if (options.onDisconnect) this.onDisconnect = options.onDisconnect;
+    this.quoteUpload = options.quoteUpload ?? this.quoteUpload;
+    this.render();
+    void this.enqueue(async () => {
+      await this.rebuildDraft();
+      if (this.#saveWanted && this.staged.length) {
+        this.#saveWanted = false;
+        await this.saveStaged();
+      } else await this.refresh();
+    });
     if (options.volume) void this.recoverPendingUpload();
   }
 
@@ -362,7 +408,8 @@ export class DriveApp {
       void this.enqueue(() => this.onSubmit(event));
     });
     this.listenForOps();
-    onWalletPrompts(() => {
+    onWalletPrompts((prompts) => {
+      this.logWalletPrompts(prompts);
       if (this.root) this.render();
     });
     void this.enqueue(() => this.refresh());
@@ -1030,6 +1077,16 @@ export class DriveApp {
       void this.renewFromBanner();
       return;
     }
+    if (action === "readonly-connect") {
+      const connect = this.onConnect;
+      if (connect) {
+        void connect({ chain: this.chain, volumeName: this.volumeName, encrypt: this.encryptPref }).catch((error: unknown) => {
+          this.toast(errorText(error));
+          this.render();
+        });
+      }
+      return;
+    }
     if (
       action === "authorize" ||
       action === "fix-payments" ||
@@ -1616,6 +1673,22 @@ export class DriveApp {
     }
   }
 
+  #promptOps = new Map<number, string>();
+
+  /** One Transaction-log row per wallet prompt, named with purpose and cost. */
+  private logWalletPrompts(prompts: WalletPrompt[]): void {
+    const live = new Set(prompts.map((prompt) => prompt.id));
+    for (const prompt of prompts) {
+      if (prompt.intent.logged || this.#promptOps.has(prompt.id)) continue;
+      this.#promptOps.set(prompt.id, this.beginOp({ kind: "wallet", label: intentText(prompt.intent), stage: "signing" }));
+    }
+    for (const [id, op] of this.#promptOps) {
+      if (live.has(id)) continue;
+      this.#promptOps.delete(id);
+      this.finishOp(op);
+    }
+  }
+
   noteChain(report: ChainReport): void {
     const title = chainStepTitle(report);
     const href = report.hash ? explorerHref(this.chain, report.hash) : "";
@@ -1624,7 +1697,7 @@ export class DriveApp {
     this.chainSteps = index >= 0 ? this.chainSteps.map((item, i) => (i === index ? step : item)) : [...this.chainSteps, step];
     const id = `chain:${report.flow}`;
     if (report.phase === "signing") {
-      this.beginOp({ id, kind: report.flow === "session" ? "session" : "deposit", label: report.flow === "session" ? "Authorize session key" : "Deposit USDFC", stage: "signing" });
+      this.beginOp({ id, kind: report.flow === "session" ? "session" : "deposit", label: report.label ?? (report.flow === "session" ? "Authorize session key" : "Approve storage payments"), stage: "signing" });
     } else if (report.phase === "done") this.finishOp(id);
     else patchOp(id, { stage: report.phase, txHash: report.hash });
     if (this.root && !this.volume) this.render();
@@ -1991,7 +2064,15 @@ export class DriveApp {
       activityPending: pending.some((op) => op.status === "pending") || this.busy,
       runway,
       looseSummary: this.looseSummary,
-      walletPrompts: walletPrompts().map(({ id, what, state }) => ({ id, what, state })),
+      walletPrompts: walletPrompts().map(({ id, what, state, intent }) => ({
+        id,
+        what,
+        state,
+        title: intent.title,
+        detail: [intent.purpose, `(${intent.cost})`].filter(Boolean).join(" "),
+      })),
+      setupNote: this.readOnly ? "Finishing wallet setup… you can browse meanwhile" : "",
+      setupStep: this.readOnly ? this.readOnlyStep() : null,
       txlogOpen: this.txlogOpen,
       loose: this.looseRows.map((piece) => ({
         pieceCid: piece.pieceCid,
@@ -2052,8 +2133,18 @@ export class DriveApp {
       stagedCount: this.staged.length,
       restoreNote: this.restoreNote,
       autoSaveUploads: this.autoSaveUploads,
-      sessionPrompt: this.sessionPrompt,
+      sessionPrompt: this.readOnly ? null : this.sessionPrompt,
     };
+  }
+
+  /** Next wallet step while browsing read-only, named with its purpose and cost. */
+  private readOnlyStep(): { action: string; label: string } | null {
+    const panel = this.panel;
+    if (!panel) return { action: "readonly-connect", label: intentText(INTENTS.connect) };
+    if (!panel.paymentsReady) return { action: "fix-payments", label: intentText(INTENTS.approvePayments) };
+    if (!panel.selectedDatasetId) return { action: "create-dataset", label: intentText(INTENTS.createDataset) };
+    if (!panel.sessionReady) return { action: "authorize", label: intentText(sessionIntent()) };
+    return null;
   }
 
   private async editingVolume(): Promise<Volume> {
@@ -2112,13 +2203,21 @@ export class DriveApp {
 
   private async saveStaged(): Promise<void> {
     if (!this.volume || !this.staged.length) return;
+    if (this.readOnly) {
+      this.#saveWanted = true;
+      this.toast("Kept as unsaved changes — they save once wallet setup finishes.");
+      await this.refresh();
+      return;
+    }
     const ops = this.staged.slice();
     const label = saveLabel(ops.length);
     const id = this.beginOp({ kind: "commit", label, stage: "saving" });
     const ok = await this.run(async () => {
-      await this.volume!.tx(async (draft) => {
-        await replayStaged(draft, ops);
-      });
+      await withWalletIntent(INTENTS.save(ops.length), () =>
+        this.volume!.tx(async (draft) => {
+          await replayStaged(draft, ops);
+        }),
+      );
       for (const op of ops) {
         if (op.op !== "put") continue;
         try {

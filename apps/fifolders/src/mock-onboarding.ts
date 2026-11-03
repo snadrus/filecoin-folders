@@ -19,6 +19,7 @@ import {
 } from "./onboarding-logic.js";
 import type { ChainReporter, OnboardingIO } from "./onboarding-io.js";
 import { observeRegistry, type Session } from "./session.js";
+import { INTENTS, intentText, sessionIntent } from "./wallet-prompts.js";
 
 export const MOCK_CHAIN_ID = 314159;
 export const MOCK_ADDRESS = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8" as Address;
@@ -42,6 +43,10 @@ export function createMockOnboarding(params: URLSearchParams): OnboardingIO {
   let connectPrompts = 0;
   let connected = false;
   const legacy = params.get("legacy") === "1";
+  const authDelay = Number(params.get("authdelay") ?? "0");
+  // One in-memory backing store so the public read and the signed session see the same drive.
+  const storage = new MemoryStorage();
+  const registry = new MemoryRegistry(MOCK_ADDRESS);
 
   const seededPayments = params.get("pay") === "ready";
   if (localStorage.getItem(PAYMENTS_KEY) == null && seededPayments) localStorage.setItem(PAYMENTS_KEY, "1");
@@ -145,7 +150,8 @@ export function createMockOnboarding(params: URLSearchParams): OnboardingIO {
       const now = BigInt(Math.floor(Date.now() / 1000));
       const stored = loadSession(MOCK_CHAIN_ID, MOCK_ADDRESS);
       if (!force && stored && sessionGateFromExpiries(permissionExpiries(stored.sessionAddress), now) !== "expired") return;
-      report?.({ flow: "session", phase: "signing" });
+      report?.({ flow: "session", phase: "signing", label: intentText(sessionIntent()) });
+      if (authDelay > 0) await new Promise((resolve) => setTimeout(resolve, authDelay));
       report?.({ flow: "session", phase: "submitted", hash: "0xsession" });
       report?.({ flow: "session", phase: "confirming", hash: "0xsession", blocks: 1, elapsedSec: 1 });
       signatures += SIGNATURES.sessionLogin;
@@ -176,7 +182,7 @@ export function createMockOnboarding(params: URLSearchParams): OnboardingIO {
       if (!connected) throw new Error("Connect a wallet first.");
       const ready = localStorage.getItem(PAYMENTS_KEY) === "1";
       if (ready && !force) return;
-      report?.({ flow: "payment", phase: "signing" });
+      report?.({ flow: "payment", phase: "signing", label: intentText(INTENTS.depositAndApprove("5")) });
       report?.({ flow: "payment", phase: "submitted", hash: "0xpay" });
       report?.({ flow: "payment", phase: "confirming", hash: "0xpay", blocks: 1, elapsedSec: 1 });
       if (!ready) signatures += SIGNATURES.paymentFix;
@@ -221,10 +227,9 @@ export function createMockOnboarding(params: URLSearchParams): OnboardingIO {
           localStorage.setItem(key, "0xmock");
         }
       }
-      const registry = new MemoryRegistry(MOCK_ADDRESS);
       const observed = observeRegistry(registry);
       const volume = await openVolume({
-        storage: new MemoryStorage(),
+        storage,
         registry: observed.registry,
         owner: MOCK_ADDRESS,
         name: input.volumeName,
@@ -238,6 +243,14 @@ export function createMockOnboarding(params: URLSearchParams): OnboardingIO {
         cas: observed.cas,
       };
       return session;
+    },
+    async peek(input) {
+      if (params.get("peek") === "0") return null;
+      const stored = localStorage.getItem(walletStorageKey());
+      if (!stored || !chooseDataset(datasets(), loadLastDataset(MOCK_CHAIN_ID, MOCK_ADDRESS)).selectedId) return null;
+      const observed = observeRegistry(registry);
+      const volume = await openVolume({ storage, registry: observed.registry, owner: MOCK_ADDRESS, name: input.volumeName });
+      return { volume, owner: MOCK_ADDRESS, chain: "calibration", encrypted: false, volumeName: input.volumeName, cas: observed.cas };
     },
     async reopen() {
       return null;
