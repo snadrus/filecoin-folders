@@ -382,3 +382,5 @@ button:disabled { cursor: default; opacity: 0.45; }
 .participant-copies ul { list-style: none; margin: 0; padding: 0; }
 .participant-copies .copy-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; flex-wrap: wrap; }
 .participant-copies .copy-what { flex: 1 1 240px; }
+a.place { text-decoration: none; font-size: 14px; }
+.places.suite { border-top: 1px solid var(--line, #e0e0e0); padding-top: 8px; }

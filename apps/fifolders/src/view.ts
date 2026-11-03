@@ -446,6 +446,10 @@ function renderNav(model: ViewModel): string {
       ${navItem("trash", "delete", "Trash", model.nav)}
     </nav>
     ${txlog}
+    <nav class="places suite" aria-label="More apps">
+      <a class="place" href="./ficlub/" data-testid="nav-ficlub"><span class="material-symbols-outlined" aria-hidden="true">groups</span> FiClub</a>
+      <a class="place" href="./fideploy/" data-testid="nav-fideploy"><span class="material-symbols-outlined" aria-hidden="true">rocket_launch</span> Deploy contracts</a>
+    </nav>
     <div class="storage storage-open ${runway.low ? "low" : ""}" data-testid="storage-runway" data-action="show-costs" role="button" tabindex="0" title="What it costs">
       <p class="runway-headline" data-testid="runway-headline">${runwayHtml(runway.headline, runway.datasetLabel)}</p>
       ${runway.detail ? `<p class="runway-detail" data-testid="runway-detail">${runwayHtml(runway.detail, runway.datasetLabel)}</p>` : ""}

@@ -68,3 +68,20 @@ Suites: **mock** = local build with the mock chain (`VITE_E2E=1`) + staged edito
 | S36 | Guest edits survive an owner reload. | Guest types, owner reloads, guest types again → both see each edit exactly once (no loss, no dupes). | both |
 | S46 | FiPen signature function (Insert → Signature) with approve/reject/delay. | Labeled prompt; reject leaves the doc editable; approve locks it. | live (spend: STORIES_SPEND=1) |
 | S47 | Standalone FiPen "Save to Filecoin" with a wallet. | Ctrl+S → dialog → Calibration → Save with wallet → PieceCID shown; status "Saved to Filecoin". | live (spend: STORIES_SPEND=1) |
+
+## Suite features (added Nov 3 2026)
+
+| ID | Story | Acceptance criteria | Suite |
+|---|---|---|---|
+| S48 | I save my identity with a picture on /identity/ and see it everywhere. | Save → read back on a fresh load; FiFolders header/owner column and FiPen show the name + avatar, not a guest name. Pointer commit re-reads the head and retries once on a CAS conflict. | live (spend) |
+| S49 | Transaction log tells me what is happening. | One sidebar entry; spinner + count while pending; rows titled by purpose, cost secondary; finished rows auto-dismiss; errors show "!" and stay until dismissed; works at 390px width. | mock |
+| S50 | Loose pieces with Filecoin Drive, then Add to drive. | Loose pieces lists Filecoin Drive files with names; select one or more → "Add to drive" names the count and cost before the wallet prompt; after commit the files appear in My Drive without re-uploading and leave Loose pieces. | mock + live (spend) |
+| S51 | Registry v2 migration is one labeled step. | A drive whose head is only on v1 reads normally; the next save performs the move labeled "Move drive pointer to new registry" (session key, no root-wallet prompt); afterwards reads come from v2 and history links back to v1. | mock + anvil |
+| S52 | FiClub add/remove and the 2-signature admin removal. | Admin adds/removes members and admins; removing an admin from a club with 3+ admins needs a step-1 signature (shareable blob) and a second admin's step-2 signature; expired/foreign blobs are rejected with a clear reason. | mock + anvil |
+| S53 | FiPerson everywhere. | The same name + avatar for a wallet in the FiFolders header, owner column, account menu, FiClub member rows, FiPen/FiGrid avatars and the identity pop-up; guest name only when no identity exists. | mock + live |
+| S54 | The dataset picker. | Wallet menu lists every dataset the wallet owns, current one checked, newest marked; switching reloads the drive in place with a loading state; choice survives reload (S08). | mock |
+| S55 | Wallet & setup menu. | Shows account (FiPerson name, address secondary), network, dataset, session expiry, Add funds, Disconnect; every action that prompts says why and what it costs first. | mock |
+| S56 | Switching account or network restarts in place. | accountsChanged → drive for the new account without reload or prompt; chainChanged → toast, view kept, save asks to switch back (S44). | mock + live |
+| S57 | /fideploy/ shows contract status and deploys from my wallet. | Status per contract by known address + exact runtime-bytecode match; gas estimate after connecting; Deploy shows "Deploy <contract>" before the wallet prompt; after the receipt the new address is bytecode-verified and the deployments JSON can be copied/downloaded. | mock |
+| S58 | Mainnet deploys need an explicit acknowledgement. | On chain 314 the Deploy buttons stay disabled until "I understand this … spends real FIL" is ticked. | mock |
+| S59 | Private FiClub instance on Calibration via /fideploy/. | One contract-creation tx from the test wallet; record shows "✓ bytecode verified". | live (spend) |

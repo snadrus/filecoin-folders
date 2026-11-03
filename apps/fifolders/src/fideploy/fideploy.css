@@ -1,0 +1,17 @@
+.contract { display: flex; gap: 12px; align-items: center; justify-content: space-between; border: 1px solid #d2e3fc; border-radius: 10px; padding: 12px; background: #fff; }
+.contract small { color: #5f6368; }
+.contract .meta { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 6px; font-size: 13px; }
+.contract button { flex: none; }
+.tag.ok { background: #e6f4ea; color: #137333; }
+.tag.warn { background: #fef7e0; color: #b06000; }
+.cost { color: #3c4043; }
+.chains { flex-wrap: wrap; }
+.chains button.on { background: #e8f0fe; border-color: #1a73e8; color: #174ea6; }
+.chains input { flex: 1; min-width: 180px; font: inherit; padding: 8px 10px; border: 1px solid #dadce0; border-radius: 8px; }
+pre { background: #f8f9fa; border: 1px solid #dadce0; border-radius: 8px; padding: 10px; font-size: 12px; overflow: auto; max-height: 260px; }
+.err { color: #c5221f; }
+.ack { display: flex; gap: 8px; align-items: center; font-size: 14px; }
+@media (max-width: 520px) { .contract { flex-direction: column; align-items: stretch; } }
+[data-testid="fideploy-records"] li { overflow-wrap: anywhere; }
+[data-testid="fideploy-records"] pre { max-width: 100%; box-sizing: border-box; white-space: pre-wrap; overflow-wrap: anywhere; }
+.card { min-width: 0; }
