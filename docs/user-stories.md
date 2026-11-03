@@ -24,20 +24,20 @@ Suites: **mock** = local build with the mock chain (`VITE_E2E=1`) + staged edito
 | S41 | I reject a signature. | Plain error with Retry (or Connect again); approving next time works; nothing stuck. | live |
 | S42 | My wallet is locked. | Clear error; connect works after unlock. | live |
 | S43 | Repeated clicks don't stack prompts. | Three clicks on Connect → one wallet request, one toast. | live |
-| S44 | Wallet switches account or chain mid-session. | Account change → back to Connect (no stale signer); chain change → page restarts and asks (labeled) to switch back. | live |
+| S44 | Wallet switches account or chain mid-session. | No reload, no prompt: account change restarts the session in place for the new account; chain change shows a toast and the view stays; saving asks to switch back. | live |
 | S45 | Payment approval, deposit, dataset creation, uploads on live. | Labeled, one prompt each, cost shown, results in Activity/Tx log. | blocked |
 
 ## FiPen / FiGrid inside FiFolders
 
 | ID | Story | Acceptance criteria | Suite |
 |---|---|---|---|
-| S12 | New FiPen with no filename prompt. | New → FiPen document opens a tab, no dialog; title "Untitled document"; Save button + status sit right of the title, vertically aligned; status "All changes saved". | mock |
+| S12 | New FiPen with no filename prompt. | New → FiPen document opens a tab, no dialog; title "Untitled document"; Save button + status sit right of the title, vertically aligned; status "New, unsaved" until the first Filecoin save. | mock |
 | S13 | Save works by button, Cmd+S and Ctrl+S. | Typing → "Unsaved changes"; each save → "Saved to Filecoin"; typing continues in the doc after clicking Save; drive shows no stale "Save pending". | mock |
 | S14 | Autosave every 5 min only if dirty. | Clean doc: no save rows written; dirty doc: one save, then none while clean. (Interval shortened via `__p2pAutosaveMs`.) | mock |
 | S15 | Reopening a saved doc shows its content. | Open the `.fipen` from the drive → same text; status not "Unsaved". | mock |
 | S16 | Reload matrix (single user). | Dirty → reload: text kept, still "Unsaved changes". Queued (drive closed) → reload: "Queued for FiFolders". Drive back → "Saved to Filecoin", still after reload. | mock |
 | S17 | Caret in the embedded editor. | Home/End/arrows/typing land correctly; caret survives Save. | mock |
-| S18 | FiGrid cell edit, save, reload. | Click A1 → type 42 ⏎ → `=A1*2` ⏎ → A2 shows 84; Ctrl+S → "Saved to Filecoin"; reload keeps values and status; drive has the `.figrid`. | mock |
+| S18 | FiGrid cell edit, save, reload. | A1 focused on open → type 42 (no click) ⏎ → `=A1*2` ⏎ → A2 shows 84; Ctrl+S → "Saved to Filecoin"; reload keeps values and status; drive has the `.figrid`. | mock |
 | S19 | Stale chunk after a deploy. | Missing lazy chunk → "FiPen was updated. Reload the page to continue." with a Reload button that recovers. | mock |
 
 ## FiPen editing (standalone or embedded)
@@ -65,5 +65,6 @@ Suites: **mock** = local build with the mock chain (`VITE_E2E=1`) + staged edito
 | S33 | Reload owner / guest / both. | Peers reconnect; text identical, no duplicates; comments kept; guest edits after reconnect reach the owner; caret sane. | both |
 | S34 | Reload a clean standalone doc. | Content kept. | both |
 | S35 | Leaving with unsaved changes warns. | `beforeunload` prompt. | both |
+| S36 | Guest edits survive an owner reload. | Guest types, owner reloads, guest types again → both see each edit exactly once (no loss, no dupes). | both |
 | S46 | FiPen signature function (Insert → Signature) with approve/reject/delay. | Labeled prompt; reject leaves the doc editable; approve locks it. | blocked (uploads the signed content) |
 | S47 | Standalone FiPen "Save to Filecoin" with a wallet. | | blocked |
