@@ -66,7 +66,9 @@ test("S05/S06 wallet requests are labeled with purpose+cost; 'Check your wallet'
   const step = page.getByTestId("account-menu").getByTestId("authorize-session");
   await expect(step).toHaveText(/^Authorize session key — .+ \(.+\)$/);
   await step.click();
-  // The mock wallet has no prompt UI; the labeled request shows in Activity. The live wallet spec checks the toast.
+  // The mock wallet has no prompt UI; the labeled request shows in the Transaction log (activity lives there since #32).
+  await page.keyboard.press("Escape");
+  if (!(await page.getByTestId("txlog").count())) await page.getByTestId("txlog-toggle").click();
   await expect(page.getByTestId("activity")).toContainText(/Authorize session key — .+\(.+\)/);
   await expect(page.getByTestId("setup-note")).toHaveCount(0, { timeout: 15_000 });
   await expect(page.getByTestId("wallet-signatures")).toHaveText("1");
@@ -79,6 +81,7 @@ test("S07 transaction log sidebar lists chain steps; activity rows auto-dismiss 
   await page.getByTestId("txlog-toggle").click();
   await expect(page.getByTestId("txlog")).toHaveCount(0);
   await page.getByTestId("file-input").setInputFiles({ name: "act.txt", mimeType: "text/plain", buffer: Buffer.from("activity") });
+  await page.getByTestId("txlog-toggle").click(); // activity rows live in the Transaction log (#32)
   const done = page.getByTestId("activity-item").filter({ has: page.getByTestId("activity-progress") }).first();
   await expect(done).toBeVisible({ timeout: 30_000 });
   const color = await done.getByTestId("activity-progress").evaluate((el) => getComputedStyle(el).backgroundColor);
@@ -147,4 +150,17 @@ test("S19 a stale editor chunk after a deploy asks to reload", async ({ page }) 
   await page.unrouteAll();
   await page.locator("#p2p-reload").click();
   await page.waitForFunction(() => (window as any).__editor?.ready === true, null, { timeout: 45_000 });
+});
+
+test("S49 mobile: nav is a chip row, no horizontal overflow; Transaction log fits the screen", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await connect(page);
+  const wide = await page.evaluate(() => [...document.querySelectorAll("body *")].filter((e) => e.getBoundingClientRect().right > 391 && !e.closest(".places")).map((e) => `${e.tagName}.${e.className}<${e.parentElement?.className}|${e.textContent} ${Math.round(e.getBoundingClientRect().right)}`).slice(0, 6));
+  expect(wide, wide.join(", ")).toEqual([]);
+  await page.getByTestId("txlog-toggle").click();
+  const box = (await page.getByTestId("txlog").boundingBox())!;
+  expect(box.x).toBeGreaterThanOrEqual(0);
+  expect(box.x + box.width).toBeLessThanOrEqual(390);
+  await expect(page.getByTestId("nav-fideploy")).toBeVisible();
+  await expect(page.getByTestId("nav-ficlub")).toBeVisible();
 });
