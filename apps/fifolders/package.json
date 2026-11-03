@@ -18,7 +18,8 @@
     "fil-folders": "workspace:*",
     "material-symbols": "^0.31.8",
     "uqr": "^0.1.3",
-    "viem": "^2.38.3"
+    "viem": "^2.38.3",
+    "fiperson": "workspace:*"
   },
   "devDependencies": {
     "@playwright/test": "^1.56.1",

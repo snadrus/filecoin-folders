@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cachedIdentity, guestName, type IdentityV1 } from "fil-folders";
+import { cachedIdentity, guestName, type IdentityV1 } from "fiperson/edit";
 import { IdentityBlocked, type IdentityIO } from "../src/identity/io.js";
 import { IdentityPage, safeReturn } from "../src/identity/page.js";
 

@@ -273,8 +273,8 @@ export class DriveApp {
   private refreshIdentity(): void {
     const owner = this.owner;
     if (!/^0x[0-9a-fA-F]{40}$/.test(owner) || import.meta.env.VITE_E2E === "1" || import.meta.env.MODE === "test") return;
-    void import("./identity/live-io.js")
-      .then(({ createLiveIdentityIO }) => createLiveIdentityIO(this.chain).load(owner))
+    void import("./person.js")
+      .then(({ resolvePerson }) => resolvePerson(owner, this.chain))
       .then(() => this.render())
       .catch(() => undefined);
   }

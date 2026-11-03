@@ -46,7 +46,9 @@ Same namespace, key `keccak256("contacts")` (`identityContactsKey()`), pointing 
 
 Each contact's name/avatar resolves through `resolveIdentity(contact.address)`; `label` is the owner's private override (encrypt the piece if needed, as FiFolders does for encrypted volumes).
 
-## Library (`fil-folders`)
+## Library: `packages/fiperson`
+
+See packages/fiperson/README.md. Readers use `fiperson/view`; the /identity/ page uses `fiperson/edit`. The API list below is historical (it now lives in fiperson):
 
 - `buildIdentity(address, draft)`, `parseIdentity`, `encodeIdentity` / `decodeIdentity`
 - `resolveIdentity(address, { head, fetchPiece, cache?, maxAgeMs?, force? })` → `{ displayName, avatar, bio, source: "chain" | "cache" | "guest", identity, pieceCid, version }`

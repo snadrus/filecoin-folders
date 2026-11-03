@@ -1,4 +1,4 @@
-import { cachedIdentity } from "fil-folders";
+import { avatarHtml, cachedIdentity } from "fiperson/view";
 import type { HistoryEntry, Stat } from "fil-folders";
 import type { ChainStepView } from "./chain-step.js";
 import { felanumioSvg, felarumiSvg, logoSvg } from "./icons.js";
@@ -753,9 +753,8 @@ function renderIdentity(owner: string): string {
   if (!/^0x[0-9a-fA-F]{40}$/.test(owner)) return "";
   const who = cachedIdentity(owner);
   const back = typeof location === "undefined" ? "" : `?return=${encodeURIComponent(location.href)}`;
-  const glyph = who.avatar?.emoji || (who.displayName[0] || "?").toUpperCase();
   return `<div class="identity-line" data-testid="identity-summary">
-      <span class="identity-avatar" style="background:${escapeHtml(who.avatar?.color || "#e8eaed")};color:${who.avatar?.color ? "#fff" : "#202124"}">${escapeHtml(glyph)}</span>
+      ${avatarHtml(who, 28)}
       <span><strong data-testid="identity-name">${escapeHtml(who.displayName)}</strong>${who.identity ? "" : `<small> · guest name</small>`}</span>
       <a href="./identity/${back}" data-testid="identity-edit">${who.identity ? "Edit identity" : "Set up identity"}</a>
     </div>

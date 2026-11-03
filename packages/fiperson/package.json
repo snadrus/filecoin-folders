@@ -1,0 +1,24 @@
+{
+  "name": "fiperson",
+  "version": "0.1.0",
+  "description": "Wallet person/identity for FiFolders, FiPen and FiGrid: view (read, guest names, resolver, UI) and edit (save profile piece + pointer).",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "files": ["dist", "src"],
+  "exports": {
+    "./view": { "types": "./dist/view/index.d.ts", "import": "./dist/view/index.js" },
+    "./edit": { "types": "./dist/edit/index.d.ts", "import": "./dist/edit/index.js" }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run && tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0",
+    "happy-dom": "^18.0.1",
+    "typescript": "^5.9.3",
+    "viem": "^2.38.3",
+    "vitest": "^3.2.4"
+  }
+}

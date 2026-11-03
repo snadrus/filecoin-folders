@@ -1,4 +1,4 @@
-import { buildIdentity, guestName, writeIdentityCache } from "fil-folders";
+import { buildIdentity, guestName, writeIdentityCache } from "fiperson/edit";
 import { MemoryRegistry, MemoryStorage, openVolume, type Registry } from "fil-folders";
 import { AUTOSAVE_UPLOADS_KEY } from "../src/staged.js";
 import { afterEach, describe, expect, it } from "vitest";
