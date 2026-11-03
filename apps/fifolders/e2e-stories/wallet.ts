@@ -72,7 +72,17 @@ export async function installWallet(page: Page, opts: { allowTx?: TestWallet["al
       return { error: { code, message } };
     };
     if (SIGNING.has(method)) {
-      const mode = w.modes[method] ?? w.modes["*"] ?? { kind: "approve" };
+      let primary = "";
+      if (method === "eth_signTypedData_v4") {
+        try {
+          primary = String(JSON.parse(String((params as unknown[])[1])).primaryType ?? "");
+        } catch {
+          primary = "";
+        }
+      }
+      // "eth_signTypedData_v4:<primaryType>" targets one kind of typed data (e.g. a document signature, not storage).
+      const mode = (primary && w.modes[`${method}:${primary}`]) || w.modes[method] || w.modes["*"] || { kind: "approve" };
+      rec.method = primary ? `${method}:${primary}` : method;
       if (mode.kind === "reject") return fail(4001, "User rejected the request.");
       if (mode.kind === "hang") await new Promise(() => {});
       if (mode.kind === "delay") await new Promise((r) => setTimeout(r, mode.ms));
