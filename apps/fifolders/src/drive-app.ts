@@ -440,7 +440,8 @@ export class DriveApp {
     root.addEventListener("contextmenu", (event) => this.onContextMenu(event));
     root.addEventListener("change", (event) => this.onChange(event));
     root.addEventListener("input", (event) => this.onInput(event));
-    root.addEventListener("keydown", (event) => this.onKey(event));
+    // Document-level: after a click on a row focus sits on <body>, outside the root.
+    root.ownerDocument.addEventListener("keydown", (event) => { if (this.root === root) this.onKey(event); });
     root.addEventListener("dragstart", (event) => this.onDragStart(event));
     root.addEventListener("dragover", (event) => this.onDragOver(event));
     root.addEventListener("dragleave", (event) => this.onDragLeave(event));
@@ -1708,6 +1709,30 @@ export class DriveApp {
       return;
     }
     const typing = (event.target as HTMLElement | null)?.closest("input, textarea, select");
+    // Drive-style keyboard: ↑/↓ move the selection, Shift extends it, Enter opens, F2 renames.
+    if (!typing && !this.dialog && this.root && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
+      const paths = [...this.root.querySelectorAll<HTMLElement>("[data-testid=entry]")].map((el) => decodeURIComponent(el.dataset.path || ""));
+      if (paths.length) {
+        event.preventDefault();
+        const last = this.selected.at(-1);
+        const at = last ? paths.indexOf(last) : -1;
+        const next = paths[Math.max(0, Math.min(paths.length - 1, at < 0 ? 0 : at + (event.key === "ArrowDown" ? 1 : -1)))]!;
+        this.selected = event.shiftKey ? [...this.selected.filter((p) => p !== next), next] : [next];
+        this.render();
+        this.root.querySelector<HTMLElement>(`[data-testid=entry][data-path="${encodeURIComponent(next)}"]`)?.scrollIntoView({ block: "nearest" });
+      }
+      return;
+    }
+    if (!typing && !this.dialog && event.key === "Enter" && this.selected.length === 1 && !(event.target as HTMLElement | null)?.closest("button, a, [role=menu]")) {
+      event.preventDefault();
+      void this.openPath(this.selected[0]!);
+      return;
+    }
+    if (!typing && !this.dialog && event.key === "F2" && this.selected.length === 1 && this.volume && !this.mainnetBlocked) {
+      event.preventDefault();
+      void this.runContext("rename", [...this.selected], this.selected[0]!);
+      return;
+    }
     if (event.key === "Delete" && !typing && this.selected.length && this.volume && !this.mainnetBlocked) {
       const paths = [...this.selected];
       void this.enqueue(() => (this.nav === "trash" ? this.deleteForever(paths) : this.trashPaths(paths)));
