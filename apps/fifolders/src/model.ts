@@ -237,7 +237,7 @@ export function appLink(
   extra: AppLinkExtra = {},
 ): string {
   const raw = bases[kind].trim();
-  const href = extra.href || (typeof location !== "undefined" ? location.href : "https://fifolders.scionhub.ai/");
+  const href = extra.href || (typeof location !== "undefined" ? location.href : "https://fifolders.scionbase.ai/");
   const url = new URL(raw, href);
   url.searchParams.set("fifolders", "1");
   url.searchParams.set("name", name);
