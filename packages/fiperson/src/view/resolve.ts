@@ -162,12 +162,42 @@ export function decodeHead(result: string): { pieceCid: Uint8Array; version: big
   return { pieceCid: bytes, version };
 }
 
-/** GET `{base}/piece/{cid}` on each provider in parallel; first accepted answer wins. */
+/** Private, loopback, link-local or bare hosts: a public page fetching them triggers Chrome's Local Network Access prompt. */
+export function isPrivateHost(url: string): boolean {
+  let host: string;
+  try {
+    host = new URL(url).hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  } catch {
+    return true;
+  }
+  if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") || host.endsWith(".internal") || (!host.includes(".") && !host.includes(":"))) return true;
+  const v4 = /^(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(host);
+  if (v4) {
+    const [a, b] = [Number(v4[1]), Number(v4[2])];
+    return a === 10 || a === 127 || a === 0 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127) || a >= 224;
+  }
+  if (host.includes(":")) return host === "::1" || host === "::" || /^f[cd]/.test(host) || /^fe[89ab]/.test(host) || host.startsWith("::ffff:");
+  return false;
+}
+
+/** Providers that failed hard (5xx, CORS, unreachable, timeout) this session, skipped for 5 minutes. */
+const downProviders = new Map<string, number>();
+
+/** GET `{base}/piece/{cid}` on each public, healthy provider in parallel; first accepted answer wins. */
 export async function fetchPieceFromProviders(pieceCid: string, baseUrls: readonly string[], accept: (bytes: Uint8Array) => boolean = () => true, fetchImpl: typeof fetch = fetch): Promise<Uint8Array> {
-  if (!baseUrls.length) throw new Error("no storage providers to ask");
+  const now = Date.now();
+  const bases = baseUrls.filter((base) => !isPrivateHost(base) && !(now - (downProviders.get(base) ?? -Infinity) < 5 * 60_000));
+  if (!bases.length) throw new Error("no storage providers to ask");
   return Promise.any(
-    baseUrls.map(async (base) => {
-      const response = await fetchImpl(new URL(`/piece/${encodeURIComponent(pieceCid)}`, base), { signal: AbortSignal.timeout(20_000) });
+    bases.map(async (base) => {
+      let response: Response;
+      try {
+        response = await fetchImpl(new URL(`/piece/${encodeURIComponent(pieceCid)}`, base), { signal: AbortSignal.timeout(20_000), targetAddressSpace: "public" } as RequestInit);
+      } catch (error) {
+        downProviders.set(base, Date.now());
+        throw error;
+      }
+      if (response.status >= 500) downProviders.set(base, Date.now());
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const bytes = new Uint8Array(await response.arrayBuffer());
       if (!accept(bytes)) throw new Error("piece rejected");
