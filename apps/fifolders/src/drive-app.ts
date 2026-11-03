@@ -1681,11 +1681,23 @@ export class DriveApp {
   private async manageVersions(path: string): Promise<void> {
     const real = this.volume;
     if (!real) return;
-    const history = (await real.history(path)).filter((entry) => entry.change !== "removed").reverse();
-    const when = (ts: number) => (ts ? new Date(ts * (ts < 10_000_000_000 ? 1000 : 1)).toLocaleString() : "Unknown time");
     const name = baseName(path);
+    const doc = this.root?.ownerDocument ?? document;
+    const idle = { download: async () => undefined, restore: async () => undefined };
+    // Reading history walks committed roots on Filecoin and can take a while: open at once with a loading row.
+    showVersions(doc, name, null, idle);
+    const open = () => doc.querySelector("[data-testid=versions-dialog]") !== null;
+    let history: Awaited<ReturnType<typeof real.history>>;
+    try {
+      history = (await real.history(path)).filter((entry) => entry.change !== "removed").reverse();
+    } catch (error) {
+      if (open()) showVersions(doc, name, [], idle, `Couldn't load versions: ${friendlyError(error instanceof Error ? error.message : String(error))}`);
+      return;
+    }
+    if (!open()) return; // closed while loading
+    const when = (ts: number) => (ts ? new Date(ts * (ts < 10_000_000_000 ? 1000 : 1)).toLocaleString() : "Unknown time");
     showVersions(
-      this.root?.ownerDocument ?? document,
+      doc,
       name,
       history.map((entry, index) => ({ label: `Version ${history.length - index}`, when: when(entry.timestamp), current: index === 0 })),
       {

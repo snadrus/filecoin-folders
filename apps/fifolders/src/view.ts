@@ -214,11 +214,6 @@ function renderScreen(model: ViewModel): string {
     ${renderTop(model)}
     ${renderNav(model)}
     <main class="workspace">
-      ${model.setupNote ? `<div class="setup-note" data-testid="setup-note" role="status"><span class="spinner" aria-hidden="true"></span>${escapeHtml(model.setupNote)}${
-        model.setupStep
-          ? ` <button type="button" class="text-button" data-action="account" data-testid="setup-open-wallet">Wallet &amp; setup</button>`
-          : ""
-      }</div>` : ""}
       ${renderBrowser(model)}
       ${model.details ? renderDetails(model.details) : ""}
     </main>
@@ -546,7 +541,13 @@ function renderBrowser(model: ViewModel): string {
     ? `<p class="banner" data-testid="mainnet-banner">Registry not deployed</p>`
     : "";
   const restored = model.restoreNote ? `<p class="restore-banner" data-testid="staged-restore">${escapeHtml(model.restoreNote)}</p>` : "";
+  // The setup note sits at the top of the file list (a sibling in the flex row squeezed the list into a column).
   return `<section class="browser ${model.dragging ? "dragover" : ""}" data-testid="browser" data-view="${model.view}">
+      ${model.setupNote ? `<div class="setup-note" data-testid="setup-note" role="status"><span class="spinner" aria-hidden="true"></span>${escapeHtml(model.setupNote)}${
+        model.setupStep
+          ? ` <button type="button" class="text-button" data-action="account" data-testid="setup-open-wallet">Wallet &amp; setup</button>`
+          : ""
+      }</div>` : ""}
     ${restored}
     <div class="toolbar">
       <nav class="crumbs" data-testid="breadcrumbs">${crumbs}</nav>
