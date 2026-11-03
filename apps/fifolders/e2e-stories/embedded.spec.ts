@@ -49,7 +49,7 @@ test.describe("FiPen inside FiFolders", () => {
     await doc.keyboard.type("!");
     await doc.keyboard.press("Control+s");
     await expect(doc.locator("#status")).toHaveText("Saved to Filecoin", { timeout: 20_000 });
-    await openFolder(page, "FiPen");
+    await page.bringToFront(); // saved next to where it was created (My Folders root)
     await expect(page.getByTestId("entry").filter({ hasText: "Untitled document.fipen" })).not.toContainText("Save pending");
     expect(await entries(page)).not.toMatch(/Save pending/);
   });
@@ -88,7 +88,7 @@ test.describe("FiPen inside FiFolders", () => {
     await doc.keyboard.press("Control+s");
     await expect(doc.locator("#status")).toHaveText("Saved to Filecoin", { timeout: 20_000 });
     await doc.close();
-    await openFolder(page, "FiPen");
+    await page.bringToFront(); // saved next to where it was created (My Folders root)
     const popup = page.context().waitForEvent("page");
     await page.getByTestId("entry").filter({ hasText: "Untitled document.fipen" }).dblclick();
     const again = await popup;
@@ -174,7 +174,40 @@ test.describe("FiGrid inside FiFolders", () => {
     await grid.waitForFunction(() => (window as any).__sheet?.ready === true, null, { timeout: 45_000 });
     await expect.poll(sheet).toEqual(["42", "84"]);
     await expect(grid.locator("#status")).toHaveText("Saved to Filecoin");
-    await openFolder(page, "FiGrid");
+    await page.bringToFront(); // saved next to where it was created (My Folders root)
     await expect(page.getByTestId("entry").filter({ hasText: ".figrid" })).not.toContainText("Save pending");
+  });
+});
+
+test.describe("New from a folder (Drive behavior)", () => {
+  test("S80 New FiPen inside a folder saves into that same item: no blank orphan, no duplicate, no /FiPen folder", async ({ page }) => {
+    await drive(page);
+    await page.getByTestId("new-button").click();
+    await page.getByRole("button", { name: "New folder" }).click();
+    await page.getByTestId("dialog-input").fill("Projects");
+    await page.keyboard.press("Enter");
+    await openFolder(page, "Projects");
+    const doc = await newFromDrive(page, "FiPen document");
+    await expect.poll(() => new URL(doc.url()).searchParams.get("path")).toBe("/Projects/Untitled document.fipen");
+    await page.bringToFront();
+    await expect(page.getByTestId("entry").filter({ hasText: "Untitled document.fipen" })).toHaveCount(1);
+    await editorReady(doc);
+    await focusDoc(doc);
+    await doc.keyboard.type("Plan for the week");
+    await doc.locator("#p2p-save").click();
+    await expect(doc.locator("#status")).toHaveText("Saved to Filecoin", { timeout: 20_000 });
+    await page.bringToFront();
+    const rows = page.getByTestId("entry");
+    await expect(rows.filter({ hasText: "Untitled document.fipen" })).toHaveCount(1);
+    await expect(rows.filter({ hasText: "Save pending" })).toHaveCount(0, { timeout: 20_000 });
+    await expect(rows).toHaveCount(1);
+    await page.getByTestId("entry").filter({ hasText: "Untitled document.fipen" }).dblclick();
+    await page.getByTestId("breadcrumb").getByText("My Folders").click().catch(() => {});
+    await page.bringToFront();
+    await page.goto("/");
+    await expect(page.getByTestId("nav-drive")).toBeVisible();
+    const top = await entries(page);
+    expect(top).not.toMatch(/FiPen|Untitled document/);
+    expect(top).toContain("Projects");
   });
 });

@@ -199,12 +199,12 @@ describe("DriveApp", () => {
       const pending = entry(root, "Untitled document.fipen");
       expect(pending?.dataset.kind).toBe("felarumi");
       expect(pending?.textContent).toContain("Save pending");
-      await expect(session.volume.stat("/FiPen/Untitled document.fipen")).rejects.toThrow();
+      await expect(session.volume.stat("/Untitled document.fipen")).rejects.toThrow();
       const docUrl = new URL(opened[0] ?? "");
       expect(docUrl.origin).toBe("https://felarumi.example");
       expect(docUrl.searchParams.get("fifolders")).toBe("1");
       expect(docUrl.searchParams.get("name")).toBe("Untitled document.fipen");
-      expect(docUrl.searchParams.get("path")).toBe("/FiPen/Untitled document.fipen");
+      expect(docUrl.searchParams.get("path")).toBe("/Untitled document.fipen");
       expect(docUrl.searchParams.get("pieceCid")).toBeNull();
 
       root.querySelector<HTMLButtonElement>("[data-testid=new-button]")!.click();
@@ -213,7 +213,7 @@ describe("DriveApp", () => {
       expect(entry(root, "Untitled spreadsheet.figrid")?.textContent).toContain("Save pending");
       const sheetUrl = new URL(opened[1] ?? "");
       expect(sheetUrl.origin).toBe("https://felanumio.example");
-      expect(sheetUrl.searchParams.get("path")).toBe("/FiGrid/Untitled spreadsheet.figrid");
+      expect(sheetUrl.searchParams.get("path")).toBe("/Untitled spreadsheet.figrid");
     } finally {
       window.open = previous;
     }
