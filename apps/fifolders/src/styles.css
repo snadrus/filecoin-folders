@@ -413,3 +413,7 @@ a.place { text-decoration: none; font-size: 14px; }
   .sort-label select { font-size: 14px; max-width: 130px; }
 }
 .offline-chip { position: fixed; left: 50%; top: 72px; transform: translateX(-50%); z-index: 65; background: #323232; color: #fff; border-radius: 8px; padding: 10px 16px; box-shadow: var(--shadow); max-width: calc(100% - 32px); }
+.versions { width: min(520px, 100%); }
+.version-list { list-style: none; padding: 0; margin: 8px 0; max-height: 50vh; overflow: auto; }
+.version-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.version-actions { display: flex; gap: 6px; }
