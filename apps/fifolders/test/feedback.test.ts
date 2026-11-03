@@ -133,8 +133,10 @@ describe("drive feedback", () => {
     expect(root.querySelector("[data-testid=tx-link]")?.getAttribute("href")).toContain("calibration.filfox.info");
     root.querySelector<HTMLButtonElement>("[data-testid=txlog-toggle]")!.click();
     expect(root.querySelector("[data-testid=txlog]")).toBeNull();
-    expect(root.querySelector("[data-testid=account-label]")?.textContent).toBe("andy.eth");
-    expect(root.querySelector("[data-testid=account-identicon]")).toBeTruthy();
+    expect(root.querySelector("[data-testid=account-address]")?.textContent).toBe("andy.eth");
+    // The person comes from FiPerson (guest name until an identity is set), never the raw address.
+    expect(root.querySelector("[data-testid=account-label]")?.textContent).toMatch(/^[A-Z][a-z]+ [A-Z][a-z]+$/);
+    expect(root.querySelector("[data-testid=account] .fiperson-avatar")).toBeTruthy();
     root.querySelector<HTMLButtonElement>("[data-testid=account]")!.click();
     expect(root.querySelector("[data-testid=chain-calibration]")).toBeTruthy();
     expect(root.querySelector("[data-testid=advanced-editors]")?.hasAttribute("open")).toBe(false);

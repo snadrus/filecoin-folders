@@ -8,7 +8,7 @@ test("costs open from the storage view, the new button is prominent, and a docum
   await page.getByTestId("txlog-toggle").click();
   await expect(page.getByTestId("txlog").getByTestId("chain-steps")).toContainText("Authorized");
   await page.getByTestId("txlog-toggle").click();
-  await expect(page.getByTestId("account-identicon")).toBeVisible();
+  await expect(page.locator("[data-testid=account] .fiperson-avatar")).toBeVisible();
   await expect(page.getByTestId("costs")).toHaveCount(0);
   await page.getByTestId("storage-runway").click();
   await expect(page.getByTestId("costs")).toContainText("$2.50/TiB = a penny for 4 GB");
