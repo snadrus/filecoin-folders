@@ -47,7 +47,7 @@ import {
   type ViewMode,
 } from "./model.js";
 import { isSessionPermissionError, type SessionGate, type WalletPanel } from "./onboarding-logic.js";
-import { dropOp, isBlankFelContent, loadOps, newOp, OPS_CHANNEL, OPS_KEY, patchOp, upsertOp, type FifoldersOp, type OpKind } from "./ops.js";
+import { dropFelPlaceholders, dropOp, isBlankFelContent, loadOps, newOp, OPS_CHANNEL, OPS_KEY, patchOp, upsertOp, type FifoldersOp, type OpKind } from "./ops.js";
 import {
   datasetBlurb,
   depositBlurb,
@@ -447,6 +447,15 @@ export class DriveApp {
         this.openNewFel(kind, name);
         return;
       }
+      if (form?.matches("[data-testid=connect]")) {
+        // One wallet request per Connect: repeat clicks while it is open (or after it succeeded) must not stack prompts.
+        if (this.#connecting) return;
+        this.#connecting = true;
+        void this.enqueue(() => this.onSubmit(event)).finally(() => {
+          this.#connecting = false;
+        });
+        return;
+      }
       void this.enqueue(() => this.onSubmit(event));
     });
     this.listenForOps();
@@ -461,6 +470,8 @@ export class DriveApp {
     const list = [...files];
     await this.enqueue(() => this.uploadList(list, destDir ?? this.destDir()));
   }
+
+  #connecting = false;
 
   private enqueue(task: () => Promise<void>): Promise<void> {
     const run = this.#tail.then(task, task);
@@ -1616,6 +1627,8 @@ export class DriveApp {
         this.render();
         return;
       }
+      // A click right after load can beat wallet discovery (EIP-6963 announce); wait briefly instead of failing.
+      for (let i = 0; i < 50 && !this.onConnect; i++) await new Promise((resolve) => setTimeout(resolve, 200));
       if (!this.onConnect) {
         this.connectError = "No injected wallet found. Install a browser wallet such as MetaMask.";
         this.render();
@@ -1878,7 +1891,13 @@ export class DriveApp {
     });
     try {
       const channel = new BroadcastChannel(OPS_CHANNEL);
-      channel.onmessage = () => {
+      channel.onmessage = (event: MessageEvent) => {
+        const data = event.data as { want?: string; path?: string; nonce?: string } | null;
+        if (data && typeof data.want === "string") {
+          // An editor tab opened a file from this drive and asks for its bytes (same origin, decrypted).
+          void this.answerOpen(channel, data.want, data.path ?? "", data.nonce ?? "");
+          return;
+        }
         void this.enqueue(() => this.refresh());
       };
     } catch {
@@ -1988,6 +2007,7 @@ export class DriveApp {
         if (sameBytes(current, next)) {
           this.rememberDone(op);
           dropOp(op.id);
+          dropFelPlaceholders(op.path, op.id);
           continue;
         }
       } catch (error) {
@@ -2012,9 +2032,23 @@ export class DriveApp {
       rememberFelTarget(op.path, path, op.title);
       this.rememberDone({ ...op, pieceCid: stat.pieceCid, stage: "saved" });
       dropOp(op.id);
+      dropFelPlaceholders(op.path, op.id);
       edited = true;
     }
     if (edited && this.#draft) await this.rebuildDraft();
+  }
+
+  private async answerOpen(channel: BroadcastChannel, pieceCid: string, path: string, nonce: string): Promise<void> {
+    const volume = this.volume;
+    if (!volume || !path) return;
+    try {
+      const stat = await volume.stat(path);
+      if (stat.pieceCid && pieceCid && stat.pieceCid !== pieceCid) return;
+      const bytes = await volume.get(path);
+      channel.postMessage({ have: pieceCid, path, nonce, bytes });
+    } catch {
+      // Not in this volume; the editor falls back to public sources.
+    }
   }
 
   private async retryOp(id: string): Promise<void> {

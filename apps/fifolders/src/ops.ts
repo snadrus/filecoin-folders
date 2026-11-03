@@ -64,6 +64,13 @@ export function dropOp(id: string): void {
   writeFile({ v: 1, ops }, true);
 }
 
+/** The "Save pending" row FiFolders adds when it opens a new editor; the editor's first real save replaces it. */
+export function dropFelPlaceholders(path: string, keepId: string): void {
+  const file = readFile();
+  const ops = file.ops.filter((op) => op.id === keepId || !(op.kind === "fel-save" && op.path === path && !op.content));
+  if (ops.length !== file.ops.length) writeFile({ v: 1, ops }, true);
+}
+
 export function newOp(partial: Omit<FifoldersOp, "v" | "created" | "updated" | "status" | "stage"> & { status?: OpStatus; stage?: string }): FifoldersOp {
   const now = Date.now();
   return {
