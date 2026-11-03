@@ -169,6 +169,9 @@ async function continueOnboarding(
     return;
   }
   if (autoAuthorize && !panel.sessionReady) {
+    // Show the wallet & setup state while the session-key transaction is pending (it can take minutes);
+    // otherwise the menu has no setup section and the runway says "Connect a wallet" while connected.
+    app.showPanel(panel);
     try {
       await io.authorize(input.chain, false, (step) => app.noteChain(step));
       panel = await io.snapshot(input);

@@ -164,3 +164,13 @@ test("S49 mobile: nav is a chip row, no horizontal overflow; Transaction log fit
   await expect(page.getByTestId("nav-fideploy")).toBeVisible();
   await expect(page.getByTestId("nav-ficlub")).toBeVisible();
 });
+
+test("S55 wallet & setup menu is filled while the session key is still being authorized after Connect", async ({ page }) => {
+  await page.goto("/?onboard=1&pay=ready&datasets=1&authdelay=8000");
+  await page.getByTestId("connect-wallet").click();
+  await expect(page.getByTestId("nav-drive")).toBeVisible();
+  await page.getByTestId("account").click();
+  const menu = page.getByTestId("account-menu");
+  await expect(menu.getByTestId("payment-status")).toBeVisible({ timeout: 4_000 });
+  await expect(menu.getByTestId("session-status")).toBeVisible();
+});
