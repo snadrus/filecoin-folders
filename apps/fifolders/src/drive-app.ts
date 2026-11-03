@@ -251,7 +251,13 @@ export class DriveApp {
   }
 
   get settled(): Promise<void> {
-    return this.#tail;
+    return Promise.all([this.#tail, this.#reads]).then(() => undefined);
+  }
+  /** Reads that skip the write queue (Details, Download, Manage versions); `settled` waits for them too. */
+  #reads: Promise<void> = Promise.resolve();
+  private runRead(task: () => Promise<void>): void {
+    const run = task().catch((error: unknown) => this.toast(error instanceof Error ? error.message : String(error)));
+    this.#reads = Promise.all([this.#reads, run]).then(() => undefined);
   }
 
   /** Drive is showing a public, signature-free read while wallet setup runs. */
@@ -517,6 +523,22 @@ export class DriveApp {
   }
 
   #connecting = false;
+
+  /** Selection lives only on rows (data-selected, aria-selected, roving tabindex); same output as render() for them. */
+  private patchSelection(): void {
+    if (!this.root) return;
+    const rows = [...this.root.querySelectorAll<HTMLElement>("[data-testid=entry]")];
+    const last = this.selected.at(-1);
+    rows.forEach((el, index) => {
+      const path = decodeURIComponent(el.dataset.path || "");
+      const on = this.selected.includes(path);
+      const value = on ? "true" : "false";
+      if (el.dataset.selected !== value) el.dataset.selected = value;
+      if (el.getAttribute("aria-selected") !== value) el.setAttribute("aria-selected", value);
+      const tab = (this.selected.length ? last === path : index === 0) ? "0" : "-1";
+      if (el.getAttribute("tabindex") !== tab) el.setAttribute("tabindex", tab);
+    });
+  }
 
   private enqueue(task: () => Promise<void>): Promise<void> {
     const run = this.#tail.then(task, task);
@@ -1611,7 +1633,7 @@ export class DriveApp {
         return;
       }
       // Reads never wait behind the write queue (a pending wallet setup or save can hold it for minutes).
-      if (action === "versions" || action === "details" || action === "download") void this.runContext(action, paths, targetPath);
+      if (action === "versions" || action === "details" || action === "download") this.runRead(() => this.runContext(action, paths, targetPath));
       else void this.enqueue(() => this.runContext(action, paths, targetPath));
       return;
     }
@@ -1847,7 +1869,8 @@ export class DriveApp {
         const at = last ? paths.indexOf(last) : -1;
         const next = paths[Math.max(0, Math.min(paths.length - 1, at < 0 ? 0 : at + (event.key === "ArrowDown" ? 1 : -1)))]!;
         this.selected = event.shiftKey ? [...this.selected.filter((p) => p !== next), next] : [next];
-        this.render();
+        // Only the rows show selection: patch them in place instead of re-rendering every row (250 files: ~250ms → a few ms per key).
+        this.patchSelection();
         const row = this.root.querySelector<HTMLElement>(`[data-testid=entry][data-path="${encodeURIComponent(next)}"]`);
         row?.scrollIntoView({ block: "nearest" });
         row?.focus({ preventScroll: true });
