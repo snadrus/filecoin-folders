@@ -1,3 +1,4 @@
+import { friendlyError } from "./friendly-error.js";
 import { felFileName } from "./blank.js";
 import {
   CarArchiveError,
@@ -783,7 +784,7 @@ export class DriveApp {
 
   private toast(text: string): void {
     const id = `t${++this.#toastSeq}`;
-    this.toasts = [...this.toasts, { id, text }].slice(-4);
+    this.toasts = [...this.toasts, { id, text: friendlyError(text) }].slice(-4);
     this.autoHide(id, TOAST_MS);
   }
 
