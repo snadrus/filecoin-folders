@@ -322,7 +322,7 @@ export class IdentityPage {
   render(): void {
     const s = this.state;
     const d = s.draft;
-    const header = `<header><h1>Your identity</h1><p class="lede">One name and avatar for your wallet, shown in FiFolders, FiPen and FiGrid. It is saved as a small public piece on Filecoin and linked to your wallet on chain, so anyone you work with sees the same name.</p></header>`;
+    const header = `<header><h1>Your identity</h1><nav class="identity-links"><a href="../ficlub/" data-testid="identity-ficlub-link">FiClub — your groups</a></nav><p class="lede">One name and avatar for your wallet, shown in FiFolders, FiPen and FiGrid. It is saved as a small public piece on Filecoin and linked to your wallet on chain, so anyone you work with sees the same name.</p></header>`;
     let body: string;
     if (!s.address) {
       body = `<section class="card"><p>Connect the wallet you use with FiFolders.</p><button type="button" class="primary" data-action="connect" data-testid="identity-connect">Connect wallet</button><p class="note">Connecting is free.</p></section>`;

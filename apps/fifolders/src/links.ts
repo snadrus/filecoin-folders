@@ -1,4 +1,4 @@
-const PREVIEW = /\.(avif|bmp|gif|ico|jpe?g|png|svg|webp|pdf|txt|md|markdown|json|html?|mp3|wav|ogg|mp4|webm)$/i;
+const PREVIEW = /\.(avif|bmp|gif|ico|jpe?g|png|svg|webp|pdf|txt|md|markdown|json|html?|mp3|wav|ogg|oga|opus|m4a|aac|flac|mp4|webm)$/i;
 
 export function gatewayPreviewLink(cid: string, name = ""): string {
   const base = `https://ipfs.io/ipfs/${cid}`;

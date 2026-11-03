@@ -189,8 +189,8 @@ test("S49 mobile: nav is a chip row, no horizontal overflow; Transaction log fit
   const box = (await page.getByTestId("txlog").boundingBox())!;
   expect(box.x).toBeGreaterThanOrEqual(0);
   expect(box.x + box.width).toBeLessThanOrEqual(390);
-  await expect(page.getByTestId("nav-fideploy")).toBeVisible();
-  await expect(page.getByTestId("nav-ficlub")).toBeVisible();
+  await expect(page.getByTestId("nav-fideploy")).toHaveCount(0);
+  await expect(page.getByTestId("nav-ficlub")).toHaveCount(0);
 });
 
 test("S55 wallet & setup menu is filled while the session key is still being authorized after Connect", async ({ page }) => {
@@ -506,4 +506,52 @@ test("S73 guest share page: name, size, who shared it, Open, and Download with t
   expect(download.suggestedFilename()).toBe("Trip plan.txt");
   await g.screenshot({ path: "/workspace/ff-share-page.png" });
   await guest.close();
+});
+
+function wav(seconds: number): Buffer {
+  const rate = 8000, n = rate * seconds, b = Buffer.alloc(44 + n);
+  b.write("RIFF", 0); b.writeUInt32LE(36 + n, 4); b.write("WAVEfmt ", 8); b.writeUInt32LE(16, 16); b.writeUInt16LE(1, 20); b.writeUInt16LE(1, 22);
+  b.writeUInt32LE(rate, 24); b.writeUInt32LE(rate, 28); b.writeUInt16LE(1, 32); b.writeUInt16LE(8, 34); b.write("data", 36); b.writeUInt32LE(n, 40);
+  for (let i = 0; i < n; i++) b[44 + i] = 128 + Math.round(40 * Math.sin((2 * Math.PI * 440 * i) / rate));
+  return b;
+}
+
+test("S74 audio like Drive: clicking a song opens a player — play, scrub, volume, download with its name", async ({ page }) => {
+  await connect(page);
+  await page.getByTestId("file-input").setInputFiles([{ name: "voice memo.wav", mimeType: "", buffer: wav(3) }]);
+  const row = page.getByTestId("entry").filter({ hasText: "voice memo.wav" });
+  await expect(row).toHaveCount(1);
+  await row.dblclick();
+  const audio = page.getByTestId("preview-audio");
+  await expect(audio).toBeVisible();
+  await expect(audio).toHaveAttribute("controls", "");
+  await page.waitForFunction(() => (document.querySelector("[data-testid=preview-audio]") as HTMLAudioElement)?.duration > 2.5);
+  const state = await audio.evaluate(async (el: HTMLAudioElement) => {
+    el.muted = true;
+    await el.play();
+    el.currentTime = 2; // scrub
+    el.volume = 0.3;
+    await new Promise((r) => setTimeout(r, 200));
+    return { t: el.currentTime, v: el.volume, err: el.error?.code ?? 0 };
+  });
+  expect(state.err).toBe(0);
+  expect(state.t).toBeGreaterThanOrEqual(2);
+  expect(state.v).toBeCloseTo(0.3);
+  const dl = page.getByTestId("preview-download");
+  await expect(dl).toHaveAttribute("download", "voice memo.wav");
+  const [download] = await Promise.all([page.waitForEvent("download"), dl.click()]);
+  expect(download.suggestedFilename()).toBe("voice memo.wav");
+  await page.screenshot({ path: "screenshots/audio-preview.png" });
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("preview")).toHaveCount(0);
+});
+
+test("S75 nav has no Deploy contracts or FiClub; FiClub lives on the identity page; /fideploy/ still loads by URL", async ({ page }) => {
+  await connect(page);
+  await expect(page.getByText("Deploy contracts")).toHaveCount(0);
+  await expect(page.getByTestId("nav-ficlub")).toHaveCount(0);
+  await page.goto("/identity/");
+  await expect(page.getByTestId("identity-ficlub-link")).toHaveAttribute("href", "../ficlub/");
+  const res = await page.goto("/fideploy/");
+  expect(res?.status()).toBe(200);
 });

@@ -190,6 +190,15 @@ const MIME_BY_EXT: Record<string, string> = {
   mp4: "video/mp4",
   webm: "video/webm",
   ogv: "video/ogg",
+  mov: "video/quicktime",
+  opus: "audio/ogg; codecs=opus",
+  mp3: "audio/mpeg",
+  ogg: "audio/ogg",
+  oga: "audio/ogg",
+  wav: "audio/wav",
+  m4a: "audio/mp4",
+  aac: "audio/aac",
+  flac: "audio/flac",
 };
 
 export function guessMime(name: string, mime?: string): string {
@@ -198,12 +207,13 @@ export function guessMime(name: string, mime?: string): string {
   return MIME_BY_EXT[ext] ?? mime ?? "application/octet-stream";
 }
 
-export type PreviewKind = "image" | "text" | "pdf" | "video" | "none";
+export type PreviewKind = "image" | "text" | "pdf" | "video" | "audio" | "none";
 
 export function previewKind(mime: string, bytes: Uint8Array): PreviewKind {
   if (mime.startsWith("image/")) return "image";
   if (mime === "application/pdf") return "pdf";
   if (mime.startsWith("video/")) return "video";
+  if (mime.startsWith("audio/")) return "audio";
   if (mime.startsWith("text/") || mime === "application/json" || mime.endsWith("+json") || mime.endsWith("+xml")) {
     return "text";
   }
@@ -216,6 +226,7 @@ export function materialIcon(entry: Pick<Stat, "type" | "name" | "mime">): strin
   const mime = guessMime(entry.name, entry.mime);
   if (mime.startsWith("image/")) return "image";
   if (mime.startsWith("video/")) return "movie";
+  if (mime.startsWith("audio/")) return "audio_file";
   if (mime === "application/pdf") return "picture_as_pdf";
   if (mime.startsWith("text/") || mime === "application/json") return "description";
   return "draft";
