@@ -43,7 +43,7 @@ test("costs open from the storage view, the new button is prominent, and a docum
   const popup = await popupPromise;
   expect(popup.url()).toContain("fipen");
   expect(popup.url()).toContain("fifolders=1");
-  expect(new URL(popup.url()).searchParams.get("path")).toBe("/FiPen/Untitled document.fipen");
+  expect(new URL(popup.url()).searchParams.get("path")).toBe("/Untitled document.fipen");
   await expect(page.getByTestId("entry").filter({ hasText: "Untitled document.fipen" })).toContainText("Save pending");
   await expect(page.getByTestId("nav-drive")).toBeVisible();
 });

@@ -1089,12 +1089,14 @@ export class DriveApp {
       this.render();
       return;
     }
-    const dir = kind === "felarumi" ? "/FiPen" : "/FiGrid";
-    const taken = new Set(
-      loadOps()
+    // Like Drive's New: the doc lives in the folder you are in, and saving fills that same item.
+    const dir = this.nav === "drive" ? this.cwd || "/" : "/";
+    const taken = new Set([
+      ...loadOps()
         .filter((op) => op.path && parentPath(op.path) === dir)
         .map((op) => op.name ?? ""),
-    );
+      ...this.entries.filter((entry) => parentPath(entry.path) === dir).map((entry) => entry.name),
+    ]);
     const name = uniqueName(requested, taken);
     const path = joinPath(dir, name);
     const url = appLink(kind, "", name, { felarumi: this.felarumiUrl, felanumio: this.felanumioUrl }, {
@@ -1105,6 +1107,8 @@ export class DriveApp {
     window.open(url, "_blank", "noopener");
     this.dialog = null;
     this.beginOp({
+      // Same id FiPen/FiGrid use for their save op ("fel:" + path), so the save replaces this placeholder.
+      id: "fel:" + path,
       kind: "fel-save",
       label: name,
       path,
@@ -2415,7 +2419,7 @@ export class DriveApp {
     }
     for (const op of ops) {
       const parent = parentPath(op.path ?? "/");
-      const showHere = parent === cwd || (cwd === "/" && this.nav === "drive" && op.kind === "fel-save");
+      const showHere = parent === cwd;
       if (!showHere || byPath.has(op.path ?? "")) continue;
       byPath.set(op.path ?? "", {
         name: op.name ?? "",
