@@ -376,3 +376,26 @@ test("S67 offline: the drive says so (Drive parity) and the notice clears on rec
   await context.setOffline(false);
   await expect(chip).toHaveCount(0);
 });
+
+test("S68 same-name upload asks Replace / Keep all (Drive); Replace makes a new version, Keep all adds '(1)'", async ({ page }) => {
+  await connect(page);
+  const input = page.getByTestId("file-input");
+  const rows = page.getByTestId("entry");
+  await input.setInputFiles([{ name: "plan.txt", mimeType: "text/plain", buffer: Buffer.from("v1") }]);
+  await expect(rows).toHaveCount(1);
+  await input.setInputFiles([{ name: "plan.txt", mimeType: "text/plain", buffer: Buffer.from("v2 longer") }]);
+  const dialog = page.getByTestId("upload-conflict");
+  await expect(dialog).toContainText("“plan.txt” already exists");
+  await page.getByTestId("upload-conflict-ok").click(); // default: Replace
+  await expect(rows).toHaveCount(1);
+  await expect(rows.first()).toContainText("9 B");
+  await input.setInputFiles([{ name: "plan.txt", mimeType: "text/plain", buffer: Buffer.from("v3") }]);
+  await dialog.getByLabel("Keep all items").check();
+  await page.getByTestId("upload-conflict-ok").click();
+  await expect(rows).toHaveCount(2);
+  await expect(page.getByTestId("entry").filter({ hasText: "plan (1).txt" })).toHaveCount(1);
+  await input.setInputFiles([{ name: "plan.txt", mimeType: "text/plain", buffer: Buffer.from("v4") }]);
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(rows).toHaveCount(2);
+});

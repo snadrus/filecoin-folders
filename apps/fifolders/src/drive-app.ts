@@ -1,4 +1,5 @@
 import { friendlyError } from "./friendly-error.js";
+import { askUploadConflict } from "./upload-conflict.js";
 import { felFileName } from "./blank.js";
 import {
   CarArchiveError,
@@ -897,21 +898,45 @@ export class DriveApp {
     }
     const view = await this.editingVolume();
     const reserved = new Map<string, Set<string>>();
-    const ops: StagedOp[] = [];
-    const rows: UploadRow[] = [];
-    for (const file of payloads) {
-      const parent = parentPath(joinPath(dest, file.rel));
+    const existingFiles = new Map<string, Set<string>>();
+    const listing = async (parent: string) => {
       let taken = reserved.get(parent);
       if (!taken) {
         taken = new Set<string>();
+        const files = new Set<string>();
         try {
-          for (const item of await view.ls(parent)) taken.add(item.name);
+          for (const item of await view.ls(parent)) {
+            taken.add(item.name);
+            if (item.type === "file") files.add(item.name);
+          }
         } catch (error) {
           if (!(error instanceof NotFoundError)) throw error;
         }
         reserved.set(parent, taken);
+        existingFiles.set(parent, files);
       }
-      const name = uniqueName(baseName(file.rel), taken);
+      return taken;
+    };
+    // Drive: a same-name upload asks "Replace existing file" (new version) or "Keep all items".
+    let clashes = 0;
+    for (const file of payloads) {
+      const parent = parentPath(joinPath(dest, file.rel));
+      await listing(parent);
+      if (existingFiles.get(parent)?.has(baseName(file.rel))) clashes++;
+    }
+    let replace = false;
+    if (clashes) {
+      const choice = await askUploadConflict(this.root?.ownerDocument ?? document, clashes, payloads.length === 1 ? baseName(payloads[0]!.rel) : "");
+      if (choice === "cancel") return;
+      replace = choice === "replace";
+    }
+    const ops: StagedOp[] = [];
+    const rows: UploadRow[] = [];
+    for (const file of payloads) {
+      const parent = parentPath(joinPath(dest, file.rel));
+      const taken = await listing(parent);
+      const wanted = baseName(file.rel);
+      const name = replace && existingFiles.get(parent)?.has(wanted) ? wanted : uniqueName(wanted, taken);
       taken.add(name);
       const path = joinPath(parent, name);
       const mime = guessMime(file.name, file.type);

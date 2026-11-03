@@ -106,3 +106,6 @@ After uploads finish, the Uploads panel shrinks to "N uploads complete" (expanda
 
 ### S67 Offline notice
 When my connection drops, FiFolders, FiPen and FiGrid show "You're offline" (like Drive/Docs/Sheets) and it clears when I reconnect.
+
+### S68 Same-name upload
+Uploading a file whose name already exists asks, like Drive, "Replace existing file" (it becomes a new version) or "Keep all items" (adds "name (1)"); Escape or Cancel uploads nothing.
