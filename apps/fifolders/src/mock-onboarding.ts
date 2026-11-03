@@ -51,6 +51,15 @@ export function createMockOnboarding(params: URLSearchParams): OnboardingIO {
   // One in-memory backing store so the public read and the signed session see the same drive.
   const storage = new MemoryStorage();
   const registry = new MemoryRegistry(MOCK_ADDRESS);
+  // E2E: a lagging load-balanced RPC node — the first N commits fail like glif's "future epoch".
+  let rpcLag = Number(params.get("rpclag") ?? "0");
+  if (rpcLag > 0) {
+    const commit = registry.commit.bind(registry);
+    registry.commit = async (input) => {
+      if (rpcLag-- > 0) throw Object.assign(new Error("RPC Request failed."), { details: 'RPC error (-32603): requested a future epoch (beyond "latest")' });
+      return commit(input);
+    };
+  }
 
   const seededPayments = params.get("pay") === "ready";
   if (localStorage.getItem(PAYMENTS_KEY) == null && seededPayments) localStorage.setItem(PAYMENTS_KEY, "1");

@@ -10,9 +10,9 @@ Suites: **mock** = local build with the mock chain (`VITE_E2E=1`) + staged edito
 |---|---|---|---|
 | S01 | As a new visitor I see what storage costs only when I ask. | No cost pop-up on first visit. The storage/runway widget sits bottom-left; clicking it opens "What it costs" with exactly: "Per month:", "$2.50/TiB = a penny for 4 GB", "$0.12 per dataset ($0.50 at start)", "A penny per piece added". Esc/×/backdrop closes. | mock |
 | S02 | As any user I get the light theme. | `data-theme="light"` and a light background even when the OS prefers dark. | mock |
-| S03 | As a user I connect my wallet. | One `eth_requestAccounts`; short address shown; drive visible. | live |
-| S04 | As a user I can browse right after Connect; the session key waits for my first save. | Connect asks for no session key (0 signatures). Drive, Recent, Trash navigable; note "You can browse now. Your first save sets up a wallet session (1 signature)." The first save/upload/Delete shows "Setting up your wallet session (1 signature, one time)… N changes will save right after"; uploads show "waiting for wallet setup"; then it saves. Refused → toast, changes kept, Save retries. | mock + live |
-| S05 | Every wallet request says what it is for and what it costs. | Setup steps and the wallet toast read "<title> — <purpose> (<cost>)". Transaction log rows are titled by purpose only ("Save “Notes” to My Drive", "Authorize this browser to save", "Add 3 Filecoin Drive files"; never "Send transaction"/gas); cost is the secondary line. | mock + live |
+| S03 | As a user I connect my wallet. | One `eth_requestAccounts`; short address shown; folders visible. | live |
+| S04 | As a user I can browse right after Connect; the session key waits for my first save. | Connect asks for no session key (0 signatures). My Folders, Recent, Trash navigable; note "You can browse now. Your first save sets up a wallet session (1 signature)." The first save/upload/Delete shows "Setting up your wallet session (1 signature, one time)… N changes will save right after"; uploads show "waiting for wallet setup"; then it saves. Refused → toast, changes kept, Save retries. | mock + live |
+| S05 | Every wallet request says what it is for and what it costs. | Setup steps and the wallet toast read "<title> — <purpose> (<cost>)". Transaction log rows are titled by purpose only ("Save “Notes” to My Folders", "Authorize this browser to save", "Add 3 Filecoin Drive files"; never "Send transaction"/gas); cost is the secondary line. | mock + live |
 | S06 | Session-key authorization is one labeled pop-up. | "Authorize session key — lets FiFolders save for 7 days without asking each time (~0.05 FIL)"; after approval the note clears and the signature count is 1. | mock |
 | S07 | I can see what happened on chain. | One "Transaction log" sidebar entry (spinner + pending count while anything is pending) opens the log: purpose rows, on-chain details; finished rows show a blue progress bar and auto-dismiss after ~10 s. A lapsed/expiring session is a pending "Reconnect wallet session" row with a Reconnect button (log opens itself on expiry) plus the wallet toast — no split panel or setup pop-up. | mock |
 | S08 | My dataset choice sticks. | Selecting a dataset in the account menu survives reload. | mock |
@@ -20,8 +20,8 @@ Suites: **mock** = local build with the mock chain (`VITE_E2E=1`) + staged edito
 | S10 | Refresh keeps my tree. | A folder created before reload is listed after reload. | mock |
 | S10b | A fresh browser/origin recovers my tree from chain (FolderRegistry manifest). | New profile, same wallet → same tree. | live (spend: STORIES_SPEND=1) |
 | S11 | Old links still work. | `/felarumi/…` → `/fipen/…`, `/felanumio/…` → `/figrid/…`, query and hash preserved. | mock |
-| S40 | Slow signature. | Connect: "Check your wallet — Connect wallet (free)" toast while waiting; UI stays usable; drive opens; toast clears. No session-key request at Connect (it comes at the first save). | live |
-| S41 | I reject a signature. | Plain error with Retry (or Connect again); approving next time opens the drive with no further prompt (no session-key request at Connect); nothing stuck. | live |
+| S40 | Slow signature. | Connect: "Check your wallet — Connect wallet (free)" toast while waiting; UI stays usable; folders open; toast clears. No session-key request at Connect (it comes at the first save). | live |
+| S41 | I reject a signature. | Plain error with Retry (or Connect again); approving next time opens your folders with no further prompt (no session-key request at Connect); nothing stuck. | live |
 | S42 | My wallet is locked. | Clear error; connect works after unlock. | live |
 | S43 | Repeated clicks don't stack prompts. | Three clicks on Connect → one wallet request, one toast. | live |
 | S44 | Wallet switches account or chain mid-session. | No reload, no prompt: account change restarts the session in place for the new account; chain change shows a toast and the view stays; saving asks to switch back. | live |
@@ -32,12 +32,12 @@ Suites: **mock** = local build with the mock chain (`VITE_E2E=1`) + staged edito
 | ID | Story | Acceptance criteria | Suite |
 |---|---|---|---|
 | S12 | New FiPen with no filename prompt. | New → FiPen document opens a tab, no dialog; title "Untitled document"; Save button + status sit right of the title, vertically aligned; status "New, unsaved" until the first Filecoin save. | mock |
-| S13 | Save works by button, Cmd+S and Ctrl+S. | Typing → "Unsaved changes"; each save → "Saved to Filecoin"; typing continues in the doc after clicking Save; drive shows no stale "Save pending". | mock |
+| S13 | Save works by button, Cmd+S and Ctrl+S. | Typing → "Unsaved changes"; each save → "Saved to Filecoin"; typing continues in the doc after clicking Save; FiFolders shows no stale "Save pending". | mock |
 | S14 | Autosave every 5 min only if dirty. | Clean doc: no save rows written; dirty doc: one save, then none while clean. (Interval shortened via `__p2pAutosaveMs`.) | mock |
-| S15 | Reopening a saved doc shows its content. | Open the `.fipen` from the drive → same text; status not "Unsaved". | mock |
-| S16 | Reload matrix (single user). | Dirty → reload: text kept, still "Unsaved changes". Queued (drive closed) → reload: "Queued for FiFolders". Drive back → "Saved to Filecoin", still after reload. | mock |
+| S15 | Reopening a saved doc shows its content. | Open the `.fipen` from your folders → same text; status not "Unsaved". | mock |
+| S16 | Reload matrix (single user). | Dirty → reload: text kept, still "Unsaved changes". Queued (FiFolders closed) → reload: "Queued for FiFolders". FiFolders back → "Saved to Filecoin", still after reload. | mock |
 | S17 | Caret in the embedded editor. | Home/End/arrows/typing land correctly; caret survives Save. | mock |
-| S18 | FiGrid cell edit, save, reload. | A1 focused on open → type 42 (no click) ⏎ → `=A1*2` ⏎ → A2 shows 84; Ctrl+S → "Saved to Filecoin"; reload keeps values and status; drive has the `.figrid`. | mock |
+| S18 | FiGrid cell edit, save, reload. | A1 focused on open → type 42 (no click) ⏎ → `=A1*2` ⏎ → A2 shows 84; Ctrl+S → "Saved to Filecoin"; reload keeps values and status; folders have the `.figrid`. | mock |
 | S19 | Stale chunk after a deploy. | Missing lazy chunk → "FiPen was updated. Reload the page to continue." with a Reload button that recovers. | mock |
 
 ## FiPen editing (standalone or embedded)
@@ -75,13 +75,13 @@ Suites: **mock** = local build with the mock chain (`VITE_E2E=1`) + staged edito
 |---|---|---|---|
 | S48 | I save my identity with a picture on /identity/ and see it everywhere. | Save → read back on a fresh load; FiFolders header/owner column and FiPen show the name + avatar, not a guest name. Pointer commit re-reads the head and retries once on a CAS conflict. | live (spend) |
 | S49 | Transaction log tells me what is happening. | One sidebar entry; spinner + count while pending; rows titled by purpose, cost secondary; finished rows auto-dismiss; errors show "!" and stay until dismissed; works at 390px width. | mock |
-| S50 | Loose pieces with Filecoin Drive, then Add to drive. | Loose pieces lists Filecoin Drive files with names; select one or more → "Add to drive" names the count and cost before the wallet prompt; after commit the files appear in My Drive without re-uploading and leave Loose pieces. | mock + live (spend) |
-| S51 | Registry v2 migration is one labeled step. | A drive whose head is only on v1 reads normally; the next save performs the move labeled "Move drive pointer to new registry" (session key, no root-wallet prompt); afterwards reads come from v2 and history links back to v1. | mock + anvil |
+| S50 | Loose pieces with Filecoin Drive, then Add to drive. | Loose pieces lists Filecoin Drive files with names; select one or more → "Add to folders" names the count and cost before the wallet prompt; after commit the files appear in My Folders without re-uploading and leave Loose pieces. | mock + live (spend) |
+| S51 | Registry v2 migration is one labeled step. | A volume whose head is only on v1 reads normally; the next save performs the move labeled "Move folders pointer to new registry" (session key, no root-wallet prompt); afterwards reads come from v2 and history links back to v1. | mock + anvil |
 | S52 | FiClub add/remove and the 2-signature admin removal. | Admin adds/removes members and admins; removing an admin from a club with 3+ admins needs a step-1 signature (shareable blob) and a second admin's step-2 signature; expired/foreign blobs are rejected with a clear reason. | mock + anvil |
 | S53 | FiPerson everywhere. | The same name + avatar for a wallet in the FiFolders header, owner column, account menu, FiClub member rows, FiPen/FiGrid avatars and the identity pop-up; guest name only when no identity exists. | mock + live |
-| S54 | The dataset picker. | Wallet menu lists every dataset the wallet owns, current one checked, newest marked; switching reloads the drive in place with a loading state; choice survives reload (S08). | mock |
+| S54 | The dataset picker. | Wallet menu lists every dataset the wallet owns, current one checked, newest marked; switching reloads your folders in place with a loading state; choice survives reload (S08). | mock |
 | S55 | Wallet & setup menu. | Shows account (FiPerson name, address secondary), network, dataset, session expiry, Add funds, Disconnect; every action that prompts says why and what it costs first. | mock |
-| S56 | Switching account or network restarts in place. | accountsChanged → drive for the new account without reload or prompt; chainChanged → toast, view kept, save asks to switch back (S44). | mock + live |
+| S56 | Switching account or network restarts in place. | accountsChanged → folders for the new account without reload or prompt; chainChanged → toast, view kept, save asks to switch back (S44). | mock + live |
 | S57 | /fideploy/ shows contract status and deploys from my wallet. | Status per contract by known address + exact runtime-bytecode match; gas estimate after connecting; Deploy shows "Deploy <contract>" before the wallet prompt; after the receipt the new address is bytecode-verified and the deployments JSON can be copied/downloaded. | mock |
 | S58 | Mainnet deploys need an explicit acknowledgement. | On chain 314 the Deploy buttons stay disabled until "I understand this … spends real FIL" is ticked. | mock |
 | S59 | Private FiClub instance on Calibration via /fideploy/. | One contract-creation tx from the test wallet; record shows "✓ bytecode verified". | live (spend) |
@@ -90,7 +90,7 @@ Suites: **mock** = local build with the mock chain (`VITE_E2E=1`) + staged edito
 As a screen-reader user, every button, link and field in FiFolders, Identity, FiClub and FiDeploy announces a name (no bare "button" or icon ligature text such as "more_vert").
 
 ### S62 Large uploads
-As a user uploading a file of tens of MB, it appears in the drive right away and saves; if it is too big to back up across a tab close I'm told plainly to Save first (no raw "quota exceeded" error, no lost upload).
+As a user uploading a file of tens of MB, it appears in your folders right away and saves; if it is too big to back up across a tab close I'm told plainly to Save first (no raw "quota exceeded" error, no lost upload).
 
 ### S63 Keyboard-only file list
 As a keyboard-only user, Tab takes me into the file list (one stop, like Drive), the focused row is selected and announced by name, and ↑/↓, Enter, F2 and Delete work from there.
@@ -123,5 +123,5 @@ Details → share link opens a FiFolders page (`/share/?cid=…&name=…&by=…`
 FiClub "remove admin" signatures (EIP-712 v2, contract `0x412B9363019591588073B3489CB09d28d2a55A03` on Calibration) carry the plain-language purpose "Remove this admin from the FiClub". FiPen signatures (EIP-712 v2) carry a purpose I type ("I sign this document." by default), shown first in the wallet and in the signature details; old v1 FiPen signatures still verify.
 
 ### S75 FiPen on phones (decision 7)
-On a phone FiPen reflows text to the screen width (no sideways scroll; the document's page size is unchanged for others). Home/End move to the start/end of the visual line. A guest's copy waits in the guest's own drive under `/Copies/`; the guest always sees a save status ("Your edits are saved with the owner" / "Owner offline. Your edits are kept here…" / "Copy waiting in your drive (/Copies/…)").
+On a phone FiPen reflows text to the screen width (no sideways scroll; the document's page size is unchanged for others). Home/End move to the start/end of the visual line. A guest's copy waits in the guest's own folders under `/Copies/`; the guest always sees a save status ("Your edits are saved with the owner" / "Owner offline. Your edits are kept here…" / "Copy waiting in your folders (/Copies/…)").
 

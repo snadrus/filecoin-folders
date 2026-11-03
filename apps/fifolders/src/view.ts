@@ -280,7 +280,7 @@ function renderSetupShell(model: ViewModel): string {
     ${renderTop(model)}
     ${renderNav(model)}
     <main class="workspace">
-      <div class="empty" data-testid="drive-pending">${picked ? `Opening ${escapeHtml(datasetLabel(picked))}…` : "Pick a dataset to open your drive."}</div>
+      <div class="empty" data-testid="drive-pending">${picked ? `Opening ${escapeHtml(datasetLabel(picked))}…` : "Pick a dataset to open your folders."}</div>
     </main>
     ${needsUser ? `<div class="costs-backdrop setup-backdrop">${renderSetup(model)}</div>` : ""}
     ${model.costsOpen ? renderCosts() : ""}
@@ -312,7 +312,7 @@ function renderSetup(model: ViewModel): string {
         <p class="note">${escapeHtml(model.costs.datasetNote)}</p>`;
   const open =
     panel.selectedDatasetId && panel.paymentsReady && panel.sessionReady
-      ? `<button class="primary" type="button" data-testid="open-drive" data-action="open-drive">Open drive</button>`
+      ? `<button class="primary" type="button" data-testid="open-drive" data-action="open-drive">Open folders</button>`
       : "";
   const legacy = panel.legacyRegistry
     ? `<p class="note" data-testid="legacy-registry">This FolderRegistry has no session-key entry. Commits still ask the wallet until you deploy the new contract and set VITE_FOLDER_REGISTRY.</p>`
@@ -440,7 +440,7 @@ function renderNav(model: ViewModel): string {
       <span class="material-symbols-outlined" aria-hidden="true">add</span> New
     </button>
     <nav class="places">
-      ${navItem("drive", "folder", "My Drive", model.nav)}
+      ${navItem("drive", "folder", "My Folders", model.nav)}
       ${navItem("recent", "schedule", "Recent", model.nav)}
       ${navItem("starred", "star", "Starred", model.nav)}
       ${navItem("loose", "inventory_2", "Loose pieces", model.nav)}
@@ -482,7 +482,7 @@ function renderDatasetSection(model: ViewModel): string {
       return `<button type="button" role="menuitemradio" aria-checked="${on}" class="dataset-item ${on ? "on" : ""} ${dataset.drive || dataset.source === "filecoin-drive" ? "is-drive" : "not-drive"}" data-drive="${dataset.drive ? "1" : "0"}" data-action="switch-dataset" data-id="${escapeHtml(dataset.id)}" data-testid="dataset-item">
         <span class="material-symbols-outlined dataset-check" aria-hidden="true">${on ? "check" : ""}</span>
         <span class="dataset-text"><span class="dataset-id">Dataset ${escapeHtml(label)}${dataset.id === latest ? ` <span class="dataset-tag" data-testid="dataset-latest">latest</span>` : ""}</span>
-        ${dataset.drive ? `<span class="dataset-drive" data-testid="dataset-drive"><span class="material-symbols-outlined" aria-hidden="true">folder</span> FiFolders drive${dataset.driveName ? ` · ${escapeHtml(dataset.driveName)}` : ""}</span>` : ""}
+        ${dataset.drive ? `<span class="dataset-drive" data-testid="dataset-drive"><span class="material-symbols-outlined" aria-hidden="true">folder</span> FiFolders folders${dataset.driveName ? ` · ${escapeHtml(volumeLabel(dataset.driveName))}` : ""}</span>` : ""}
         ${dataset.source === "filecoin-drive" ? `<span class="dataset-drive fcdrive" data-testid="dataset-filecoin-drive"><span class="material-symbols-outlined" aria-hidden="true">cloud</span> Filecoin Drive</span>` : ""}
         <span class="dataset-meta">${escapeHtml(bits.join(" · "))}</span></span>
       </button>`;
@@ -528,11 +528,11 @@ function renderBrowser(model: ViewModel): string {
   const filled = model.nav === "loose" ? model.loose.length : model.entries.length;
   const empty =
     model.loadState === "error"
-      ? `<div class="empty" data-testid="load-error" role="alert">Could not load your drive from Filecoin. Your files are safe on chain.${model.loadError ? ` <small>${escapeHtml(model.loadError)}</small>` : ""} <button type="button" data-action="retry-load" data-testid="retry-load">Retry</button></div>`
+      ? `<div class="empty" data-testid="load-error" role="alert">Could not load your folders from Filecoin. Your files are safe on chain.${model.loadError ? ` <small>${escapeHtml(model.loadError)}</small>` : ""} <button type="button" data-action="retry-load" data-testid="retry-load">Retry</button></div>`
       : model.loadState === "loading" && !filled && model.nav === "loose"
         ? `<div class="empty loose-skeleton" data-testid="drive-loading" role="status"><p data-testid="loose-loading"><span class="spinner" aria-hidden="true"></span> ${escapeHtml(model.looseProgress || "Finding loose pieces…")}</p>${'<span class="skeleton-bar"></span>'.repeat(4)}</div>`
       : model.loadState === "loading" && !filled
-        ? `<div class="empty" data-testid="drive-loading" role="status"><span class="spinner" aria-hidden="true"></span> Loading your drive from Filecoin…</div>`
+        ? `<div class="empty" data-testid="drive-loading" role="status"><span class="spinner" aria-hidden="true"></span> Loading your folders from Filecoin…</div>`
         : filled
           ? ""
           : renderEmpty(model);
@@ -625,13 +625,13 @@ function renderLooseList(rows: LooseRow[]): string {
     .map(
       (group) => `<div class="loose-group" data-testid="loose-folder" data-folder="${escapeHtml(group.folder)}">
         <div class="loose-folder"><span class="material-symbols-outlined" aria-hidden="true">folder</span> ${escapeHtml(group.folder ? `/${group.folder}` : "/ (root)")} <span class="badge">Filecoin Drive</span>
-          <button type="button" class="text-button" data-action="loose-adopt-folder" data-folder="${escapeHtml(group.folder)}" data-testid="loose-adopt-folder">Add folder to drive</button></div>
+          <button type="button" class="text-button" data-action="loose-adopt-folder" data-folder="${escapeHtml(group.folder)}" data-testid="loose-adopt-folder">Add this folder</button></div>
         ${group.rows.map((piece) => renderLoose(piece)).join("")}
       </div>`,
     )
     .join("");
   const rest = other.length ? `<div class="loose-group"><div class="loose-folder"><span class="material-symbols-outlined" aria-hidden="true">inventory_2</span> Other pieces</div>${other.map((piece) => renderLoose(piece)).join("")}</div>` : "";
-  const all = `<div class="loose-adopt-all"><button type="button" class="primary slim" data-action="loose-adopt-all" data-testid="loose-adopt-all">Add all Filecoin Drive files to drive</button></div>`;
+  const all = `<div class="loose-adopt-all"><button type="button" class="primary slim" data-action="loose-adopt-all" data-testid="loose-adopt-all">Add all Filecoin Drive files to your folders</button></div>`;
   return all + groups + rest;
 }
 
@@ -675,7 +675,7 @@ function renderLoose(piece: LooseRow): string {
       <span class="cell size">${escapeHtml(formatBytes(piece.size))}</span>
       <span class="cell loose-actions">
         <button type="button" data-action="loose-download" data-cid="${escapeHtml(piece.pieceCid)}" data-testid="loose-download">${dir ? "Download CAR" : "Download"}</button>
-        <button type="button" data-action="loose-adopt" data-cid="${escapeHtml(piece.pieceCid)}" data-testid="loose-adopt">Add to drive</button>
+        <button type="button" data-action="loose-adopt" data-cid="${escapeHtml(piece.pieceCid)}" data-testid="loose-adopt">Add to folders</button>
         ${dir ? "" : `<button type="button" data-action="loose-open" data-cid="${escapeHtml(piece.pieceCid)}" data-testid="loose-open">Open</button>`}
         ${piece.ipfsRoot ? `<a href="${escapeHtml(gatewayUrl(piece.ipfsRoot))}" target="_blank" rel="noreferrer" data-testid="loose-gateway">Gateway</a>` : ""}
       </span>
@@ -702,7 +702,7 @@ function entryIcon(entry: Stat, kind: FelKind | ""): string {
 /** Drive-style empty state: icon, headline, one line of what to do next. */
 function renderEmpty(model: ViewModel): string {
   const hint: Record<string, [string, string]> = {
-    loose: ["inventory_2", "Pieces in this dataset that no folder points to show up here — for example files saved with Filecoin Drive. Select them and use “Add to drive” to file them without re-uploading."],
+    loose: ["inventory_2", "Pieces in this dataset that no folder points to show up here — for example files saved with Filecoin Drive. Select them and use “Add to folders” to file them without re-uploading."],
     trash: ["delete", "Items you remove stay here until you delete them forever."],
     starred: ["star", "Star files to find them here quickly."],
     recent: ["schedule", "Files you open or change show up here."],
@@ -829,6 +829,11 @@ function renderDialog(dialog: DialogState): string {
   </div>`;
 }
 
+/** The default volume is stored as "My Drive" (storage key, unchanged); users see "My Folders". */
+export function volumeLabel(name: string): string {
+  return name === "My Drive" ? "My Folders" : name;
+}
+
 function renderPreview(preview: PreviewState): string {
   let body = `<p>No preview for this file.</p>`;
   if (preview.kind === "image" && preview.url) body = `<img alt="${escapeHtml(preview.name)}" src="${preview.url}" />`;
@@ -868,7 +873,7 @@ function renderAccount(model: ViewModel): string {
         ${chainButton("calibration", "Calibration", model.chain)}
         ${chainButton("mainnet", "Mainnet", model.chain)}
       </div>
-      <p class="account-line">Volume ${escapeHtml(model.volumeName)} · encryption ${model.encrypted ? "on" : "off"}</p>
+      <p class="account-line">Volume ${escapeHtml(volumeLabel(model.volumeName))} · encryption ${model.encrypted ? "on" : "off"}</p>
     </section>`
     : `<div class="chain-toggle" role="group" aria-label="Network">
         ${chainButton("calibration", "Calibration", model.chain)}
@@ -976,7 +981,7 @@ function renderParticipantCopies(model: ViewModel): string {
       (copy) => `<li class="copy-row" data-testid="participant-copy">
         <span class="material-symbols-outlined" aria-hidden="true">file_copy</span>
         <span class="copy-what"><strong>${escapeHtml(copy.title || "Untitled")}</strong> — ${escapeHtml(copy.from)} saved a copy while you were away${copy.mode === "version" ? "" : " (it changed since, so it goes beside the original)"}</span>
-        <button type="button" class="text-btn" data-action="copy-take" data-copy-id="${escapeHtml(copy.id)}">${copy.mode === "version" ? "Save as new version" : "Copy to my drive"}</button>
+        <button type="button" class="text-btn" data-action="copy-take" data-copy-id="${escapeHtml(copy.id)}">${copy.mode === "version" ? "Save as new version" : "Copy to my folders"}</button>
         <button type="button" class="text-btn" data-action="copy-dismiss" data-copy-id="${escapeHtml(copy.id)}">Dismiss</button>
       </li>`,
     )

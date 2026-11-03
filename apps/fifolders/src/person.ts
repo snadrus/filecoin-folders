@@ -1,4 +1,5 @@
 /** FiFolders' read-only identity wiring (fiperson/view only): public RPC head + provider piece fetch. */
+import { withTransientRetry } from "fil-folders";
 import { CALIBRATION_REGISTRY, CALIBRATION_RPC, fetchPieceFromProviders, parseIdentity, registryHeadReader, resolveIdentity, type ResolvedIdentity } from "fiperson/view";
 import { createPublicClient, http } from "viem";
 // synapse-core rejects viem's own chain objects ("Unsupported chain: 314159"); use its chain definition.
@@ -9,7 +10,7 @@ let providers: Promise<string[]> | null = null;
 /** PDP provider URLs from the on-chain SP registry (cached per page). */
 function providerUrls(): Promise<string[]> {
   providers ??= import("@filoz/synapse-core/sp-registry")
-    .then(({ getPDPProviders }) => getPDPProviders(createPublicClient({ chain: calibration as never, transport: http(CALIBRATION_RPC) }) as never, { onlyActive: true, limit: 200n } as never))
+    .then(({ getPDPProviders }) => getPDPProviders(createPublicClient({ chain: calibration as never, transport: withTransientRetry(http(CALIBRATION_RPC)) }) as never, { onlyActive: true, limit: 200n } as never))
     .then((out) => out.providers.map((p) => p.pdp?.serviceURL ?? (p as unknown as { serviceURL?: string }).serviceURL ?? "").filter(Boolean))
     .catch(() => [] as string[]);
   return providers;

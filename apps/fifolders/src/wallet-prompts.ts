@@ -21,8 +21,8 @@ export function purposeText(intent: WalletIntent): string {
     case "Approve storage payments":
       return "Allow storage payments";
     case "Save changes":
-      return `Save ${intent.purpose ?? "changes"} to My Drive`;
-    case "Add to drive": {
+      return `Save ${intent.purpose ?? "changes"} to My Folders`;
+    case "Add to folders": {
       const n = /reference (\d+)/.exec(intent.purpose ?? "")?.[1] ?? "";
       return `Add ${n ? `${n} ` : ""}Filecoin Drive ${n === "1" ? "file" : "files"}`;
     }
@@ -79,12 +79,12 @@ export const INTENTS = {
     cost: "gas ~0.01 FIL",
   }),
   adopt: (files: number): WalletIntent => ({
-    title: "Add to drive",
+    title: "Add to folders",
     purpose: `reference ${files} Filecoin Drive ${files === 1 ? "file" : "files"} in your folders without re-uploading`,
     cost: "one manifest commit; gas ~0.01 FIL + a penny for the manifest piece",
   }),
   unlock: { title: "Unlock encrypted folder", purpose: "your signature derives the folder key", cost: "free" },
-  migrateDrive: { title: "Move drive pointer to new registry", purpose: "one-time move to FolderRegistry v2 (smaller chain data); history stays linked", cost: "gas ~0.01 FIL" },
+  migrateDrive: { title: "Move folders pointer to new registry", purpose: "one-time move to FolderRegistry v2 (smaller chain data); history stays linked", cost: "gas ~0.01 FIL" },
   migrateIdentity: { title: "Move identity pointer to new registry", purpose: "one-time move to FolderRegistry v2", cost: "gas ~0.01 FIL" },
 } as const;
 

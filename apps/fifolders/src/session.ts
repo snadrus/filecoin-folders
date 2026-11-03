@@ -1,3 +1,4 @@
+import { withTransientRetry } from "fil-folders";
 import { labelMigration } from "./wallet-prompts.js";
 import { calibration } from "@filoz/synapse-core/chains";
 import {
@@ -141,7 +142,7 @@ export async function connectInjected(options: {
   });
   const publicClient = createPublicClient({
     chain: filecoinCalibration,
-    transport: http(CALIBRATION_RPC),
+    transport: withTransientRetry(http(CALIBRATION_RPC)),
   });
   const { Synapse } = await import("@filoz/synapse-sdk");
   const synapse = new Synapse({

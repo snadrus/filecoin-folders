@@ -1,3 +1,4 @@
+import { withTransientRetry } from "fil-folders";
 import { INTENTS, intentText, sessionIntent, watchWalletPrompts, withWalletIntent, labelMigration } from "./wallet-prompts.js";
 import { calibration, mainnet, type Chain } from "@filoz/synapse-core/chains";
 import { isLegacyRegistry } from "./onboarding-logic.js";
@@ -129,7 +130,7 @@ export function createLiveOnboarding(): OnboardingIO {
   }
 
   function publicClient(choice: ChainChoice): PublicClient {
-    return createPublicClient({ chain: chainOf(choice), transport: http(rpcOf(choice)) });
+    return createPublicClient({ chain: chainOf(choice), transport: withTransientRetry(http(rpcOf(choice))) });
   }
 
   function registryConfig(choice: ChainChoice): { address: Address; fromBlock: bigint } {
@@ -338,7 +339,7 @@ export function createLiveOnboarding(): OnboardingIO {
       wrapMigration: labelMigration,
           address: config.address,
           publicClient: client,
-          walletClient: createWalletClient({ account: address, chain: chainOf(choice), transport: http(rpcOf(choice)) }),
+          walletClient: createWalletClient({ account: address, chain: chainOf(choice), transport: withTransientRetry(http(rpcOf(choice))) }),
           fromBlock: config.fromBlock,
           signer: "session-key",
         });
@@ -498,7 +499,7 @@ export function createLiveOnboarding(): OnboardingIO {
         privateKey,
         root: address,
         chain,
-        transport: http(rpcOf(choice)),
+        transport: withTransientRetry(http(rpcOf(choice))),
       });
       const expiresAt = now + BigInt(SESSION_TTL_SEC);
       const permissions = fifoldersPermissions();
@@ -561,7 +562,7 @@ export function createLiveOnboarding(): OnboardingIO {
         // FEVM gas estimates are loose; keep a 30% margin so the sweep never underfunds itself.
         const reserve = ((gas * 13n) / 10n) * maxFee;
         if (balance > reserve) {
-          const sender = createWalletClient({ account, chain, transport: http(rpcOf(choice)) });
+          const sender = createWalletClient({ account, chain, transport: withTransientRetry(http(rpcOf(choice))) });
           refunded = balance - reserve;
           const hash = await sender.sendTransaction({ account, chain, to: address, value: refunded, gas: (gas * 13n) / 10n, maxFeePerGas: maxFee });
           const receipt = await watchReceipt(choice, hash, "session", report);
@@ -673,7 +674,7 @@ export function createLiveOnboarding(): OnboardingIO {
         : createWalletClient({
             account: privateKeyToAccount(loadSession(chain.id, address)!.privateKey),
             chain,
-            transport: http(rpcOf(input.chain)),
+            transport: withTransientRetry(http(rpcOf(input.chain))),
           });
       const observed = observeRegistry(
         createViemRegistry({
@@ -745,7 +746,7 @@ export function createLiveOnboarding(): OnboardingIO {
       wrapMigration: labelMigration,
           address: config.address,
           publicClient: client,
-          walletClient: createWalletClient({ account: address, chain, transport: http(rpcOf(input.chain)) }),
+          walletClient: createWalletClient({ account: address, chain, transport: withTransientRetry(http(rpcOf(input.chain))) }),
           fromBlock: config.fromBlock,
           signer: "session-key",
         }),
@@ -779,7 +780,7 @@ export function createLiveOnboarding(): OnboardingIO {
       privateKey: stored.privateKey,
       root: address,
       chain,
-      transport: http(rpcOf(choice)),
+      transport: withTransientRetry(http(rpcOf(choice))),
       expirations: {
         [CreateDataSetPermission]: expiry,
         [AddPiecesPermission]: expiry,

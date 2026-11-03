@@ -59,3 +59,5 @@ export {
   resolvePath,
 } from "./unixfs.js";
 export type { CarBlocks, FixtureNode, UnixfsEntry } from "./unixfs.js";
+
+export { isTransientRpcError, retryTransient, withTransientRetry, type TransientRetryOptions } from "./rpc-retry.js";

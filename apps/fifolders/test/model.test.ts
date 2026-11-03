@@ -46,7 +46,7 @@ describe("model", () => {
   });
 
   it("builds breadcrumbs and trash paths", () => {
-    expect(breadcrumbs("drive", "/docs/img").map((crumb) => crumb.label)).toEqual(["My Drive", "docs", "img"]);
+    expect(breadcrumbs("drive", "/docs/img").map((crumb) => crumb.label)).toEqual(["My Folders", "docs", "img"]);
     expect(breadcrumbs("trash", "/.trash")).toEqual([{ label: "Trash", path: "/.trash" }]);
     expect(isTrashPath("/.trash/a.txt")).toBe(true);
     expect(isTrashPath("/trash")).toBe(false);

@@ -1,3 +1,4 @@
+import { withTransientRetry } from "fil-folders";
 import { friendlyError } from "./friendly-error.js";
 import { askUploadConflict } from "./upload-conflict.js";
 import { showVersions } from "./versions-dialog.js";
@@ -953,7 +954,7 @@ export class DriveApp {
 
   private async uploadList(files: File[], dest: string): Promise<void> {
     if (files.length && !this.volume && this.panel && !(await this.waitForVolume(15_000))) {
-      this.toast("Your drive is still opening — try the upload again in a moment.");
+      this.toast("Your folders are still opening — try the upload again in a moment.");
       this.render();
       return;
     }
@@ -1353,7 +1354,7 @@ export class DriveApp {
   }
 
   private async openMove(paths: string[]): Promise<void> {
-    const folders = [{ path: "/", label: "My Drive" }];
+    const folders = [{ path: "/", label: "My Folders" }];
     for (const entry of await this.walk("/")) {
       if (entry.type === "dir" && !isTrashPath(entry.path)) folders.push({ path: entry.path, label: entry.path });
     }
@@ -2215,7 +2216,7 @@ export class DriveApp {
   }
 
   private rememberDone(op: FifoldersOp): void {
-    const label = op.kind === "fel-save" ? `Saved “${op.name ?? op.label}” to My Drive` : cleanOpLabel(op.label);
+    const label = op.kind === "fel-save" ? `Saved “${op.name ?? op.label}” to My Folders` : cleanOpLabel(op.label);
     const row: ActivityRow = { id: op.id, label, status: "done", ...(op.detail ? { detail: op.detail } : {}) };
     this.recentDone = [row, ...this.recentDone.filter((item) => item.id !== op.id)].slice(0, 8);
     this.#doneAt.set(op.id, Date.now());
@@ -2291,7 +2292,7 @@ export class DriveApp {
       const synapse = Synapse.create({
         account: account.address,
         chain: calibration,
-        transport: http(CALIBRATION_RPC),
+        transport: withTransientRetry(http(CALIBRATION_RPC)),
         source: "fifolders",
       });
       const info = await synapse.storage.getStorageInfo();
@@ -2503,8 +2504,8 @@ export class DriveApp {
     const plaintext = this.encrypted ? " This volume is encrypted, but adopted files stay plaintext (they are public on Filecoin already)." : "";
     this.dialog = {
       mode: "adopt",
-      title: `Add ${files} ${files === 1 ? "file" : "files"} to drive`,
-      submit: "Add to drive",
+      title: `Add ${files} ${files === 1 ? "file" : "files"} to your folders`,
+      submit: "Add to folders",
       value: "/",
       paths: cids,
       note: `Destination folder. Filecoin Drive folder paths are kept under it. No re-upload: one manifest commit (gas ~0.01 FIL + a penny for the manifest piece). Files keep depending on the Filecoin Drive dataset staying paid.${plaintext}`,
@@ -2517,19 +2518,19 @@ export class DriveApp {
     if (this.volume && this.readOnly && this.onNeedSession) {
       // Lazy session key: set it up now, then add the files right after (no second click).
       this.#afterUpgrade.push(() => this.adoptPieces(cids, base));
-      this.toast("Adding to the drive needs a one-time wallet session (1 signature). Adding right after.");
+      this.toast("Adding to your folders needs a one-time wallet session (1 signature). Adding right after.");
       this.requestSession();
       this.render();
       return;
     }
     if (!this.volume || this.readOnly) {
-      this.toast("Finish wallet setup first — adding to the drive needs a commit.");
+      this.toast("Finish wallet setup first — adding to your folders needs a commit.");
       this.render();
       return;
     }
     const items = adoptItems(this.looseRows.filter((row) => cids.includes(row.pieceCid)), base);
     if (!items.length) return;
-    const id = this.beginOp({ kind: "commit", label: `Add ${items.length} Filecoin Drive ${items.length === 1 ? "file" : "files"} to drive`, stage: "saving" });
+    const id = this.beginOp({ kind: "commit", label: `Add ${items.length} Filecoin Drive ${items.length === 1 ? "file" : "files"} to your folders`, stage: "saving" });
     const ok = await this.run(async () => {
       await withWalletIntent(INTENTS.adopt(items.length), () => this.volume!.adopt(items));
       this.#draft = null;
@@ -2537,8 +2538,8 @@ export class DriveApp {
     });
     if (ok) {
       this.finishOp(id);
-      this.toast(`Added ${items.length} ${items.length === 1 ? "file" : "files"} to your drive.`);
-    } else this.failOp(id, "Couldn't add to drive");
+      this.toast(`Added ${items.length} ${items.length === 1 ? "file" : "files"} to your folders.`);
+    } else this.failOp(id, "Couldn't add to your folders");
     await this.refresh();
   }
   /** Filecoin Drive directory pieces expanded in the Loose pieces view. */
@@ -2616,7 +2617,7 @@ export class DriveApp {
     const activity: ActivityRow[] = [
       ...pending.filter((op) => !(op.status === "error" && dismissed.has(`${op.id}@${op.updated}`))).map((op): ActivityRow => ({
         id: op.id,
-        label: op.kind === "fel-save" ? `Save “${op.name ?? op.label}” to My Drive` : cleanOpLabel(op.label),
+        label: op.kind === "fel-save" ? `Save “${op.name ?? op.label}” to My Folders` : cleanOpLabel(op.label),
         ...(op.error || op.detail ? { detail: [op.error, op.detail].filter(Boolean).join(" · ") } : {}),
         status: op.status === "error" ? "error" : "pending",
       })),

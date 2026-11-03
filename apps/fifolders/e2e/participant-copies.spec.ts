@@ -31,7 +31,7 @@ test("owner takes participant copies into their drive: new version or side by si
   await page.screenshot({ path: "/workspace/fipen-after-participant-copies.png" });
   await section.getByRole("button", { name: "Save as new version" }).click();
   await expect(page.getByTestId("participant-copy")).toHaveCount(1);
-  await section.getByRole("button", { name: "Copy to my drive" }).click();
+  await section.getByRole("button", { name: "Copy to my folders" }).click();
   await expect(page.getByTestId("participant-copies")).toHaveCount(0);
   expect(await page.evaluate(() => localStorage.getItem("fifolders:copies"))).toBe("[]");
   await expect(page.getByTestId("entry").filter({ hasText: "FiPen" })).toBeVisible({ timeout: 20_000 });
