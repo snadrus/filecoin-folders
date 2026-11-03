@@ -350,3 +350,19 @@ test("S65 Delete shows 'moved to trash · Undo' like Drive, and Undo puts the fi
   await expect(rows).toHaveCount(1);
   await expect(rows.first()).toContainText("oops.txt");
 });
+
+test("S66 Uploads panel collapses to 'N uploads complete' when done (Drive), and expands on click", async ({ page }) => {
+  await connect(page);
+  await page.getByTestId("file-input").setInputFiles([
+    { name: "u1.txt", mimeType: "text/plain", buffer: Buffer.from("1") },
+    { name: "u2.txt", mimeType: "text/plain", buffer: Buffer.from("2") },
+  ]);
+  const panel = page.getByTestId("upload-panel");
+  await expect(page.getByTestId("upload-title")).toHaveText("2 uploads complete");
+  await expect(panel).toHaveAttribute("data-collapsed", "true");
+  await expect(panel.locator(".upload-row")).toHaveCount(0);
+  await page.getByTestId("toggle-uploads").click();
+  await expect(panel.locator(".upload-row")).toHaveCount(2);
+  await page.getByTestId("toggle-uploads").click();
+  await expect(panel.locator(".upload-row")).toHaveCount(0);
+});

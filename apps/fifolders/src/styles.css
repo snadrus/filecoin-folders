@@ -281,6 +281,8 @@ button:disabled { cursor: default; opacity: 0.45; }
   overflow: hidden;
 }
 .uploads header { padding: 12px 14px; font-weight: 500; border-bottom: 1px solid var(--line); }
+.uploads .upload-actions { display: flex; align-items: center; gap: 4px; }
+.uploads[data-collapsed="true"] header { border-bottom: 0; }
 .upload-row { display: grid; grid-template-columns: 1fr; gap: 4px; padding: 10px 14px; }
 .upload-row progress { width: 100%; accent-color: var(--accent); }
 .upload-row[data-status="error"] progress { accent-color: var(--danger); }
