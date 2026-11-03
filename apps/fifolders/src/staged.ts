@@ -34,13 +34,31 @@ export function loadStaged(owner: string, volumeName: string): StagedFile {
   }
 }
 
-export function saveStaged(owner: string, volumeName: string, file: StagedFile): void {
+/**
+ * Keeps unsaved edits across a reload. Returns false when they are too big for localStorage (a few MB):
+ * the edits still live in memory and Save still works; only the reload backup is skipped (no partial copy is kept).
+ */
+export function saveStaged(owner: string, volumeName: string, file: StagedFile): boolean {
+  const key = stagedKey(owner, volumeName);
   if (!file.ops.length) {
-    localStorage.removeItem(stagedKey(owner, volumeName));
-    return;
+    localStorage.removeItem(key);
+    return true;
   }
-  localStorage.setItem(stagedKey(owner, volumeName), JSON.stringify({ v: 1, ...file }));
+  try {
+    localStorage.setItem(key, JSON.stringify({ v: 1, ...file }));
+    return true;
+  } catch (error) {
+    if (!isQuotaError(error)) throw error;
+    localStorage.removeItem(key);
+    return false;
+  }
 }
+
+function isQuotaError(error: unknown): boolean {
+  return error instanceof DOMException && (error.name === "QuotaExceededError" || error.name === "NS_ERROR_DOM_QUOTA_REACHED" || error.code === 22);
+}
+
+export const STAGED_TOO_BIG = "These changes are too large to keep if the tab closes — Save before leaving.";
 
 /** Absent or any value other than "0" means uploads commit immediately. */
 export function autoSaveUploads(): boolean {
