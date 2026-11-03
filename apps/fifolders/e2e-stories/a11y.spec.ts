@@ -22,3 +22,12 @@ for (const url of ["/?onboard=1&pay=ready&datasets=1", "/identity/", "/ficlub/",
     expect(await page.evaluate(audit)).toEqual([]);
   });
 }
+
+test("S61 icon buttons announce their purpose, not the icon ligature", async ({ page }) => {
+  await page.goto("/?onboard=1&pay=ready&datasets=1");
+  await page.getByTestId("connect-wallet").click();
+  await page.getByTestId("nav-drive").waitFor();
+  await expect(page.getByRole("button", { name: "List view" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Grid view" })).toBeVisible();
+  await expect(page.getByRole("button", { name: /view_list|grid_view/ })).toHaveCount(0);
+});

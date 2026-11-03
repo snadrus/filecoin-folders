@@ -555,8 +555,8 @@ function renderBrowser(model: ViewModel): string {
             ${sortOption("size", "File size", model.sortKey)}
           </select>
         </label>
-        <button type="button" data-testid="view-list" data-action="view-list" aria-pressed="${model.view === "list"}" title="List"><span class="material-symbols-outlined">view_list</span></button>
-        <button type="button" data-testid="view-grid" data-action="view-grid" aria-pressed="${model.view === "grid"}" title="Grid"><span class="material-symbols-outlined">grid_view</span></button>
+        <button type="button" data-testid="view-list" data-action="view-list" aria-pressed="${model.view === "list"}" title="List" aria-label="List view"><span class="material-symbols-outlined" aria-hidden="true">view_list</span></button>
+        <button type="button" data-testid="view-grid" data-action="view-grid" aria-pressed="${model.view === "grid"}" title="Grid" aria-label="Grid view"><span class="material-symbols-outlined" aria-hidden="true">grid_view</span></button>
       </div>
     </div>
     ${blocked}
@@ -744,7 +744,7 @@ function renderDetails(details: ViewModel["details"] & object): string {
         .join("")
     : `<li>No commits for this item yet</li>`;
   return `<aside class="details" data-testid="details">
-    <header><h2>${escapeHtml(details.stat.name)}</h2><button type="button" data-action="close-details" aria-label="Close details"><span class="material-symbols-outlined">close</span></button></header>
+    <header><h2>${escapeHtml(details.stat.name)}</h2><button type="button" data-action="close-details" aria-label="Close details"><span class="material-symbols-outlined" aria-hidden="true">close</span></button></header>
     <p class="meta">${details.stat.type === "dir" ? "Folder" : escapeHtml(details.stat.mime || "File")} · ${details.stat.type === "dir" ? "—" : escapeHtml(formatBytes(details.stat.size))}</p>
     <label>Piece CID</label>
     <div class="cid-row">
@@ -823,7 +823,7 @@ function renderPreview(preview: PreviewState): string {
   else if (preview.kind === "text") body = `<pre data-testid="preview-text">${escapeHtml(preview.text ?? "")}</pre>`;
   return `<div class="backdrop" data-testid="preview">
     <div class="preview" role="dialog" aria-label="${escapeHtml(preview.name)}">
-      <header><h2>${escapeHtml(preview.name)}</h2><button type="button" data-action="close-preview" aria-label="Close preview"><span class="material-symbols-outlined">close</span></button></header>
+      <header><h2>${escapeHtml(preview.name)}</h2><button type="button" data-action="close-preview" aria-label="Close preview"><span class="material-symbols-outlined" aria-hidden="true">close</span></button></header>
       <div class="preview-body">${body}</div>
     </div>
   </div>`;
