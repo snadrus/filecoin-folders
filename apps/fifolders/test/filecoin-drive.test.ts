@@ -63,3 +63,14 @@ describe("Filecoin Drive metadata (filecoin-pin-website PR #250 shape)", () => {
     expect(out[0]!.pieceCid).toBe("z");
   });
 });
+
+import { adoptItems } from "../src/loose.js";
+describe("adoptItems", () => {
+  it("keeps Filecoin Drive paths under the destination and expands directory pieces", () => {
+    const fixture = filecoinDriveFixture();
+    const rows = loosePieces(fixture.map((p) => ({ pieceCid: p.pieceCid, bytes: p.bytes })), new Set(), new Map(fixture.map((p) => [p.pieceCid, p.detail])));
+    const items = adoptItems(rows, "/FD");
+    expect(items.map((i) => i.path).sort()).toEqual(["/FD/docs/reports/report.txt", "/FD/hello.txt", "/FD/projects/site/css/main.css", "/FD/projects/site/index.html"]);
+    expect(items.every((i) => i.ref.piece.startsWith("bafkzcibfixture"))).toBe(true);
+  });
+});

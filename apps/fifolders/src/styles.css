@@ -357,3 +357,6 @@ button:disabled { cursor: default; opacity: 0.45; }
 .loose-actions a { color: var(--accent-dark); font-size: 13px; margin-left: 6px; }
 .unixfs-entry { background: #fbfcfe; }
 .dataset-drive.fcdrive { color: #3b6fb6; }
+.loose-adopt-all { display: flex; justify-content: flex-end; margin: 0 0 8px; }
+.loose-folder .text-button { margin-left: auto; font-size: 12px; }
+.fcdrive-badge { background: var(--restore); color: var(--accent-dark); }

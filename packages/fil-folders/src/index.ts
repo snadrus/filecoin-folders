@@ -29,6 +29,7 @@ export { createSynapseStorage, fundingShortfall } from "./storage/synapse.js";
 export type { ReplicationNotice, SynapseStorageOptions } from "./storage/synapse.js";
 export type { Storage } from "./storage/types.js";
 export type {
+  AdoptRef,
   ContentEnc,
   EncryptionOptions,
   EncryptionSigner,
@@ -42,3 +43,16 @@ export type {
 } from "./types.js";
 export { DEFAULT_DIR_THRESHOLD, Volume, openVolume } from "./volume.js";
 export type { OpenVolumeOptions } from "./volume.js";
+export {
+  buildFixtureCar,
+  cidToString as unixfsCidToString,
+  decodePb,
+  decodeUnixfs,
+  entryKind,
+  listDirectory,
+  looksLikeCar,
+  parseCar,
+  readFile as readUnixfsFile,
+  resolvePath,
+} from "./unixfs.js";
+export type { CarBlocks, FixtureNode, UnixfsEntry } from "./unixfs.js";

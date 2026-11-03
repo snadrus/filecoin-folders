@@ -79,6 +79,9 @@ function parseEntry(value: unknown): ManifestEntry {
     parsed.ipfs = entry.ipfs;
   }
   if (entry.importedCar === true) parsed.importedCar = true;
+  // Additive fields: unknown formats are ignored so a newer writer never breaks this reader.
+  if (entry.format === "unixfs") parsed.format = "unixfs";
+  if (typeof entry.located === "string" && entry.located.length > 0) parsed.located = entry.located;
   if (entry.enc !== undefined) parsed.enc = parseEnc(entry.enc);
   if (entry.entries !== undefined) {
     if (!Array.isArray(entry.entries)) throw new Error("manifest directory entries are invalid");

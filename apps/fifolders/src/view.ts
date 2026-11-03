@@ -49,6 +49,8 @@ export interface DialogState {
   testid: string;
   folders?: { path: string; label: string }[];
   dest?: string;
+  note?: string;
+  label?: string;
 }
 
 export interface ContextState {
@@ -560,7 +562,10 @@ function renderEntry(entry: Stat, model: ViewModel): string {
   const icon = entryIcon(entry, kind as FelKind | "");
   const star = model.stars.has(entry.path) ? `<span class="material-symbols-outlined filled star" aria-label="Starred">star</span>` : "";
   const badge = model.badges[entry.path] ? `<span class="badge" data-testid="save-badge">${escapeHtml(model.badges[entry.path] ?? "")}</span>` : "";
-  const name = `${icon}<span class="name">${escapeHtml(entry.name)}</span>${badge}${star}`;
+  const adopted = entry.type === "file" && entry.format === "unixfs"
+    ? `<span class="badge fcdrive-badge" data-testid="adopted-badge" title="Referenced from a Filecoin Drive piece; stored unencrypted">Filecoin Drive · plaintext</span>`
+    : "";
+  const name = `${icon}<span class="name">${escapeHtml(entry.name)}</span>${adopted}${badge}${star}`;
   const body =
     model.view === "grid"
       ? name
@@ -576,13 +581,15 @@ function renderLooseList(rows: LooseRow[]): string {
   const groups = groupByFolder(drive)
     .map(
       (group) => `<div class="loose-group" data-testid="loose-folder" data-folder="${escapeHtml(group.folder)}">
-        <div class="loose-folder"><span class="material-symbols-outlined" aria-hidden="true">folder</span> ${escapeHtml(group.folder ? `/${group.folder}` : "/ (root)")} <span class="badge">Filecoin Drive</span></div>
+        <div class="loose-folder"><span class="material-symbols-outlined" aria-hidden="true">folder</span> ${escapeHtml(group.folder ? `/${group.folder}` : "/ (root)")} <span class="badge">Filecoin Drive</span>
+          <button type="button" class="text-button" data-action="loose-adopt-folder" data-folder="${escapeHtml(group.folder)}" data-testid="loose-adopt-folder">Add folder to drive</button></div>
         ${group.rows.map((piece) => renderLoose(piece)).join("")}
       </div>`,
     )
     .join("");
   const rest = other.length ? `<div class="loose-group"><div class="loose-folder"><span class="material-symbols-outlined" aria-hidden="true">inventory_2</span> Other pieces</div>${other.map((piece) => renderLoose(piece)).join("")}</div>` : "";
-  return groups + rest;
+  const all = `<div class="loose-adopt-all"><button type="button" class="primary slim" data-action="loose-adopt-all" data-testid="loose-adopt-all">Add all Filecoin Drive files to drive</button></div>`;
+  return all + groups + rest;
 }
 
 function renderUnixfsEntries(piece: LooseRow, entries: UnixfsEntry[], prefix: string, depth: number): string {
@@ -625,6 +632,7 @@ function renderLoose(piece: LooseRow): string {
       <span class="cell size">${escapeHtml(formatBytes(piece.size))}</span>
       <span class="cell loose-actions">
         <button type="button" data-action="loose-download" data-cid="${escapeHtml(piece.pieceCid)}" data-testid="loose-download">${dir ? "Download CAR" : "Download"}</button>
+        <button type="button" data-action="loose-adopt" data-cid="${escapeHtml(piece.pieceCid)}" data-testid="loose-adopt">Add to drive</button>
         ${dir ? "" : `<button type="button" data-action="loose-open" data-cid="${escapeHtml(piece.pieceCid)}" data-testid="loose-open">Open</button>`}
         ${piece.ipfsRoot ? `<a href="${escapeHtml(gatewayUrl(piece.ipfsRoot))}" target="_blank" rel="noreferrer" data-testid="loose-gateway">Gateway</a>` : ""}
       </span>
@@ -741,13 +749,14 @@ function renderDialog(dialog: DialogState): string {
           )
           .join("")}</select>
       </label>`
-    : `<label class="field">Name
+    : `<label class="field">${escapeHtml(dialog.label ?? "Name")}
         <input data-testid="dialog-input" name="name" value="${escapeHtml(dialog.value)}" autocomplete="off" />
       </label>`;
   return `<div class="backdrop" data-testid="dialog">
     <form class="dialog" role="dialog" aria-label="${escapeHtml(dialog.title)}">
       <h2>${escapeHtml(dialog.title)}</h2>
       ${folders}
+      ${dialog.note ? `<p class="note" data-testid="dialog-note">${escapeHtml(dialog.note)}</p>` : ""}
       <div class="dialog-actions">
         <button type="button" data-action="close-dialog">Cancel</button>
         <button class="primary" type="submit" data-testid="${dialog.testid}">${escapeHtml(dialog.submit)}</button>

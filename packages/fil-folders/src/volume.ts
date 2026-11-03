@@ -8,7 +8,8 @@ import { FIL_FOLDERS_NAMESPACE, namespaceId, volumeKey } from "./ids.js";
 import { mergeTrees } from "./merge.js";
 import { normalizePath } from "./paths.js";
 import type { Registry } from "./registry/types.js";
-import { withPiecePadding } from "./pad.js";
+import { unpadPiece, withPiecePadding } from "./pad.js";
+import { looksLikeCar, parseCar as parseUnixfsCar, readFile as readUnixfsFile, type CarBlocks } from "./unixfs.js";
 import { createSynapseStorage } from "./storage/synapse.js";
 import type { Storage } from "./storage/types.js";
 import {
@@ -25,6 +26,7 @@ import {
   toStat,
 } from "./tree.js";
 import type {
+  AdoptRef,
   DirNode,
   EncryptionOptions,
   FileNode,
@@ -112,6 +114,7 @@ export class Volume {
   /** Parsed CAR blocks and legacy directory pieces, keyed by content or piece CID. */
   #blockIndex = new Map<string, Uint8Array>();
   #pieceBytes = new Map<string, Uint8Array>();
+  #unixfsCars = new Map<string, CarBlocks>();
   #ranges = new Map<string, Map<string, { offset: number; length: number }>>();
 
   constructor(options: OpenVolumeOptions, storage: Storage) {
@@ -173,6 +176,38 @@ export class Volume {
     });
     if (!stat) throw new Error("put did not produce a file");
     return stat;
+  }
+
+  /**
+   * Reference existing UnixFS pieces (Filecoin Pin "Filecoin Drive") at `path`s without
+   * re-uploading. One compare-and-swap commit for the batch. Adopted files are plaintext.
+   */
+  async adopt(items: { path: string; ref: AdoptRef }[]): Promise<Stat[]> {
+    const now = this.#now();
+    const stats: Stat[] = [];
+    await this.#edit((tree) => {
+      let next = tree;
+      for (const { path, ref } of items) {
+        const file: Omit<FileNode, "type" | "name"> = {
+          pieceCid: ref.cid,
+          located: ref.piece,
+          size: ref.size,
+          mtime: ref.mtime ?? now,
+          format: "unixfs",
+        };
+        if (ref.mime) file.mime = ref.mime;
+        if (ref.ipfs) file.ipfs = ref.ipfs;
+        if (ref.importedCar) file.importedCar = true;
+        next = putFile(next, path, file, now);
+      }
+      for (const { path } of items) {
+        const norm = normalizePath(path);
+        const node = find(next, norm);
+        if (node) stats.push(toStat(node, norm, this.name));
+      }
+      return next;
+    });
+    return stats;
   }
 
   async get(path: string): Promise<Uint8Array> {
@@ -292,6 +327,7 @@ export class Volume {
   }
 
   async #readFile(node: FileNode): Promise<Uint8Array> {
+    if (node.format === "unixfs") return this.#readUnixfs(node);
     const staged = this.#blobs.get(node.pieceCid);
     if (staged) return staged;
     const cached = this.#blockIndex.get(node.pieceCid);
@@ -304,6 +340,24 @@ export class Volume {
     const inline = this.#blockIndex.get(node.pieceCid);
     if (inline) return inline;
     return this.storage.get(node.pieceCid);
+  }
+
+  /** Adopted Filecoin Drive file: unwrap UnixFS from its CAR piece; an imported CAR is served raw. */
+  async #readUnixfs(node: FileNode): Promise<Uint8Array> {
+    const piece = node.located ?? node.pieceCid;
+    let bytes = this.#pieceBytes.get(piece);
+    if (!bytes) {
+      bytes = await this.storage.get(piece);
+      this.#pieceBytes.set(piece, bytes);
+    }
+    const raw = looksLikeCar(bytes) ? bytes : unpadPiece(bytes);
+    if (node.importedCar) return raw;
+    let car = this.#unixfsCars.get(piece);
+    if (!car) {
+      car = parseUnixfsCar(raw);
+      this.#unixfsCars.set(piece, car);
+    }
+    return readUnixfsFile(car, node.pieceCid);
   }
 
   async #blockFromPiece(piece: string, cid: string): Promise<Uint8Array | undefined> {
@@ -532,6 +586,10 @@ export class Volume {
         if (entry.mime !== undefined) file.mime = entry.mime;
         if (entry.ipfs !== undefined) file.ipfs = entry.ipfs;
         if (entry.importedCar) file.importedCar = true;
+        if (entry.format === "unixfs") {
+          file.format = "unixfs";
+          if (entry.located) file.located = entry.located;
+        }
         if (entry.enc?.iv) file.enc = { alg: "A256GCM", iv: entry.enc.iv };
         entries.push(file);
       } else if (entry.entries) {
@@ -586,7 +644,7 @@ function locatedIndex(dir: DirNode, blocks: ReadonlyMap<string, Uint8Array>): Re
   const walk = (node: DirNode): void => {
     for (const child of node.entries) {
       if (child.type === "dir") walk(child);
-      else if (child.located && !blocks.has(child.pieceCid)) located[child.pieceCid] = child.located;
+      else if (child.format !== "unixfs" && child.located && !blocks.has(child.pieceCid)) located[child.pieceCid] = child.located;
     }
   };
   walk(dir);
@@ -596,7 +654,7 @@ function locatedIndex(dir: DirNode, blocks: ReadonlyMap<string, Uint8Array>): Re
 function stampLocated(dir: DirNode, piece: string, blocks: ReadonlyMap<string, Uint8Array>): void {
   for (const child of dir.entries) {
     if (child.type === "dir") stampLocated(child, piece, blocks);
-    else if (blocks.has(child.pieceCid)) child.located = piece;
+    else if (child.format !== "unixfs" && blocks.has(child.pieceCid)) child.located = piece;
   }
 }
 
@@ -611,6 +669,10 @@ function fileEntry(file: FileNode, sealed: { name: string; nameIv?: string }): M
   if (file.mime !== undefined) entry.mime = file.mime;
   if (file.ipfs !== undefined) entry.ipfs = file.ipfs;
   if (file.importedCar) entry.importedCar = true;
+  if (file.format === "unixfs") {
+    entry.format = "unixfs";
+    if (file.located) entry.located = file.located;
+  }
   const enc = packEnc(file.enc?.iv, sealed.nameIv);
   if (enc) entry.enc = enc;
   return entry;

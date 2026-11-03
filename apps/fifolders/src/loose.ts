@@ -28,6 +28,8 @@ export interface LoosePiece {
   /** Directory listing (recursive) for UnixFS directory pieces. */
   children?: UnixfsEntry[];
   pieceId?: string;
+  /** UnixFS CID of the file inside the piece (single-file pieces and imported CARs). */
+  fileCid?: string;
 }
 
 const CATALOG_KEY = "fifolders:piece-catalog";
@@ -130,7 +132,15 @@ function driveRow(piece: PieceBlob, drive: NonNullable<ReturnType<typeof driveIn
     origin: "drive",
     ...(pieceId ? { pieceId } : {}),
   };
-  if (drive.importedCar) return { ...base, unixfs: "car", mime: "application/vnd.ipld.car" };
+  if (drive.importedCar) {
+    let root = drive.ipfsRootCid;
+    try {
+      if (!root && looksLikeCar(raw)) root = parseCar(raw).roots[0] ?? "";
+    } catch {
+      // keep the metadata root
+    }
+    return { ...base, unixfs: "car", mime: "application/vnd.ipld.car", ...(root ? { fileCid: root, ipfsRoot: root } : {}) };
+  }
   if (!raw.byteLength || !looksLikeCar(raw)) return base;
   try {
     const car = parseCar(raw);
@@ -144,12 +154,12 @@ function driveRow(piece: PieceBlob, drive: NonNullable<ReturnType<typeof driveIn
       const only = children.length === 1 ? children[0] : undefined;
       if (only && only.kind !== "directory" && (!drive.fileName || only.name === drive.fileName)) {
         const bytes = readFile(car, only.cid);
-        return { ...withRoot, unixfs: "file", bytes, size: bytes.byteLength, mime: sniffMime(withRoot.name, bytes) };
+        return { ...withRoot, unixfs: "file", fileCid: only.cid, bytes, size: bytes.byteLength, mime: sniffMime(withRoot.name, bytes) };
       }
       return { ...withRoot, unixfs: "directory", children, size: children.reduce((sum, child) => sum + sizeOf(child), 0), mime: "inode/directory" };
     }
     const bytes = readFile(car, root);
-    return { ...withRoot, unixfs: "file", bytes, size: bytes.byteLength, mime: sniffMime(withRoot.name, bytes) };
+    return { ...withRoot, unixfs: "file", fileCid: root, bytes, size: bytes.byteLength, mime: sniffMime(withRoot.name, bytes) };
   } catch {
     return base;
   }
@@ -170,4 +180,43 @@ export function directoryFile(piece: LoosePiece, path: string): Uint8Array {
     cid = next.cid;
   }
   return readFile(car, cid);
+}
+
+export interface AdoptItem {
+  path: string;
+  ref: { cid: string; piece: string; size: number; mime?: string; ipfs?: string; importedCar?: boolean; mtime?: number };
+}
+
+function joinPath(...parts: string[]): string {
+  const joined = parts.flatMap((part) => part.split("/")).filter(Boolean).join("/");
+  return `/${joined}`;
+}
+
+/**
+ * Manifest entries for Filecoin Drive pieces placed under `base`, keeping each piece's
+ * Filecoin Drive folder path. Directory pieces adopt every file inside them.
+ */
+export function adoptItems(rows: readonly LoosePiece[], base: string): AdoptItem[] {
+  const out: AdoptItem[] = [];
+  for (const row of rows) {
+    if (row.origin !== "drive") continue;
+    const folder = row.folder ?? "";
+    const common = { piece: row.pieceCid, ...(row.ipfsRoot ? { ipfs: row.ipfsRoot } : {}), ...(row.uploaded ? { mtime: row.uploaded } : {}) };
+    if (row.unixfs === "directory" && row.children) {
+      const walk = (entries: UnixfsEntry[], prefix: string): void => {
+        for (const entry of entries) {
+          const path = joinPath(base, folder, row.name, prefix, entry.name);
+          if (entry.kind === "directory") walk(entry.children ?? [], `${prefix}/${entry.name}`);
+          else out.push({ path, ref: { ...common, cid: entry.cid, size: entry.size } });
+        }
+      };
+      walk(row.children, "");
+    } else if (row.fileCid) {
+      out.push({
+        path: joinPath(base, folder, row.name),
+        ref: { ...common, cid: row.fileCid, size: row.size, mime: row.mime, ...(row.unixfs === "car" ? { importedCar: true } : {}) },
+      });
+    }
+  }
+  return out;
 }
