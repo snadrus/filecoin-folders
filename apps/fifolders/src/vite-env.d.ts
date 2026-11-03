@@ -11,6 +11,11 @@ interface ImportMetaEnv {
   readonly VITE_FOLDER_REGISTRY_MAINNET?: string;
   readonly VITE_REGISTRY_FROM_BLOCK_MAINNET?: string;
   readonly VITE_WALLETCONNECT_PROJECT_ID?: string;
+  readonly VITE_FICLUB_ADDRESS_CALIBRATION?: string;
+  readonly VITE_FICLUB_ADDRESS_MAINNET?: string;
+  readonly VITE_FICLUB_ADDRESS_LOCAL?: string;
+  readonly VITE_FICLUB_RPC?: string;
+  readonly VITE_FICLUB_CHAIN_ID?: string;
 }
 
 interface Window {
