@@ -7,6 +7,8 @@ export interface PieceFallbackOptions {
   verify: (bytes: Uint8Array, pieceCid: string) => boolean | Promise<boolean>;
   fetch?: typeof fetch;
   missTtlMs?: number;
+  /** How long the SDK gets alone before the other providers are asked in parallel. */
+  sdkHeadStartMs?: number;
   /** IPFS gateways for bafkrei… CIDs (Filecoin Pin), verified by sha-256. */
   gateways?: string[];
   now?: () => number;
@@ -72,6 +74,11 @@ export function isPrivateHost(url: string): boolean {
   return false;
 }
 
+/** An http:// provider from an https:// page is blocked by the browser as mixed content: don't bother. */
+function isMixedContent(url: string): boolean {
+  return typeof location !== "undefined" && location.protocol === "https:" && url.startsWith("http:");
+}
+
 export interface PieceFallback {
   get(pieceCid: string): Promise<Uint8Array>;
   /** For tests/diagnostics: requests sent so far. */
@@ -99,6 +106,7 @@ export function withPieceFallback(sdkGet: (pieceCid: string) => Promise<Uint8Arr
   const downTtlMs = 5 * 60_000;
   const isDown = (base: string) => now() - (down.get(base) ?? -Infinity) < downTtlMs;
   const gateways = options.gateways ?? IPFS_GATEWAYS;
+  const sdkHeadStartMs = options.sdkHeadStartMs ?? 2_500;
 
   const missedBy = (pieceCid: string) => {
     let set = missing.get(pieceCid);
@@ -166,21 +174,30 @@ export function withPieceFallback(sdkGet: (pieceCid: string) => Promise<Uint8Arr
       }
     }
     let sdkError: unknown;
+    const skip = missedBy(pieceCid);
+    const viaProviders = async (): Promise<Uint8Array> => {
+      const urls = (await options.providerUrls().catch(() => [] as string[])).filter((u) => !skip.has(u) && !isDown(u) && !isPrivateHost(u) && !isMixedContent(u));
+      if (!urls.length) throw new Error("no other providers");
+      reportLoadStep("Trying other storage providers…");
+      return Promise.any(urls.map((u) => tryProvider(u, pieceCid)));
+    };
     if (!(now() - (sdkMissed.get(pieceCid) ?? -Infinity) < missTtlMs)) {
       reportLoadStep("Fetching from storage provider…");
-      try {
-        return await sdkGet(pieceCid);
-      } catch (error) {
+      // The SDK can spend a long time on one provider: after a short head start, ask the others in parallel.
+      const sdk = sdkGet(pieceCid).catch((error) => {
         sdkError = error;
         sdkMissed.set(pieceCid, now());
-      }
-    }
-    const skip = missedBy(pieceCid);
-    const urls = (await options.providerUrls().catch(() => [] as string[])).filter((u) => !skip.has(u) && !isDown(u) && !isPrivateHost(u));
-    if (urls.length) {
-      reportLoadStep("Trying other storage providers…");
+        throw error;
+      });
+      const others = Promise.race([new Promise<void>((r) => setTimeout(r, sdkHeadStartMs)), sdk.then(() => undefined, () => undefined)]).then(viaProviders);
       try {
-        return await Promise.any(urls.map((u) => tryProvider(u, pieceCid)));
+        return await Promise.any([sdk, others]);
+      } catch {
+        // both missed
+      }
+    } else {
+      try {
+        return await viaProviders();
       } catch {
         // every provider missed or failed
       }

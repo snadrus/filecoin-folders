@@ -123,6 +123,8 @@ interface PreviewModel {
   text?: string;
   /** No source had the bytes right now: show "unavailable" with Retry for this path. */
   unavailable?: string;
+  /** Bytes are on their way: show "Opening…" at once, never a silent wait. */
+  loading?: boolean;
 }
 
 interface ContextModel {
@@ -137,6 +139,8 @@ export const TOAST_MS = 8_000;
 export const TOAST_ACTION_MS = 10_000;
 
 /** After this long without the folders, show "taking longer than usual" with Retry. */
+/** Opening a file gives up after this long and says "unavailable right now" with Retry. */
+const OPEN_TIMEOUT_MS = 45_000;
 const LOAD_SLOW_MS =
   import.meta.env.VITE_E2E === "1" && typeof location !== "undefined" && new URLSearchParams(location.search).get("loadslow")
     ? Number(new URLSearchParams(location.search).get("loadslow"))
@@ -1271,6 +1275,20 @@ export class DriveApp {
     this.writeOrigins();
   }
 
+  #openToken = 0;
+  private openNow(path: string): void {
+    // Folders change the listing, so they keep their place in the queue; files open at once.
+    if (this.entries.find((item) => item.path === path)?.type === "dir") {
+      void this.enqueue(() => this.openPath(path));
+      return;
+    }
+    void this.openPath(path).catch((error) => {
+      if (this.preview?.loading) this.preview = null;
+      this.toast(errorText(error));
+      this.render();
+    });
+  }
+
   private async openPath(path: string): Promise<void> {
     const volume = this.viewVolume();
     if (!volume) return;
@@ -1288,10 +1306,19 @@ export class DriveApp {
       this.openFel(stat);
       return;
     }
+    const token = ++this.#openToken;
+    this.revokePreview();
+    this.preview = { name: stat.name, kind: "none", loading: true };
+    this.render();
     let bytes: Uint8Array;
     try {
-      bytes = await volume.get(path);
+      bytes = await Promise.race([
+        volume.get(path),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new PieceUnavailableError(path)), OPEN_TIMEOUT_MS)),
+      ]);
+      if (token !== this.#openToken || !this.preview) return; // closed or another file opened meanwhile
     } catch (error) {
+      if (token !== this.#openToken || !this.preview) return;
       if (!(error instanceof PieceUnavailableError) && !/HTTP 5\d\d|Failed to fetch|NetworkError|unavailable|not available|timed? ?out|abort/i.test(errorText(error))) throw error;
       this.revokePreview();
       this.preview = { name: stat.name, kind: "none", unavailable: path };
@@ -1653,7 +1680,7 @@ export class DriveApp {
       this.revokePreview();
       this.preview = null;
       this.render();
-      if (path) void this.enqueue(() => this.openPath(path));
+      if (path) this.openNow(path);
       return;
     }
     if (action === "close-preview") {
@@ -1878,7 +1905,8 @@ export class DriveApp {
       this.openFel(stat);
       return;
     }
-    void this.enqueue(() => this.openPath(path));
+    // Open at once: a read must not wait behind a slow save or load in the write queue.
+    this.openNow(path);
   }
 
   private onContextMenu(event: MouseEvent): void {
@@ -2002,7 +2030,7 @@ export class DriveApp {
     }
     if (!typing && !this.dialog && event.key === "Enter" && this.selected.length === 1 && !(event.target as HTMLElement | null)?.closest("button, a, [role=menu]")) {
       event.preventDefault();
-      void this.openPath(this.selected[0]!);
+      this.openNow(this.selected[0]!);
       return;
     }
     if (!typing && !this.dialog && this.root && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "a") {

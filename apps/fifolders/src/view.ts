@@ -43,6 +43,8 @@ export interface PreviewState {
   text?: string;
   /** No source had the bytes right now: show "unavailable" with Retry for this path. */
   unavailable?: string;
+  /** Bytes are on their way: show "Opening…" at once, never a silent wait. */
+  loading?: boolean;
 }
 
 export interface DialogState {
@@ -844,6 +846,7 @@ export function volumeLabel(name: string): string {
 
 function renderPreview(preview: PreviewState): string {
   let body = `<p>No preview for this file.</p>`;
+  if (preview.loading) body = `<p class="preview-loading" data-testid="preview-loading" role="status"><span class="spinner" aria-hidden="true"></span> Opening…</p>`;
   if (preview.unavailable) body = `<div class="unavailable" data-testid="preview-unavailable" role="alert"><p><strong>This file is unavailable right now.</strong> Its storage providers didn't answer. Your file is still recorded on chain.</p><button type="button" class="primary" data-action="retry-open" data-path="${escapeHtml(preview.unavailable)}" data-testid="retry-open">Retry</button></div>`;
   if (preview.kind === "image" && preview.url) body = `<img alt="${escapeHtml(preview.name)}" src="${preview.url}" />`;
   else if (preview.kind === "pdf" && preview.url) body = `<iframe title="${escapeHtml(preview.name)}" src="${preview.url}"></iframe>`;

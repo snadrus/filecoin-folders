@@ -599,3 +599,22 @@ test("S78 a file no provider can serve right now says 'unavailable' with Retry, 
   await page.getByTestId("retry-open").click();
   await expect(page.getByTestId("preview-audio")).toBeVisible();
 });
+
+test("S79 file rows are clickable: a real click selects, a real double-click opens — even while a slow save is still running", async ({ page }) => {
+  await connect(page, `${ready}&rpclag=3`);
+  await page.getByTestId("file-input").setInputFiles([{ name: "notes.txt", mimeType: "text/plain", buffer: Buffer.from("hello folders") }]);
+  const row = page.getByTestId("entry").filter({ hasText: "notes.txt" });
+  await expect(row).toHaveCount(1);
+  await expect(page.getByTestId("staged-changes")).toHaveCount(0, { timeout: 30_000 });
+  // A second upload starts a save that waits out a lagging node (several seconds) in the write queue.
+  await page.getByTestId("file-input").setInputFiles([{ name: "later.txt", mimeType: "text/plain", buffer: Buffer.from("later") }]);
+  const box = (await row.boundingBox())!;
+  await page.mouse.click(box.x + 60, box.y + box.height / 2);
+  await expect(row).toHaveAttribute("data-selected", "true");
+  const t0 = Date.now();
+  await page.mouse.dblclick(box.x + 60, box.y + box.height / 2);
+  await expect(page.getByTestId("preview-text")).toContainText("hello folders", { timeout: 3000 });
+  expect(Date.now() - t0).toBeLessThan(3000);
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("preview")).toHaveCount(0);
+});
