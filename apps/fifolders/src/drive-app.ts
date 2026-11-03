@@ -2143,6 +2143,8 @@ export class DriveApp {
       lockupRatePerEpoch: rate,
       datasetBytes: this.storageUsed,
       known: Boolean(this.panel),
+      hasDataset: Boolean(this.panel?.selectedDatasetId || this.panel?.datasets.length || this.volume),
+      ...(this.quote ? { datasetFeePerMonth: this.quote.provingPerMonth } : {}),
     });
     const badges: Record<string, string> = {};
     for (const op of pending) {
