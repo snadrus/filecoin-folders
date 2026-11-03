@@ -4,7 +4,7 @@ export const OPS_KEY = "fifolders:ops";
 export const OPS_CHANNEL = "fifolders-ops";
 export const OPS_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 
-export type OpKind = "upload" | "dataset" | "session" | "deposit" | "commit" | "fel-save";
+export type OpKind = "upload" | "dataset" | "session" | "deposit" | "commit" | "fel-save" | "wallet";
 export type OpStatus = "pending" | "done" | "error";
 
 export interface FifoldersOp {

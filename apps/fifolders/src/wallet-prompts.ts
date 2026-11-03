@@ -2,8 +2,73 @@
  * Visible "check your wallet" state for every request that pops the wallet UI.
  * A rejection keeps the call open: the user can Retry (same request again) or Cancel (rejects).
  */
+export interface WalletIntent {
+  /** Plain name, e.g. "Connect wallet". */
+  title: string;
+  /** What it lets FiFolders do. */
+  purpose?: string;
+  /** Expected cost, e.g. "free" or "~0.05 FIL". */
+  cost: string;
+  /** Flows that already write their own Transaction-log row. */
+  logged?: boolean;
+}
+
+export function intentText(intent: WalletIntent): string {
+  return `${intent.title}${intent.purpose ? ` — ${intent.purpose}` : ""} (${intent.cost})`;
+}
+
+/** Every prompting call site in FiFolders, named for the user. */
+export const INTENTS = {
+  connect: { title: "Connect wallet", cost: "free" },
+  switchNetwork: { title: "Switch network", purpose: "use Filecoin Calibration", cost: "free" },
+  addNetwork: { title: "Add network", purpose: "add Filecoin Calibration to your wallet", cost: "free" },
+  approvePayments: {
+    title: "Approve storage payments",
+    purpose: "lets Filecoin Warm Storage charge your USDFC deposit",
+    cost: "no cost now; gas ~0.01 FIL",
+    logged: true,
+  },
+  depositAndApprove: (usdfc: string): WalletIntent => ({
+    title: "Approve storage payments",
+    purpose: `deposit ${usdfc} USDFC and let Filecoin Warm Storage charge it`,
+    cost: `${usdfc} USDFC moves to your storage deposit; gas ~0.01 FIL`,
+    logged: true,
+  }),
+  session: (days: number, fil: string): WalletIntent => ({
+    title: "Authorize session key",
+    purpose: `lets FiFolders save for ${days} days without asking each time`,
+    cost: `~${fil} FIL`,
+    logged: true,
+  }),
+  createDataset: { title: "Create dataset", purpose: "reserve storage with a provider", cost: "reserve $0.50 USDFC" },
+  save: (pieces: number): WalletIntent => ({
+    title: "Save changes",
+    purpose: `${pieces} ${pieces === 1 ? "piece" : "pieces"}`,
+    cost: "gas ~0.01 FIL",
+  }),
+  unlock: { title: "Unlock encrypted folder", purpose: "your signature derives the folder key", cost: "free" },
+} as const;
+
+let intent: WalletIntent | null = null;
+
+/** Name every wallet prompt raised while `fn` runs. */
+export async function withWalletIntent<T>(next: WalletIntent, fn: () => Promise<T>): Promise<T> {
+  const previous = intent;
+  intent = next;
+  try {
+    return await fn();
+  } finally {
+    intent = previous;
+  }
+}
+
+export function currentIntent(): WalletIntent | null {
+  return intent;
+}
+
 export interface WalletPrompt {
   id: number;
+  intent: WalletIntent;
   what: string;
   state: "waiting" | "rejected";
   retry: () => void;
@@ -12,16 +77,17 @@ export interface WalletPrompt {
 
 type Listener = (prompts: WalletPrompt[]) => void;
 
-const PROMPTING: Record<string, string> = {
-  eth_requestAccounts: "the connection",
-  wallet_requestPermissions: "the connection",
-  personal_sign: "the signature",
-  eth_sign: "the signature",
-  eth_signTypedData_v4: "the signature",
-  eth_signTypedData: "the signature",
-  eth_sendTransaction: "the transaction",
-  wallet_switchEthereumChain: "the network switch",
-  wallet_addEthereumChain: "adding the network",
+const SIGN: WalletIntent = { title: "Sign message", cost: "free" };
+const PROMPTING: Record<string, WalletIntent> = {
+  eth_requestAccounts: INTENTS.connect,
+  wallet_requestPermissions: INTENTS.connect,
+  personal_sign: SIGN,
+  eth_sign: SIGN,
+  eth_signTypedData_v4: SIGN,
+  eth_signTypedData: SIGN,
+  eth_sendTransaction: { title: "Send transaction", cost: "gas" },
+  wallet_switchEthereumChain: INTENTS.switchNetwork,
+  wallet_addEthereumChain: INTENTS.addNetwork,
 };
 
 let seq = 0;
@@ -51,7 +117,17 @@ export function isUserRejection(error: unknown): boolean {
 
 /** Describe a request for the toast, or null when it does not prompt. */
 export function promptLabel(method: string): string | null {
-  return PROMPTING[method] ?? null;
+  const fallback = PROMPTING[method];
+  if (!fallback) return null;
+  // Network calls keep their own name even inside a bigger flow.
+  const named = method.startsWith("wallet_") || method === "eth_requestAccounts" ? fallback : (intent ?? fallback);
+  return intentText(named);
+}
+
+function promptIntent(method: string): WalletIntent | null {
+  const fallback = PROMPTING[method];
+  if (!fallback) return null;
+  return method.startsWith("wallet_") || method === "eth_requestAccounts" ? fallback : (intent ?? fallback);
 }
 
 interface Requester {
@@ -63,11 +139,13 @@ export function watchWalletPrompts<T extends Requester>(provider: T): T {
   if ((provider as { __fifoldersPrompts?: boolean }).__fifoldersPrompts) return provider;
   const original = provider.request.bind(provider);
   const request = (args: { method: string; params?: unknown }) => {
-    const what = promptLabel(args.method);
-    if (!what) return original(args);
+    const named = promptIntent(args.method);
+    if (!named) return original(args);
+    const what = intentText(named);
     return new Promise((resolve, reject) => {
       const prompt: WalletPrompt = {
         id: ++seq,
+        intent: named,
         what,
         state: "waiting",
         retry: () => attempt(),
@@ -112,4 +190,9 @@ export function watchWalletPrompts<T extends Requester>(provider: T): T {
       return typeof value === "function" ? (value as (...a: unknown[]) => unknown).bind(target) : value;
     },
   });
+}
+
+/** Session-key intent with FiFolders' own TTL and funding. */
+export function sessionIntent(): WalletIntent {
+  return INTENTS.session(7, "0.05");
 }

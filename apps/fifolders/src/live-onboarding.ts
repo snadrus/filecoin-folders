@@ -1,4 +1,4 @@
-import { watchWalletPrompts } from "./wallet-prompts.js";
+import { INTENTS, intentText, sessionIntent, watchWalletPrompts, withWalletIntent } from "./wallet-prompts.js";
 import { calibration, mainnet, type Chain } from "@filoz/synapse-core/chains";
 import {
   AddPiecesPermission,
@@ -335,8 +335,9 @@ export function createLiveOnboarding(): OnboardingIO {
       const expiresAt = now + BigInt(SESSION_TTL_SEC);
       const permissions = fifoldersPermissions();
       const client = await walletClient(choice);
-      report?.({ flow: "session", phase: "signing" });
-      const hash = await client.writeContract({
+      const intent = sessionIntent();
+      report?.({ flow: "session", phase: "signing", label: intentText(intent) });
+      const hash = await withWalletIntent(intent, () => client.writeContract({
         address: chain.contracts.sessionKeyRegistry.address,
         abi: chain.contracts.sessionKeyRegistry.abi,
         functionName: "loginAndFund",
@@ -344,7 +345,7 @@ export function createLiveOnboarding(): OnboardingIO {
         value: SESSION_FUND_WEI,
         account: address,
         chain,
-      });
+      }));
       signatures += SIGNATURES.sessionLogin;
       const receipt = await watchReceipt(choice, hash, "session", report);
       if (receipt.status !== "success") throw new Error("Session key login failed.");
@@ -373,12 +374,15 @@ export function createLiveOnboarding(): OnboardingIO {
       });
       const before = await readPayments(choice, address);
       if (!force && paymentsReady(before.deposited, before.approved)) return;
-      report?.({ flow: "payment", phase: "signing" });
       // Funded but not max-approved (what uploads need): approve only, no second deposit.
-      const hash =
-        before.deposited > 0n && !before.approved
-          ? await synapse.payments.approveService()
-          : await synapse.payments.depositWithPermitAndApproveOperator({ amount: PAYMENT_DEPOSIT });
+      const approveOnly = before.deposited > 0n && !before.approved;
+      const intent = approveOnly ? INTENTS.approvePayments : INTENTS.depositAndApprove(formatToken(PAYMENT_DEPOSIT));
+      report?.({ flow: "payment", phase: "signing", label: intentText(intent) });
+      const hash = await withWalletIntent(intent, () =>
+        approveOnly
+          ? synapse.payments.approveService()
+          : synapse.payments.depositWithPermitAndApproveOperator({ amount: PAYMENT_DEPOSIT }),
+      );
       if (!paymentsReady(before.deposited, before.approved)) signatures += SIGNATURES.paymentFix;
       await watchReceipt(choice, hash, "payment", report);
       report?.({ flow: "payment", phase: "done", hash });
@@ -433,6 +437,8 @@ export function createLiveOnboarding(): OnboardingIO {
         sessionKey: session,
       });
       const datasetId = selectedDataset || loadLastDataset(chain.id, address) || "";
+      // Cache the preferred dataset so the next visit can render it before the wallet connects.
+      if (datasetId) saveLastDataset(chain.id, address, datasetId);
       const storageOptions = datasetId.startsWith("provider:")
         ? { providerId: BigInt(datasetId.slice("provider:".length) || "0") }
         : datasetId
@@ -482,7 +488,7 @@ export function createLiveOnboarding(): OnboardingIO {
                 signTypedData: async (parameters) => {
                   const cached = localStorage.getItem(cacheKey) as Hex | null;
                   if (cached) return cached;
-                  const signature = await wallet.signTypedData(parameters as never);
+                  const signature = await withWalletIntent(INTENTS.unlock, () => wallet.signTypedData(parameters as never));
                   localStorage.setItem(cacheKey, signature);
                   signatures += SIGNATURES.encryptSign;
                   return signature;
@@ -503,6 +509,31 @@ export function createLiveOnboarding(): OnboardingIO {
         cas: observed.cas,
       };
       return opened;
+    },
+    async peek(input) {
+      const owner = input.owner ?? root ?? readStoredWallet()?.address;
+      if (!owner) return null;
+      const address = getAddress(owner);
+      const chain = chainOf(input.chain);
+      const datasetId = selectedDataset || loadLastDataset(chain.id, address) || "";
+      if (!datasetId || datasetId.startsWith("provider:")) return null;
+      const config = registryConfig(input.chain);
+      const client = publicClient(input.chain);
+      const { Synapse } = await import("@filoz/synapse-sdk");
+      // Public reads only: no wallet transport, so nothing here can prompt or sign.
+      const synapse = Synapse.create({ account: address, chain, transport: http(rpcOf(input.chain)), source: "fifolders" });
+      const storage = createSynapseStorage(synapse, { dataSetId: BigInt(datasetId), copies: 2 });
+      const observed = observeRegistry(
+        createViemRegistry({
+          address: config.address,
+          publicClient: client,
+          walletClient: createWalletClient({ account: address, chain, transport: http(rpcOf(input.chain)) }),
+          fromBlock: config.fromBlock,
+          signer: "session-key",
+        }),
+      );
+      const volume = await openVolume({ storage, registry: observed.registry, owner: address, name: input.volumeName });
+      return { volume, owner: address, chain: input.chain, encrypted: false, volumeName: input.volumeName, cas: observed.cas };
     },
     async reopen(input) {
       return this.enter(input);

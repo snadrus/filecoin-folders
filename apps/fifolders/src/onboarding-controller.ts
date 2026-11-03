@@ -2,6 +2,7 @@ import type { ChainReport } from "./chain-step.js";
 import type { DriveApp } from "./drive-app.js";
 import { canEnter, isSessionPermissionError, type WalletPanel } from "./onboarding-logic.js";
 import type { OnboardingIO } from "./onboarding-io.js";
+import { INTENTS, withWalletIntent } from "./wallet-prompts.js";
 import { storeEncrypt, storeVolumeName, type ChainChoice, type Session } from "./session.js";
 
 export async function prepareOnboarding(app: DriveApp, io: OnboardingIO): Promise<void> {
@@ -12,6 +13,7 @@ export async function prepareOnboarding(app: DriveApp, io: OnboardingIO): Promis
   }
   app.onConnect = async (input) => {
     await io.connect({ rdns: app.walletRdns || null, chain: input.chain });
+    void peekDrive(app, io, input.encrypt);
     await continueOnboarding(app, io, input, true);
   };
   app.onPickDataset = (id) => io.selectDataset(id, app.chain);
@@ -36,11 +38,11 @@ export async function prepareOnboarding(app: DriveApp, io: OnboardingIO): Promis
       try {
         await app.ensureSession();
         try {
-          await io.createDataset({ chain, volumeName });
+          await withWalletIntent(INTENTS.createDataset, () => io.createDataset({ chain, volumeName }));
         } catch (error) {
           if (!isSessionPermissionError(error)) throw error;
           await app.waitForRenewal();
-          await io.createDataset({ chain, volumeName });
+          await withWalletIntent(INTENTS.createDataset, () => io.createDataset({ chain, volumeName }));
         }
         app.finishOp(op);
       } catch (error) {
@@ -65,7 +67,7 @@ export async function prepareOnboarding(app: DriveApp, io: OnboardingIO): Promis
       return;
     }
     const panel = await io.snapshot({ chain, volumeName });
-    if (app.volume) {
+    if (app.volume && !app.readOnly) {
       app.showPanel(panel);
       return;
     }
@@ -87,13 +89,45 @@ export async function prepareOnboarding(app: DriveApp, io: OnboardingIO): Promis
   };
 }
 
+/**
+ * Folders are public: show the preferred dataset's drive read-only with no signature,
+ * while payment approval and session authorization finish behind it.
+ */
+export async function peekDrive(app: DriveApp, io: OnboardingIO, encrypt = app.encryptPref): Promise<boolean> {
+  if (!io.peek || app.volume || encrypt) return false;
+  try {
+    const session = await io.peek({ chain: app.chain, volumeName: app.volumeName });
+    if (!session || app.volume) return false;
+    app.attachReadOnly({
+      volume: session.volume,
+      owner: session.owner,
+      chain: session.chain,
+      encrypted: false,
+      volumeName: session.volumeName,
+      cas: session.cas,
+      felarumiUrl: app.felarumiUrl,
+      felanumioUrl: app.felanumioUrl,
+      ...(app.panel ? { panel: app.panel } : {}),
+    });
+    return true;
+  } catch (error) {
+    console.warn("FiFolders public read", error);
+    return false;
+  }
+}
+
 /** Reload path. No `eth_requestAccounts` and no signature when the session key is still valid. */
 export async function resumeOnboarding(app: DriveApp, io: OnboardingIO): Promise<boolean> {
   const chain = app.chain;
+  const peeked = peekDrive(app, io);
   const found = await io.silent(chain);
   if (!found) return false;
   const panel = await io.snapshot({ chain, volumeName: app.volumeName });
-  if (!panel.sessionReady) return false;
+  if (!panel.sessionReady) {
+    // Browsing the public drive: name the next wallet step instead of the connect screen.
+    if ((await peeked) || app.readOnly) app.showPanel(panel);
+    return false;
+  }
   if (!canEnter(panel)) {
     app.showPanel(panel);
     return true;

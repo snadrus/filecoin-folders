@@ -65,8 +65,8 @@ test("an expired session key renews with one signature and retries the upload", 
   await expect(page.getByTestId("wallet-signatures")).toHaveText("2");
 });
 
-test("an expired session key stays on the connect screen", async ({ page }) => {
-  await page.goto("/?onboard=1&pay=ready&datasets=1");
+test("an expired session key stays on the connect screen when no public read is available", async ({ page }) => {
+  await page.goto("/?onboard=1&pay=ready&datasets=1&peek=0");
   await page.getByTestId("connect-wallet").click();
   await expect(page.getByTestId("nav-drive")).toBeVisible();
   await page.evaluate(() => {
@@ -96,4 +96,31 @@ test("refresh with corrupt cached state still renders the app (bug 5)", async ({
   const background = await page.evaluate(() => getComputedStyle(document.documentElement).backgroundColor);
   expect(background).toBe("rgb(255, 255, 255)");
   expect(errors).toEqual([]);
+});
+
+test("the public drive renders read-only before the session key is authorized", async ({ page }) => {
+  await page.goto("/?onboard=1&pay=ready&datasets=1&authdelay=1500");
+  await page.getByTestId("connect-wallet").click();
+  await expect(page.getByTestId("nav-drive")).toBeVisible();
+  await expect(page.getByTestId("setup-note")).toHaveCount(0, { timeout: 10_000 });
+  // Expire the session key, then reload: the drive must show before any signature.
+  await page.evaluate(() => {
+    for (const key of Object.keys(localStorage)) if (key.startsWith("fifolders:session:")) localStorage.removeItem(key);
+  });
+  await page.reload();
+  await expect(page.getByTestId("nav-drive")).toBeVisible();
+  await expect(page.getByTestId("setup-note")).toContainText("Finishing wallet setup… you can browse meanwhile");
+  await expect(page.getByTestId("wallet-signatures")).toHaveText("0");
+  const step = page.getByTestId("setup-step");
+  await expect(step).toHaveText("Authorize session key — lets FiFolders save for 7 days without asking each time (~0.05 FIL)");
+
+  // An edit while read-only is staged, not lost.
+  await page.getByTestId("file-input").setInputFiles({ name: "early.txt", mimeType: "text/plain", buffer: Buffer.from("hi") });
+  await expect(page.getByText("early.txt").first()).toBeVisible();
+
+  await step.click();
+  await expect(page.getByTestId("activity")).toContainText("Authorize session key — lets FiFolders save for 7 days");
+  await expect(page.getByTestId("setup-note")).toHaveCount(0, { timeout: 10_000 });
+  await expect(page.getByTestId("wallet-signatures")).toHaveText("1");
+  await expect(page.getByText("early.txt").first()).toBeVisible();
 });

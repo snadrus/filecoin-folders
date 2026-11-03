@@ -138,6 +138,9 @@ export interface ViewModel {
   uploads: UploadRow[];
   toasts: ToastRow[];
   walletPrompts: WalletPromptView[];
+  /** Shown while the drive is browsable but wallet setup still runs. */
+  setupNote: string;
+  setupStep: { action: string; label: string } | null;
   dropPath: string | null;
   dragging: boolean;
   felarumiUrl: string;
@@ -164,8 +167,8 @@ function renderWalletPrompts(prompts: WalletPromptView[]): string {
   return `<div class="wallet-prompts" data-testid="wallet-prompts" aria-live="assertive">${prompts
     .map((prompt) =>
       prompt.state === "waiting"
-        ? `<div class="toast wallet-toast" data-testid="wallet-prompt" data-state="waiting"><span class="spinner" aria-hidden="true"></span>Check your wallet — approve ${escapeHtml(prompt.what)} to continue</div>`
-        : `<div class="toast wallet-toast" data-testid="wallet-prompt" data-state="rejected">Signature rejected
+        ? `<div class="toast wallet-toast" data-testid="wallet-prompt" data-state="waiting"><span class="spinner" aria-hidden="true"></span><span>Check your wallet — <strong data-testid="wallet-prompt-title">${escapeHtml(prompt.title)}</strong>${prompt.detail ? `<small data-testid="wallet-prompt-detail"> ${escapeHtml(prompt.detail)}</small>` : ""}</span></div>`
+        : `<div class="toast wallet-toast" data-testid="wallet-prompt" data-state="rejected">Signature rejected — ${escapeHtml(prompt.title)}
             <button type="button" data-action="wallet-retry" data-id="${prompt.id}" data-testid="wallet-retry">Retry</button>
             <button type="button" data-action="wallet-cancel" data-id="${prompt.id}" data-testid="wallet-cancel" aria-label="Cancel">×</button></div>`,
     )
@@ -175,6 +178,8 @@ function renderWalletPrompts(prompts: WalletPromptView[]): string {
 export interface WalletPromptView {
   id: number;
   what: string;
+  title: string;
+  detail: string;
   state: "waiting" | "rejected";
 }
 
@@ -184,6 +189,11 @@ function renderScreen(model: ViewModel): string {
     ${renderTop(model)}
     ${renderNav(model)}
     <main class="workspace">
+      ${model.setupNote ? `<div class="setup-note" data-testid="setup-note" role="status"><span class="spinner" aria-hidden="true"></span>${escapeHtml(model.setupNote)}${
+        model.setupStep
+          ? ` <button type="button" class="text-button" data-action="${model.setupStep.action}" data-testid="setup-step">${escapeHtml(model.setupStep.label)}</button>`
+          : ""
+      }</div>` : ""}
       ${renderSessionBanner(model)}
       ${renderBrowser(model)}
       ${model.details ? renderDetails(model.details) : ""}
