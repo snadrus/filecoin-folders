@@ -67,3 +67,7 @@ All entry pages reload once on `vite:preloadError`, so a tab opened before a dep
 ## Costs and prompts
 
 Save = (1) free EIP-712 signature to add the piece to the existing dataset (a few hundred bytes, billed from the existing storage deposit, far below $0.01/month) and (2) one `commit` transaction (gas ~0.01 FIL). The page never deposits, approves payments or creates a dataset: if those are missing it stops and links to FiFolders setup.
+
+## Notification contacts (optional)
+
+`notify: { preferred: "slack", contacts: [{ channel: "slack", team: "T…", user: "U…", domain?: "acme" }] }` (max 4, invalid entries dropped on read). Public. Used by `fiperson/notify`; see [slack-app.md](slack-app.md).

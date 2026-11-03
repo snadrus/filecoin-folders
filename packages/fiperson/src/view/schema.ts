@@ -53,6 +53,8 @@ export interface IdentityV1 {
   updatedAt: string;
   /** Previous profile piece CID (history link; "" = first). Optional. */
   prev?: string;
+  /** How others can notify this person (public). Optional. */
+  notify?: IdentityNotify;
   [extra: string]: unknown;
 }
 export type Identity = IdentityV1;
@@ -61,6 +63,57 @@ export interface IdentityDraft {
   displayName: string;
   avatar?: IdentityAvatar;
   bio?: string;
+  notify?: IdentityNotify;
+}
+
+/** Notification channels. Only Slack today; the contact list is keyed by `channel` so email etc. can be added. */
+export type NotifyChannel = "slack";
+export const NOTIFY_CHANNELS: readonly NotifyChannel[] = ["slack"];
+/** A Slack DM target: workspace (team) ID + member ID, plus the workspace subdomain for links/explanations. */
+export interface SlackContact {
+  channel: "slack";
+  /** Workspace ID, e.g. `T0123ABCD` (Enterprise Grid org IDs start with E). */
+  team: string;
+  /** Member ID, e.g. `U0123ABCD` (or W… on Grid). */
+  user: string;
+  /** Workspace subdomain (`acme` for acme.slack.com). Optional. */
+  domain?: string;
+}
+export type NotifyContact = SlackContact;
+export interface IdentityNotify {
+  /** Channel to use first; defaults to the first contact. */
+  preferred?: NotifyChannel;
+  contacts: NotifyContact[];
+}
+export const NOTIFY_CONTACTS_MAX = 4;
+const SLACK_TEAM_RE = /^[TE][A-Z0-9]{2,20}$/;
+const SLACK_USER_RE = /^[UW][A-Z0-9]{2,20}$/;
+const SLACK_DOMAIN_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
+
+/** Clean a notify block: drops invalid contacts; undefined when nothing valid is left. */
+export function normalizeNotify(value: unknown): IdentityNotify | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const raw = value as { preferred?: unknown; contacts?: unknown };
+  const contacts: NotifyContact[] = [];
+  for (const c of Array.isArray(raw.contacts) ? raw.contacts : []) {
+    if (!c || typeof c !== "object" || contacts.length >= NOTIFY_CONTACTS_MAX) continue;
+    const r = c as Record<string, unknown>;
+    if (r.channel !== "slack") continue;
+    const team = typeof r.team === "string" ? r.team.trim().toUpperCase() : "";
+    const user = typeof r.user === "string" ? r.user.trim().toUpperCase() : "";
+    if (!SLACK_TEAM_RE.test(team) || !SLACK_USER_RE.test(user)) continue;
+    const domain = typeof r.domain === "string" ? r.domain.trim().toLowerCase().replace(/\.slack\.com$/, "") : "";
+    contacts.push({ channel: "slack", team, user, ...(SLACK_DOMAIN_RE.test(domain) ? { domain } : {}) });
+  }
+  if (!contacts.length) return undefined;
+  const preferred = NOTIFY_CHANNELS.includes(raw.preferred as NotifyChannel) && contacts.some((c) => c.channel === raw.preferred) ? (raw.preferred as NotifyChannel) : contacts[0]!.channel;
+  return { preferred, contacts };
+}
+
+/** The contact to use: the preferred channel's first entry, else the first contact. */
+export function preferredContact(notify: IdentityNotify | undefined | null): NotifyContact | null {
+  if (!notify?.contacts?.length) return null;
+  return notify.contacts.find((c) => c.channel === notify.preferred) ?? notify.contacts[0] ?? null;
 }
 
 export class IdentityError extends Error {
@@ -99,6 +152,8 @@ export function normalizeIdentity(address: string, draft: IdentityDraft, now: Da
   if (emoji || color || image) doc.avatar = { ...(emoji ? { emoji } : {}), ...(color ? { color } : {}), ...(image ? { image } : {}) };
   const bio = cleanText(draft.bio, BIO_MAX);
   if (bio) doc.bio = bio;
+  const notify = normalizeNotify(draft.notify);
+  if (notify) doc.notify = notify;
   return doc;
 }
 
@@ -117,8 +172,8 @@ export function parseIdentity(input: unknown, expected?: string): IdentityV1 | n
   if (expected && raw.address.toLowerCase() !== expected.toLowerCase()) return null;
   try {
     const when = typeof raw.updatedAt === "string" && !Number.isNaN(Date.parse(raw.updatedAt)) ? raw.updatedAt : 0;
-    const built = normalizeIdentity(raw.address, { displayName: raw.displayName as string, avatar: raw.avatar as IdentityAvatar, bio: raw.bio as string }, new Date(when));
-    const extra = Object.fromEntries(Object.entries(raw).filter(([k]) => !(k in built) && k !== "avatar" && k !== "bio"));
+    const built = normalizeIdentity(raw.address, { displayName: raw.displayName as string, avatar: raw.avatar as IdentityAvatar, bio: raw.bio as string, notify: raw.notify as IdentityNotify }, new Date(when));
+    const extra = Object.fromEntries(Object.entries(raw).filter(([k]) => !(k in built) && k !== "avatar" && k !== "bio" && k !== "notify"));
     return { ...extra, ...built };
   } catch {
     return null;

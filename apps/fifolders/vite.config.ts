@@ -8,7 +8,7 @@ export default defineConfig({
     target: "es2022",
     rollupOptions: {
       // /identity/ is its own page and bundle; shared helpers split into common chunks.
-      input: { main: resolve(__dirname, "index.html"), identity: resolve(__dirname, "identity/index.html"), ficlub: resolve(__dirname, "ficlub/index.html"), fideploy: resolve(__dirname, "fideploy/index.html") },
+      input: { main: resolve(__dirname, "index.html"), identity: resolve(__dirname, "identity/index.html"), ficlub: resolve(__dirname, "ficlub/index.html"), fideploy: resolve(__dirname, "fideploy/index.html"), person: resolve(__dirname, "person/index.html"), slack: resolve(__dirname, "slack/callback/index.html") },
     },
   },
 });

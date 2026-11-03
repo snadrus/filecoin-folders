@@ -116,3 +116,41 @@ export function openIdentityPopup(anchor: HTMLElement, opts: IdentityPopupOption
   });
   return pop;
 }
+
+export interface PersonCardOptions {
+  person: AvatarPerson & { bio?: string };
+  /** Extra line under the name, e.g. "Acme Club" or "Slack (acme)". */
+  detail?: string;
+  /** Show a "Notify" button. */
+  onNotify?: () => void;
+}
+
+/** Card for someone else (an @-mention chip): avatar, name, wallet, bio, optional Notify. */
+export function openPersonCard(anchor: Element | DOMRect, opts: PersonCardOptions): HTMLElement {
+  document.querySelector("#fiperson-card")?.remove();
+  const p = opts.person;
+  const card = document.createElement("div");
+  card.id = "fiperson-card";
+  card.setAttribute("role", "dialog");
+  card.setAttribute("aria-label", p.displayName);
+  card.dataset.testid = "person-card";
+  card.style.cssText = "position:fixed;z-index:1000;width:280px;background:#fff;color:#202124;border:1px solid #dadce0;border-radius:12px;box-shadow:0 4px 16px rgba(60,64,67,.25);padding:16px;font:14px/1.45 Roboto,system-ui,sans-serif";
+  card.innerHTML = `<div style="display:flex;gap:12px;align-items:center">${avatarHtml(p, 48)}<div style="min-width:0"><div data-testid="person-card-name" style="font-weight:500;font-size:16px">${escapeHtml(p.displayName)}</div>${p.address ? `<div style="color:#5f6368;font-size:12px" title="${escapeHtml(p.address)}">${escapeHtml(shortAddress(p.address))}</div>` : ""}${opts.detail ? `<div style="color:#5f6368;font-size:12px">${escapeHtml(opts.detail)}</div>` : ""}</div></div>${p.bio ? `<p style="margin:10px 0 0">${escapeHtml(p.bio)}</p>` : ""}${opts.onNotify ? `<button type="button" data-testid="person-card-notify" style="margin-top:12px;background:#1a73e8;color:#fff;border:0;border-radius:18px;padding:6px 14px;font:inherit;cursor:pointer">Notify</button>` : ""}`;
+  const close = () => {
+    card.remove();
+    document.removeEventListener("mousedown", onDoc, true);
+    document.removeEventListener("keydown", onKey);
+  };
+  const onDoc = (e: Event) => !card.contains(e.target as Node) && close();
+  const onKey = (e: KeyboardEvent) => e.key === "Escape" && close();
+  card.querySelector("[data-testid=person-card-notify]")?.addEventListener("click", () => (close(), opts.onNotify?.()));
+  document.body.appendChild(card);
+  const r = "getBoundingClientRect" in anchor ? anchor.getBoundingClientRect() : anchor;
+  card.style.top = `${Math.round(Math.min(r.bottom + 6, window.innerHeight - card.offsetHeight - 8))}px`;
+  card.style.left = `${Math.max(8, Math.min(window.innerWidth - 288, Math.round(r.left)))}px`;
+  setTimeout(() => {
+    document.addEventListener("mousedown", onDoc, true);
+    document.addEventListener("keydown", onKey);
+  });
+  return card;
+}

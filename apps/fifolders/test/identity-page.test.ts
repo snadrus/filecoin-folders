@@ -4,6 +4,7 @@ import { IdentityBlocked, type IdentityIO } from "../src/identity/io.js";
 import { IdentityPage, safeReturn } from "../src/identity/page.js";
 
 const A = "0x1111111111111111111111111111111111111111";
+const B = "0x2222222222222222222222222222222222222222";
 const tick = () => new Promise((r) => setTimeout(r, 0));
 
 function fakeIO(over: Partial<IdentityIO> = {}): IdentityIO & { saved: IdentityV1[] } {
@@ -14,6 +15,7 @@ function fakeIO(over: Partial<IdentityIO> = {}): IdentityIO & { saved: IdentityV
     connect: async () => A,
     load: async (address) => ({ address: address as never, displayName: guestName(address), source: "guest", identity: null }),
     save: async (_a, doc) => (saved.push(doc), { pieceCid: "bafkzcibx", version: "1" }),
+    findClubs: async (address) => ({ address: address as never, clubs: [{ id: "1", name: "Acme", members: [address as never, B], admins: [address as never], role: "admin" }], coworkers: [B], checkedAt: 1 }),
     ...over,
   };
 }
@@ -67,5 +69,33 @@ describe("identity page", () => {
   it("only returns to same-origin pages", () => {
     expect(safeReturn("https://evil.example/x")).toBeNull();
     expect(safeReturn("/fipen/")).toBe(location.origin + "/fipen/");
+  });
+});
+
+describe("notifications + clubs", () => {
+  it("saves a Slack contact into the identity, rejects half-filled IDs, and finds clubs", async () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const io = fakeIO();
+    const page = new IdentityPage(root, io, "");
+    await page.start();
+    await tick();
+    const set = (id: string, v: string) => {
+      const el = root.querySelector<HTMLInputElement>(`[data-testid=${id}]`)!;
+      el.value = v;
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    };
+    set("identity-slack-team", "T0ACME");
+    await page.save();
+    expect(root.querySelector("[data-testid=identity-error]")?.textContent).toContain("member ID");
+    set("identity-slack-user", "u0bea");
+    set("identity-slack-domain", "acme");
+    await page.save();
+    expect(io.saved.at(-1)?.notify).toEqual({ preferred: "slack", contacts: [{ channel: "slack", team: "T0ACME", user: "U0BEA", domain: "acme" }] });
+    root.querySelector<HTMLButtonElement>("[data-testid=identity-find-clubs]")!.click();
+    await tick();
+    await tick();
+    expect(root.querySelector("[data-testid=identity-clubs-list]")?.textContent).toContain("Acme");
+    expect(root.querySelector("[data-testid=identity-coworkers]")?.textContent).toContain("1 club-mate");
   });
 });

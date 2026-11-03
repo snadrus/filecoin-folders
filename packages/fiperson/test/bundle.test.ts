@@ -8,6 +8,6 @@ describe("bundle split", () => {
     expect(inputs.every((f) => f.startsWith("src/view/"))).toBe(true);
     const code = out.outputFiles[0]!.text;
     for (const marker of ["Store identity piece", "Link identity to wallet", "padEnd(", "IdentityBlocked"]) expect(code).not.toContain(marker);
-    expect(code.length).toBeLessThan(16_000);
+    expect(code.length).toBeLessThan(20_000) // 16 kB until notify contacts + person card (#46);
   });
 });

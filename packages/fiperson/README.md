@@ -4,7 +4,10 @@ Wallet person/identity for FiFolders, FiPen and FiGrid. Two entry points:
 
 | Entry | Who uses it | Dependencies |
 |---|---|---|
-| `fiperson/view` | FiFolders drive, FiPen, FiGrid | none (verified by `test/bundle.test.ts`: the view bundle contains only `src/view/*`, no edit code, < 16 kB min) |
+| `fiperson/view` | FiFolders drive, FiPen, FiGrid | none (verified by `test/bundle.test.ts`: the view bundle contains only `src/view/*`, no edit code, < 20 kB min) |
+| `fiperson/clubs` | `/identity/` (Find all my Clubs), FiPen | none (plain `eth_call`) |
+| `fiperson/people` | FiPen @-mentions, `/person/` | none |
+| `fiperson/notify` | FiPen Notify, `/identity/`, `/slack/callback/` | none (Slack Web API over `fetch`) |
 | `fiperson/edit` | `/identity/` page only | none at runtime; you pass in a piece store (fil-folders `createSynapseStorage`) and a FolderRegistry client (`createViemRegistry`) |
 
 `fiperson/edit` re-exports everything in `fiperson/view`.
@@ -26,3 +29,18 @@ Wallet person/identity for FiFolders, FiPen and FiGrid. Two entry points:
 - `assertStorageReady({ funds, approved, datasetId })` throws `IdentityBlocked`. FiPerson never deposits, approves payments or creates datasets.
 
 Schema and on-chain layout: [docs/identity.md](../../docs/identity.md).
+
+## `fiperson/clubs`
+
+- `findMyClubs(address, { call?, contract? })` scans FiClub (`clubsOf`, `getClub`, `listMembers`, `listAdmins`; default Calibration `0x4f73E1504d848eC4e3e74047940bD97EA79A3521`) and caches `{ clubs, coworkers }` under `fiperson:clubs:v1:<addr>`. `cachedClubs`, `cachedCoworkers` read it back synchronously.
+
+## `fiperson/people`
+
+- `suggest(query, { participants? })` → `{ id, name, iconUrl, hint }[]`: your club-mates (from the cache above) plus the people the app passes (doc participants), ranked by name prefix. `needsClubScan()` is true until Find all my Clubs ran; apps then show a link to `findClubsUrl()`.
+- `details(id)` → name, icon, bio, shared clubs, preferred notification contact + label, `url` (`personUrl(id)` → `/person/?id=`).
+
+## `fiperson/notify`
+
+- `notify(target, message, url)` → `{ ok: true, … } | { ok: false, reason, message, fallback }`. Call it from a click. Slack via PKCE user OAuth, see [docs/slack-app.md](../../docs/slack-app.md).
+- `connectSlack({ team? })`, `handleSlackCallback()` (the `/slack/callback/` page), `slackConnections()`, `forgetSlackToken()`, `configureNotify({...})`, `SLACK_CLIENT_ID` (config.ts).
+- `fiperson/notify/mock`: `createMockSlack()` for tests.

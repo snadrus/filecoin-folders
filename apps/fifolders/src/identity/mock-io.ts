@@ -1,4 +1,6 @@
 import { saveIdentity, resolveIdentity, type PointerRegistry } from "fiperson/edit";
+import { findMyClubs, type EthCall } from "fiperson/clubs";
+import { decodeFunctionData, encodeFunctionResult, parseAbi } from "viem";
 import type { Address } from "viem";
 import { INTENTS, watchWalletPrompts, withWalletIntent } from "../wallet-prompts.js";
 import { IdentityBlocked, type IdentityIO } from "./io.js";
@@ -43,6 +45,12 @@ export function createMockIdentityIO(params = new URLSearchParams(location.searc
       return accounts[0]!.toLowerCase();
     },
     load: (address) => resolveIdentity(address, { head, fetchPiece, force: true }),
+    async findClubs(address) {
+      // Same scanner as live, over the /ficlub/ mock's localStorage clubs (ficlub:mock:v1).
+      const found = await findMyClubs(address, { call: mockClubCall(), contract: "0x0000000000000000000000000000000000000c1b" });
+      await Promise.all(found.coworkers.map((a) => resolveIdentity(a, { head, fetchPiece, force: true }).catch(() => null)));
+      return found;
+    },
     async save(address, identity, onStep) {
       if (params.get("blocked") === "payments") throw new IdentityBlocked("Storage payments are not set up for this wallet. Finish setup in FiFolders (it shows the cost first), then save again.");
       const p = need();
@@ -69,5 +77,38 @@ export function createMockIdentityIO(params = new URLSearchParams(location.searc
       };
       return saveIdentity(identity, { storage, registry, onStep, withIntent: (intent, fn) => withWalletIntent(intent, fn) });
     },
+  };
+}
+
+const CLUB_ABI = parseAbi([
+  "function clubsOf(address account, uint256 offset, uint256 limit) view returns (uint256[] out)",
+  "function getClub(uint256 clubId) view returns (string name, bytes metadata, address creator, uint64 createdAt, uint256 nonce)",
+  "function listMembers(uint256 clubId, uint256 offset, uint256 limit) view returns (address[])",
+  "function listAdmins(uint256 clubId, uint256 offset, uint256 limit) view returns (address[])",
+]);
+
+/** eth_call against the FiClub mock state so the real fiperson/clubs decoder runs in e2e. */
+function mockClubCall(): EthCall {
+  type C = { id: string; name: string; creator: Address; members: Address[]; admins: Address[] };
+  const clubs = (): C[] => {
+    try {
+      return (JSON.parse(localStorage.getItem("ficlub:mock:v1") || "{}") as { clubs?: C[] }).clubs ?? [];
+    } catch {
+      return [];
+    }
+  };
+  return async (_to, data) => {
+    const { functionName, args } = decodeFunctionData({ abi: CLUB_ABI, data: data as `0x${string}` });
+    const all = clubs();
+    if (functionName === "clubsOf") {
+      const who = String(args![0]).toLowerCase();
+      const ids = all.filter((c) => [...c.members, ...c.admins].some((m) => m.toLowerCase() === who)).map((c) => BigInt(c.id));
+      return encodeFunctionResult({ abi: CLUB_ABI, functionName, result: ids });
+    }
+    const c = all.find((x) => x.id === String(args![0]));
+    if (!c) throw new Error("No such club");
+    if (functionName === "getClub") return encodeFunctionResult({ abi: CLUB_ABI, functionName, result: [c.name, "0x", c.creator, 0n, 0n] });
+    const list = (functionName === "listMembers" ? c.members : c.admins).map((a) => a.toLowerCase() as Address);
+    return encodeFunctionResult({ abi: CLUB_ABI, functionName, result: list });
   };
 }
