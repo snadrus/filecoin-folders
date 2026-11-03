@@ -94,3 +94,6 @@ As a user uploading a file of tens of MB, it appears in the drive right away and
 
 ### S63 Keyboard-only file list
 As a keyboard-only user, Tab takes me into the file list (one stop, like Drive), the focused row is selected and announced by name, and ↑/↓, Enter, F2 and Delete work from there.
+
+### S64 Phone overlays
+On a phone, with the Uploads panel open, the file menu and dialogs sit above it, so every menu item (Make a copy, Star, Move to trash, Details) can be tapped.

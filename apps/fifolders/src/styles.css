@@ -228,7 +228,7 @@ button:disabled { cursor: default; opacity: 0.45; }
   box-shadow: var(--shadow);
   padding: 8px 0;
   min-width: 220px;
-  z-index: 30;
+  z-index: 60; /* above the Uploads panel and toasts (50) */
 }
 .menu button { display: flex; width: 100%; align-items: center; gap: 12px; text-align: left; padding: 8px 16px; }
 .menu button:hover { background: var(--hover); }
@@ -237,7 +237,7 @@ button:disabled { cursor: default; opacity: 0.45; }
 .account-menu { position: absolute; top: 60px; right: 12px; width: 320px; padding: 12px; }
 .account-line { margin: 0 0 8px; word-break: break-all; color: var(--muted); font-size: 12px; }
 
-.backdrop { position: fixed; inset: 0; background: rgba(32, 33, 36, 0.45); display: flex; align-items: center; justify-content: center; z-index: 40; padding: 24px; }
+.backdrop { position: fixed; inset: 0; background: rgba(32, 33, 36, 0.45); display: flex; align-items: center; justify-content: center; z-index: 58; padding: 24px; }
 .dialog, .preview { background: #fff; border-radius: 16px; padding: 20px; width: min(440px, 100%); box-shadow: var(--shadow); }
 .preview { width: min(960px, 100%); max-height: calc(100% - 48px); display: flex; flex-direction: column; }
 .preview-body { min-height: 200px; overflow: auto; }

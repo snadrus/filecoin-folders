@@ -283,3 +283,22 @@ test("S63 keyboard only: Tab reaches the file list, selects a row, ↓ and Enter
   await page.keyboard.press("Enter");
   await expect(page.getByTestId("preview-text")).toContainText("second");
 });
+
+test.describe("S64 phone: menus and dialogs sit above the Uploads panel", () => {
+  test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+  test("every context-menu item is clickable (topmost) while Uploads is open", async ({ page }) => {
+    await connect(page);
+    await page.getByTestId("file-input").setInputFiles([{ name: "m.txt", mimeType: "text/plain", buffer: Buffer.from("x") }]);
+    await expect(page.getByTestId("entry")).toHaveCount(1);
+    await expect(page.locator(".uploads")).toBeVisible();
+    await page.getByTestId("entry").first().click({ button: "right" });
+    const covered = await page.evaluate(() =>
+      [...document.querySelectorAll<HTMLElement>(".menu button")].filter((b) => {
+        const r = b.getBoundingClientRect();
+        const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+        return !(top && b.contains(top));
+      }).map((b) => b.textContent?.trim()),
+    );
+    expect(covered).toEqual([]);
+  });
+});
