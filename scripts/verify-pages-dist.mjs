@@ -3,7 +3,7 @@ import http from "node:http";
 import path from "node:path";
 
 const dist = path.resolve(process.argv[2] || "apps/fifolders/dist");
-const routes = ["/", "/identity/", "/fipen/", "/figrid/", "/felarumi/", "/felanumio/"];
+const routes = ["/", "/identity/", "/ficlub/", "/fipen/", "/figrid/", "/felarumi/", "/felanumio/"];
 
 function localFile(urlPath) {
   const clean = decodeURIComponent(urlPath.split("?")[0]);

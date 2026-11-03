@@ -8,7 +8,8 @@
     "build": "tsc -p tsconfig.json --noEmit && vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "e2e": "playwright test"
+    "e2e": "playwright test",
+    "e2e:ficlub-anvil": "playwright test -c playwright.ficlub-anvil.config.ts"
   },
   "dependencies": {
     "@filoz/synapse-core": "^0.4.1",
