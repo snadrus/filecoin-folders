@@ -6,8 +6,8 @@ One profile per wallet, shared by FiFolders, FiPen and FiGrid, and the base for 
 
 | Part | Value |
 |---|---|
-| Page | `https://fifolders.scionbase.ai/identity/` (own Vite entry `apps/fifolders/identity/index.html`, own bundle; not part of the drive UI). `?return=<same-origin URL>` sends the user back after Save. |
-| Piece | JSON document stored with Synapse in the wallet's existing FiFolders dataset (same path as drive uploads). |
+| Page | `https://fifolders.scionbase.ai/identity/` (own Vite entry `apps/fifolders/identity/index.html`, own bundle; not part of your folders UI). `?return=<same-origin URL>` sends the user back after Save. |
+| Piece | JSON document stored with Synapse in the wallet's existing FiFolders dataset (same path as folder uploads). |
 | Chain pointer | Existing **FolderRegistry** (`calibration 0x4893FfF3611240fbB4Be68eFe4AA0Ec634279331`), `commit(ns, key, pieceCid, prevPieceCid)` from the wallet itself. No new contract. |
 | `ns` | `keccak256("fil-identity")` (`identityNamespace()`) |
 | `key` | `keccak256("profile")` (`identityProfileKey()`) |

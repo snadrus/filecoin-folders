@@ -1,4 +1,5 @@
 /** FiClub on chain via viem. Address from VITE_FICLUB_ADDRESS_CALIBRATION (or a local anvil via VITE_FICLUB_RPC + VITE_FICLUB_CHAIN_ID). */
+import { withTransientRetry } from "fil-folders";
 import { createPublicClient, createWalletClient, custom, defineChain, getAddress, http, parseEventLogs, type Address, type Chain, type Hex } from "viem";
 import { filecoinCalibration } from "viem/chains";
 import { withWalletIntent } from "../wallet-prompts.js";
@@ -14,7 +15,7 @@ export function createLiveClubIO(address: Address, rpc?: string, chainId?: numbe
   const chain: Chain = rpc
     ? defineChain({ id: chainId ?? 31337, name: "Local", nativeCurrency: { name: "FIL", symbol: "FIL", decimals: 18 }, rpcUrls: { default: { http: [rpc] } } })
     : (filecoinCalibration as Chain);
-  const client = createPublicClient({ chain, transport: http(rpc ?? "https://api.calibration.node.glif.io/rpc/v1") });
+  const client = createPublicClient({ chain, transport: withTransientRetry(http(rpc ?? "https://api.calibration.node.glif.io/rpc/v1")) });
   let me: Address | null = null;
 
   async function wallet() {

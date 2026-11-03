@@ -124,7 +124,7 @@ export function breadcrumbs(nav: NavId, cwd: string): { label: string; path: str
     }
     return crumbs;
   }
-  const crumbs = [{ label: "My Drive", path: "/" }];
+  const crumbs = [{ label: "My Folders", path: "/" }];
   if (cwd !== "/") {
     let acc = "";
     for (const part of cwd.split("/").filter(Boolean)) {

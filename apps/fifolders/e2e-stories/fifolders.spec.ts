@@ -203,7 +203,7 @@ test("S55 wallet & setup menu is filled while the session key is still being aut
   await expect(menu.getByTestId("session-status")).toBeVisible();
 });
 
-test("S50 Loose pieces: one Filecoin Drive file → Add to drive names count + cost first, then it lives in My Drive", async ({ page }) => {
+test("S50 Loose pieces: one Filecoin Drive file → Add to folders names count + cost first, then it lives in My Folders", async ({ page }) => {
   await connect(page, "/?onboard=1&pay=ready&datasets=1&fcdrive=1");
   await page.getByTestId("nav-loose").click();
   const rows = page.locator("[data-testid=loose-row][data-origin=drive]");
@@ -255,7 +255,7 @@ test("S54b the 'Using your latest dataset' snackbar hides itself", async ({ page
 test("S50b Loose pieces empty state explains what shows up there", async ({ page }) => {
   await connect(page);
   await page.getByTestId("nav-loose").click();
-  await expect(page.locator(".empty-state")).toContainText("Add to drive");
+  await expect(page.locator(".empty-state")).toContainText("Add to folders");
 });
 
 test("S60 keyboard like Drive: ↑/↓ move the selection, Shift+↓ extends, Ctrl+A selects all, F2 renames, Enter opens", async ({ page }) => {
@@ -554,4 +554,18 @@ test("S75 nav has no Deploy contracts or FiClub; FiClub lives on the identity pa
   await expect(page.getByTestId("identity-ficlub-link")).toHaveAttribute("href", "../ficlub/");
   const res = await page.goto("/fideploy/");
   expect(res?.status()).toBe(200);
+});
+
+test("S76 a 2nd upload dropped while the 1st is still saving both land, even when the RPC node lags (future epoch)", async ({ page }) => {
+  await connect(page, `${ready}&rpclag=2`);
+  const errors: string[] = [];
+  page.on("console", (m) => { if (m.type() === "error") errors.push(m.text()); });
+  await page.getByTestId("file-input").setInputFiles([{ name: "first.txt", mimeType: "text/plain", buffer: Buffer.from("one") }]);
+  await page.waitForTimeout(300); // first save is now waiting out the lagging node
+  await page.getByTestId("file-input").setInputFiles([{ name: "second.txt", mimeType: "text/plain", buffer: Buffer.from("two") }]);
+  await expect(page.getByTestId("entry").filter({ hasText: "first.txt" })).toHaveCount(1, { timeout: 30_000 });
+  await expect(page.getByTestId("entry").filter({ hasText: "second.txt" })).toHaveCount(1, { timeout: 30_000 });
+  await expect(page.getByText(/future epoch|RPC Request failed/i)).toHaveCount(0);
+  await expect(page.getByTestId("staged-changes")).toHaveCount(0, { timeout: 30_000 });
+  expect(errors.filter((e) => /future epoch/i.test(e))).toEqual([]);
 });

@@ -1,3 +1,4 @@
+import { withTransientRetry } from "fil-folders";
 import { createPublicClient, custom, getAddress, http, type Address, type Hex, type PublicClient } from "viem";
 import { onWalletPrompts, watchWalletPrompts, withWalletIntent, INTENTS, type WalletPrompt } from "../wallet-prompts.js";
 import { discoverWallets } from "../eip6963.js";
@@ -9,7 +10,7 @@ const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`;
 const DEPLOYABLE = ["FolderRegistryV2", "FiClub"] as const;
 type Deployable = (typeof DEPLOYABLE)[number];
 const PURPOSE: Record<ContractName, string> = {
-  FolderRegistryV2: "FiFolders drive pointers (one head per folder volume)",
+  FolderRegistryV2: "FiFolders folder pointers (one head per folder volume)",
   FiClub: "on-chain groups: members, admins, 2-signature admin removal",
   SessionKeyRegistry: "Filecoin Pay session keys (shared, canonical; not deployed here)",
 };
@@ -48,7 +49,7 @@ export class DeployPage {
   }
 
   private client(): PublicClient {
-    const transport = this.customRpc ? http(this.customRpc) : this.provider ? custom(this.provider) : http(this.chain.rpc);
+    const transport = this.customRpc ? withTransientRetry(http(this.customRpc)) : this.provider ? custom(this.provider) : withTransientRetry(http(this.chain.rpc));
     return createPublicClient({ transport }) as PublicClient;
   }
 

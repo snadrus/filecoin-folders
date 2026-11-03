@@ -100,7 +100,7 @@ describe("wallet prompt toast", () => {
     await Promise.resolve();
     expect(root.querySelector("[data-testid=wallet-prompt-title]")?.textContent).toBe("Save changes");
     expect(root.querySelector("[data-testid=wallet-prompt-detail]")?.textContent).toContain("2 pieces (gas ~0.01 FIL)");
-    expect(loadOps().some((op) => op.kind === "wallet" && op.label === "Save 2 pieces to My Drive" && op.detail === "Save changes — 2 pieces (gas ~0.01 FIL)")).toBe(true);
+    expect(loadOps().some((op) => op.kind === "wallet" && op.label === "Save 2 pieces to My Folders" && op.detail === "Save changes — 2 pieces (gas ~0.01 FIL)")).toBe(true);
     release("0x1");
     await pending;
     expect(loadOps().some((op) => op.kind === "wallet")).toBe(false);
@@ -122,7 +122,7 @@ describe("S51 registry v2 migration prompt label", () => {
   it("labels the drive and identity pointer moves (one-time, gas shown)", async () => {
     const { labelMigration, currentIntent } = await import("../src/wallet-prompts.js");
     const drive = await labelMigration({ ns: "0x" + "12".repeat(32) }, async () => currentIntent());
-    expect(drive?.title).toBe("Move drive pointer to new registry");
+    expect(drive?.title).toBe("Move folders pointer to new registry");
     expect(drive?.cost).toMatch(/FIL/);
     const id = await labelMigration({ ns: "0x4ba7e36ce925bbe5d8a219757e1186149701b3ee9649e24538dccda15e7c59e5" }, async () => currentIntent());
     expect(id?.title).toBe("Move identity pointer to new registry");

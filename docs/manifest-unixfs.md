@@ -1,7 +1,7 @@
 # Adopted Filecoin Drive (UnixFS) files in the FiFolders manifest
 
 FiFolders can reference files that Filecoin Pin's **Filecoin Drive** already stored, without
-re-uploading them ("Add to drive" in Loose pieces).
+re-uploading them ("Add to folders" in Loose pieces).
 
 ## Manifest fields (additive, `v: 1` unchanged)
 

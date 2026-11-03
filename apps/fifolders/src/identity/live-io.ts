@@ -1,3 +1,4 @@
+import { withTransientRetry } from "fil-folders";
 import { calibration, mainnet } from "@filoz/synapse-core/chains";
 import { createSynapseStorage, createViemRegistry } from "fil-folders";
 import { assertStorageReady, saveIdentity, type IdentityV1 } from "fiperson/edit";
@@ -30,7 +31,7 @@ export function createLiveIdentityIO(choice: ChainChoice = readNetworkPreference
   let provider: Provider | null = null;
   const chain = chainOf(choice);
   const rpc = choice === "mainnet" ? MAINNET_RPC : CALIBRATION_RPC;
-  const client = createPublicClient({ chain, transport: http(rpc) }) as PublicClient;
+  const client = createPublicClient({ chain, transport: withTransientRetry(http(rpc)) }) as PublicClient;
   const publicTransport = custom({ request: (args: { method: string; params?: unknown }) => client.request(args as never) });
 
   async function getProvider(): Promise<Provider> {

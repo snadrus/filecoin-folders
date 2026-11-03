@@ -30,7 +30,7 @@ test("Add to drive references Filecoin Drive pieces in the manifest and reads th
   await page.getByTestId("nav-loose").click();
   await expect(page.locator("[data-testid=loose-row][data-origin=drive]")).toHaveCount(3);
   await page.getByTestId("loose-adopt-all").click();
-  await expect(page.getByTestId("dialog")).toContainText("Add 4 files to drive");
+  await expect(page.getByTestId("dialog")).toContainText("Add 4 files to your folders");
   await expect(page.getByTestId("dialog-note")).toContainText("gas ~0.01 FIL");
   await page.getByTestId("dialog-input").fill("/Filecoin Drive");
   if (process.env.SHOT_ADOPT) await page.screenshot({ path: process.env.SHOT_ADOPT });

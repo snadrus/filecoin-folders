@@ -15,7 +15,7 @@ Calibration: `0x9C06335D7DE588Caa104ee4FC3bb7cd8Aba62443` (deployments/calibrati
 
 ## Migration (automatic)
 - `createViemRegistry({ address: <v1> })` returns a migrating registry when the v1 address has a known successor (`REGISTRY_SUCCESSORS`): `head` reads v2, falls back to v1; the first commit for a key still only on v1 CAS-checks the v1 head, then writes v2 at version 0; the new manifest's `prev` = the v1 head. `migrate: false` pins plain v1; `abiVersion: 2` talks to v2 directly.
-- FiFolders labels that one-time write "Move drive pointer to new registry" / "Move identity pointer to new registry" (gas ~0.01 FIL) via `wrapMigration`. With a session key it is silent (the session key pays gas).
+- FiFolders labels that one-time write "Move folders pointer to new registry" / "Move identity pointer to new registry" (gas ~0.01 FIL) via `wrapMigration`. With a session key it is silent (the session key pays gas).
 - fiperson `registryHeadReader(rpc, v1)` reads v2 first, then v1.
 - Encryption keys still derive from the **v1** address (`registryAddress`), so encrypted volumes keep their keys.
 - FiPen/FiGrid get this through the fil-folders/fiperson dist copied in the Pages build.

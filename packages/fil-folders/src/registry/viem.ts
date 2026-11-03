@@ -10,6 +10,7 @@ import {
   type PublicClient,
   type WalletClient,
 } from "viem";
+import { retryTransient } from "../rpc-retry.js";
 import { RegistryCallError, RegistryCasConflict, RegistryNotAuthorized } from "../errors.js";
 import { PIECE_CID_MAX_BYTES } from "../ids.js";
 import { committedEvent, folderRegistryAbi } from "./abi.js";
@@ -361,15 +362,7 @@ function fromCached(item: CachedScan["records"][number]): CommittedRecord {
   return record;
 }
 
-/** FEVM RPCs can fail a receipt poll with "requested epoch was a null round"; keep waiting. */
+/** FEVM RPCs can fail a receipt poll with a null round or a "future epoch" from a lagging node; keep waiting. */
 async function waitReceipt(client: PublicClient, hash: Hex) {
-  for (let attempt = 0; ; attempt++) {
-    try {
-      return await client.waitForTransactionReceipt({ hash });
-    } catch (error) {
-      const text = String((error as { message?: string })?.message ?? error) + String((error as { details?: string })?.details ?? "");
-      if (attempt >= 5 || !/null round/i.test(text)) throw error;
-      await new Promise((r) => setTimeout(r, 3000));
-    }
-  }
+  return retryTransient(() => client.waitForTransactionReceipt({ hash }), { maxWaitMs: 180_000 });
 }

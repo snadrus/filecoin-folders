@@ -3,6 +3,7 @@ import { contentCid, decodeCar, encodeCar, isCar } from "./car.js";
 import { bytesToPieceCid, decodeUtf8, isByteStream, pieceCidToBytes, readStream, utf8, bytesToBase64Url, base64UrlToBytes } from "./bytes.js";
 import { manifestBytes, parseManifest } from "./codec.js";
 import { deriveVolumeKey, decryptBytes, encryptBytes, FILE_AAD, NAME_AAD, signVolumeKey, volumeKeyInfo } from "./crypto.js";
+import { retryTransient } from "./rpc-retry.js";
 import { CasRetryError, IsADirectoryError, NotFoundError, RegistryCasConflict } from "./errors.js";
 import { FIL_FOLDERS_NAMESPACE, namespaceId, volumeKey } from "./ids.js";
 import { mergeTrees } from "./merge.js";
@@ -504,13 +505,17 @@ export class Volume {
     for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
       const pieceCid = await this.#storeRoot(ours, prevPiece);
       try {
-        const record = await this.registry.commit({
-          owner: this.owner,
-          ns: this.ns,
-          key: this.key,
-          pieceCid: pieceCidToBytes(pieceCid),
-          prevPieceCid: pieceCidToBytes(prevPiece),
-        });
+        // A lagging RPC node ("future epoch", header not found) is transient: wait for it. If a
+        // retried commit had already landed, the next attempt sees a CAS conflict and merges.
+        const record = await retryTransient(() =>
+          this.registry.commit({
+            owner: this.owner,
+            ns: this.ns,
+            key: this.key,
+            pieceCid: pieceCidToBytes(pieceCid),
+            prevPieceCid: pieceCidToBytes(prevPiece),
+          }),
+        );
         this.#basePiece = pieceCid;
         this.#baseVersion = record.version;
         this.#baseTree = ours;
