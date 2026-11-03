@@ -444,6 +444,16 @@ export class DriveApp {
     root.addEventListener("input", (event) => this.onInput(event));
     // Document-level: after a click on a row focus sits on <body>, outside the root.
     root.ownerDocument.addEventListener("keydown", (event) => { if (this.root === root) this.onKey(event); });
+    // Tabbing into the file list selects the focused row (Drive does the same), then ↑/↓/Enter/F2 work from there.
+    root.addEventListener("focusin", (event) => {
+      const row = (event.target as HTMLElement | null)?.closest<HTMLElement>("[data-testid=entry]");
+      if (!row || this.root !== root) return;
+      const path = decodeURIComponent(row.dataset.path || "");
+      if (!path || this.selected.includes(path)) return;
+      this.selected = [path];
+      this.render();
+      root.querySelector<HTMLElement>(`[data-testid=entry][data-path="${encodeURIComponent(path)}"]`)?.focus({ preventScroll: true });
+    });
     root.addEventListener("dragstart", (event) => this.onDragStart(event));
     root.addEventListener("dragover", (event) => this.onDragOver(event));
     root.addEventListener("dragleave", (event) => this.onDragLeave(event));
@@ -1721,7 +1731,9 @@ export class DriveApp {
         const next = paths[Math.max(0, Math.min(paths.length - 1, at < 0 ? 0 : at + (event.key === "ArrowDown" ? 1 : -1)))]!;
         this.selected = event.shiftKey ? [...this.selected.filter((p) => p !== next), next] : [next];
         this.render();
-        this.root.querySelector<HTMLElement>(`[data-testid=entry][data-path="${encodeURIComponent(next)}"]`)?.scrollIntoView({ block: "nearest" });
+        const row = this.root.querySelector<HTMLElement>(`[data-testid=entry][data-path="${encodeURIComponent(next)}"]`);
+        row?.scrollIntoView({ block: "nearest" });
+        row?.focus({ preventScroll: true });
       }
       return;
     }

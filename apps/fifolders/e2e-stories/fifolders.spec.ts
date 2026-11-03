@@ -265,3 +265,21 @@ test("S62 a large upload (bigger than localStorage) still shows up and saves, wi
   await expect(page.getByRole("button", { name: /^Save \d+ change/ })).toHaveCount(0, { timeout: 30_000 });
   await expect(page.getByTestId("storage-runway")).toContainText("12 MB");
 });
+
+test("S63 keyboard only: Tab reaches the file list, selects a row, ↓ and Enter work without the mouse", async ({ page }) => {
+  await connect(page);
+  await page.getByTestId("file-input").setInputFiles([
+    { name: "t1.txt", mimeType: "text/plain", buffer: Buffer.from("first") },
+    { name: "t2.txt", mimeType: "text/plain", buffer: Buffer.from("second") },
+  ]);
+  const rows = page.getByTestId("entry");
+  await expect(rows).toHaveCount(2);
+  await page.getByTestId("sort-size").focus();
+  await page.keyboard.press("Tab");
+  await expect(rows.nth(0)).toBeFocused();
+  await expect(rows.nth(0)).toHaveAttribute("data-selected", "true");
+  await page.keyboard.press("ArrowDown");
+  await expect(rows.nth(1)).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(page.getByTestId("preview-text")).toContainText("second");
+});
