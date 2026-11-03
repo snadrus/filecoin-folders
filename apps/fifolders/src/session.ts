@@ -1,3 +1,4 @@
+import { walletWithPublicReads } from "./split-transport.js";
 import { withTransientRetry } from "fil-folders";
 import { labelMigration } from "./wallet-prompts.js";
 import { calibration } from "@filoz/synapse-core/chains";
@@ -138,7 +139,7 @@ export async function connectInjected(options: {
   const walletClient = createWalletClient({
     account,
     chain: calibration,
-    transport: custom(options.ethereum),
+    transport: walletWithPublicReads(options.ethereum, CALIBRATION_RPC),
   });
   const publicClient = createPublicClient({
     chain: filecoinCalibration,

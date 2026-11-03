@@ -12,6 +12,11 @@ describe("transient RPC errors", () => {
     expect(isTransientRpcError(new Error("header not found"))).toBe(true);
     expect(isTransientRpcError(new Error("wrapped", { cause: new Error("requested epoch was a null round") }))).toBe(true);
     expect(isTransientRpcError(new Error("execution reverted"))).toBe(false);
+    // MetaMask wraps every upstream failure as -32603 "Internal JSON-RPC error": only retry when the cause says lagging node.
+    const mm = (cause: string) => Object.assign(new Error("Internal JSON-RPC error."), { code: -32603, data: { cause: { message: cause } } });
+    expect(isTransientRpcError(mm("execution reverted"))).toBe(false);
+    expect(isTransientRpcError(Object.assign(new Error("Internal JSON-RPC error."), { code: -32603, data: {} }))).toBe(false);
+    expect(isTransientRpcError(mm('requested a future epoch (beyond "latest")'))).toBe(true);
   });
 
   it("a client whose node lags 3 times still gets the block", async () => {

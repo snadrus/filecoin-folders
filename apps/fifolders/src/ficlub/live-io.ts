@@ -1,3 +1,4 @@
+import { walletWithPublicReads } from "../split-transport.js";
 /** FiClub on chain via viem. Address from VITE_FICLUB_ADDRESS_CALIBRATION (or a local anvil via VITE_FICLUB_RPC + VITE_FICLUB_CHAIN_ID). */
 import { withTransientRetry } from "fil-folders";
 import { createPublicClient, createWalletClient, custom, defineChain, getAddress, http, parseEventLogs, type Address, type Chain, type Hex } from "viem";
@@ -20,7 +21,7 @@ export function createLiveClubIO(address: Address, rpc?: string, chainId?: numbe
 
   async function wallet() {
     const p = await getProvider();
-    return createWalletClient({ account: me!, chain, transport: custom(p) });
+    return createWalletClient({ account: me!, chain, transport: walletWithPublicReads(p, rpc ?? "https://api.calibration.node.glif.io/rpc/v1") });
   }
   async function write(intent: (typeof CLUB_INTENTS)[keyof typeof CLUB_INTENTS], functionName: string, args: unknown[]): Promise<Hex> {
     const { request } = await client.simulateContract({ address, abi: FICLUB_ABI, functionName: functionName as never, args: args as never, account: me! });

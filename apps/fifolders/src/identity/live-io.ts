@@ -1,3 +1,4 @@
+import { walletWithPublicReads } from "../split-transport.js";
 import { withTransientRetry } from "fil-folders";
 import { calibration, mainnet } from "@filoz/synapse-core/chains";
 import { createSynapseStorage, createViemRegistry } from "fil-folders";
@@ -83,13 +84,13 @@ export function createLiveIdentityIO(choice: ChainChoice = readNetworkPreference
       const dataset = live.find((d: { dataSetId: bigint }) => d.dataSetId.toString() === last) ?? live[live.length - 1];
       // Never approves, deposits or creates a dataset: those are FiFolders' cost-labeled steps.
       assertStorageReady({ funds: info.availableFunds ?? info.funds ?? 0n, approved, datasetId: dataset ? BigInt(dataset.dataSetId) : null });
-      const synapse = Synapse.create({ account: owner, chain, transport: custom(p), source: "fifolders" } as never);
+      const synapse = Synapse.create({ account: owner, chain, transport: walletWithPublicReads(p, rpc), source: "fifolders" } as never);
       const storage = createSynapseStorage(synapse as never, { dataSetId: BigInt(dataset!.dataSetId), copies: 1, resolveOnAdded: true });
       const registry = createViemRegistry({
       wrapMigration: labelMigration,
         ...registryOf(choice),
         publicClient: client,
-        walletClient: createWalletClient({ account: owner, chain, transport: custom(p) }),
+        walletClient: createWalletClient({ account: owner, chain, transport: walletWithPublicReads(p, rpc) }),
         signer: "auto",
         scanCache: null,
       });
