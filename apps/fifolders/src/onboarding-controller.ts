@@ -13,8 +13,10 @@ export async function prepareOnboarding(app: DriveApp, io: OnboardingIO): Promis
   }
   app.onConnect = async (input) => {
     await io.connect({ rdns: app.walletRdns || null, chain: input.chain });
-    void peekDrive(app, io, input.encrypt);
-    await continueOnboarding(app, io, input, true);
+    // Lazy session key: Connect only shows the (public) drive; the key is authorized (and funded) at the first save.
+    // Only when nothing can be shown without it (encrypted volume, no public read) does Connect ask for it.
+    const peeked = await peekDrive(app, io, input.encrypt);
+    await continueOnboarding(app, io, input, !peeked);
   };
   app.onRetryLoad = async () => {
     await peekDrive(app, io);
@@ -42,6 +44,10 @@ export async function prepareOnboarding(app: DriveApp, io: OnboardingIO): Promis
     const encrypt = app.encryptPref;
     const report = (step: ChainReport) => app.noteChain(step);
     if (action === "authorize" || action === "refresh-session") await io.authorize(chain, action === "refresh-session", report);
+    else if (action === "refund-session") {
+      await refundSession(app, io);
+      return;
+    }
     else if (action === "fix-payments") {
       await io.fixPayments(chain, report, false);
       await continueOnboarding(app, io, { chain, volumeName, encrypt }, true);
@@ -55,6 +61,8 @@ export async function prepareOnboarding(app: DriveApp, io: OnboardingIO): Promis
     else if (action === "create-dataset") {
       const op = app.beginOp({ kind: "dataset", label: "Create dataset", stage: "pending" });
       try {
+        // First write for a new account: authorize the session key now (lazy, not at Connect).
+        if (!(await io.snapshot({ chain, volumeName })).sessionReady) await io.authorize(chain, false, report);
         await app.ensureSession();
         try {
           await withWalletIntent(INTENTS.createDataset, () => io.createDataset({ chain, volumeName }));
@@ -98,6 +106,28 @@ export async function prepareOnboarding(app: DriveApp, io: OnboardingIO): Promis
     app.detachToConnect();
   };
   app.onEnsureSession = () => io.sessionGate(app.chain);
+  app.onNeedSession = async () => {
+    const chain = app.chain;
+    const volumeName = app.volumeName;
+    const encrypt = app.encryptPref;
+    try {
+      const panel = await io.snapshot({ chain, volumeName });
+      if (!panel.paymentsReady) {
+        app.showPanel(panel);
+        throw new Error("Enable storage payment first (wallet menu).");
+      }
+      if (!panel.sessionReady) await io.authorize(chain, false, (step) => app.noteChain(step));
+      const ready = await io.snapshot({ chain, volumeName });
+      if (!canEnter(ready)) {
+        app.showPanel(ready);
+        throw new Error("Wallet setup is not finished.");
+      }
+      await openDrive(app, io, { chain, volumeName, encrypt });
+    } catch (error) {
+      console.error("FiFolders session setup", error);
+      app.sessionSetupFailed(error instanceof Error ? error.message : "The session key was not authorized.");
+    }
+  };
   app.onRenewSession = async () => {
     await io.authorize(app.chain, true, (step) => app.noteChain(step));
     if (app.volume) {
@@ -106,6 +136,19 @@ export async function prepareOnboarding(app: DriveApp, io: OnboardingIO): Promis
     }
     app.showPanel(await io.snapshot({ chain: app.chain, volumeName: app.volumeName }));
   };
+}
+
+/** "Disconnect session and refund": sweep the key's leftover gas back to the wallet, forget the key. */
+async function refundSession(app: DriveApp, io: OnboardingIO): Promise<void> {
+  if (!io.refundSession) throw new Error("Refund is not available for this wallet.");
+  const { refunded } = await io.refundSession(app.chain, (step) => app.noteChain(step));
+  const amount = Number(refunded) / 1e18;
+  const unit = app.chain === "mainnet" ? "FIL" : "tFIL";
+  app.demoteToReadOnly();
+  app.showPanel(await io.snapshot({ chain: app.chain, volumeName: app.volumeName }));
+  app.notice(refunded > 0n
+    ? `Session disconnected. ${amount.toFixed(4)} ${unit} refunded to your wallet.`
+    : "Session disconnected. Nothing left to refund.");
 }
 
 /**
@@ -168,7 +211,7 @@ async function continueOnboarding(
     app.showPanel(panel);
     return;
   }
-  if (autoAuthorize && !panel.sessionReady) {
+  if (autoAuthorize && !panel.sessionReady && panel.selectedDatasetId) {
     // Show the wallet & setup state while the session-key transaction is pending (it can take minutes);
     // otherwise the menu has no setup section and the runway says "Connect a wallet" while connected.
     app.showPanel(panel);

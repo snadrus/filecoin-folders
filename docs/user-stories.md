@@ -11,7 +11,7 @@ Suites: **mock** = local build with the mock chain (`VITE_E2E=1`) + staged edito
 | S01 | As a new visitor I see what storage costs only when I ask. | No cost pop-up on first visit. The storage/runway widget sits bottom-left; clicking it opens "What it costs" with exactly: "Per month:", "$2.50/TiB = a penny for 4 GB", "$0.12 per dataset ($0.50 at start)", "A penny per piece added". Esc/×/backdrop closes. | mock |
 | S02 | As any user I get the light theme. | `data-theme="light"` and a light background even when the OS prefers dark. | mock |
 | S03 | As a user I connect my wallet. | One `eth_requestAccounts`; short address shown; drive visible. | live |
-| S04 | As a user I can browse while setup transactions are pending. | Drive, Recent, Trash navigable; note "Finishing wallet setup… you can browse meanwhile"; pending step labeled "<title> — <purpose> (<cost>)"; edits made meanwhile are staged, not lost. | mock + live |
+| S04 | As a user I can browse right after Connect; the session key waits for my first save. | Connect asks for no session key (0 signatures). Drive, Recent, Trash navigable; note "You can browse now. Your first save sets up a wallet session (1 signature)." The first save/upload/Delete shows "Setting up your wallet session (1 signature, one time)… N changes will save right after"; uploads show "waiting for wallet setup"; then it saves. Refused → toast, changes kept, Save retries. | mock + live |
 | S05 | Every wallet request says what it is for and what it costs. | Setup steps and the wallet toast read "<title> — <purpose> (<cost>)". Transaction log rows are titled by purpose only ("Save “Notes” to My Drive", "Authorize this browser to save", "Add 3 Filecoin Drive files"; never "Send transaction"/gas); cost is the secondary line. | mock + live |
 | S06 | Session-key authorization is one labeled pop-up. | "Authorize session key — lets FiFolders save for 7 days without asking each time (~0.05 FIL)"; after approval the note clears and the signature count is 1. | mock |
 | S07 | I can see what happened on chain. | One "Transaction log" sidebar entry (spinner + pending count while anything is pending) opens the log: purpose rows, on-chain details; finished rows show a blue progress bar and auto-dismiss after ~10 s. A lapsed/expiring session is a pending "Reconnect wallet session" row with a Reconnect button (log opens itself on expiry) plus the wallet toast — no split panel or setup pop-up. | mock |
@@ -20,8 +20,8 @@ Suites: **mock** = local build with the mock chain (`VITE_E2E=1`) + staged edito
 | S10 | Refresh keeps my tree. | A folder created before reload is listed after reload. | mock |
 | S10b | A fresh browser/origin recovers my tree from chain (FolderRegistry manifest). | New profile, same wallet → same tree. | live (spend: STORIES_SPEND=1) |
 | S11 | Old links still work. | `/felarumi/…` → `/fipen/…`, `/felanumio/…` → `/figrid/…`, query and hash preserved. | mock |
-| S40 | Slow signature. | "Check your wallet — <request> (<cost>)" toast while waiting; UI stays usable; toast clears afterwards. | live |
-| S41 | I reject a signature. | Plain error with Retry (or Connect again); approving next time works; nothing stuck. | live |
+| S40 | Slow signature. | Connect: "Check your wallet — Connect wallet (free)" toast while waiting; UI stays usable; drive opens; toast clears. No session-key request at Connect (it comes at the first save). | live |
+| S41 | I reject a signature. | Plain error with Retry (or Connect again); approving next time opens the drive with no further prompt (no session-key request at Connect); nothing stuck. | live |
 | S42 | My wallet is locked. | Clear error; connect works after unlock. | live |
 | S43 | Repeated clicks don't stack prompts. | Three clicks on Connect → one wallet request, one toast. | live |
 | S44 | Wallet switches account or chain mid-session. | No reload, no prompt: account change restarts the session in place for the new account; chain change shows a toast and the view stays; saving asks to switch back. | live |
@@ -112,3 +112,16 @@ Uploading a file whose name already exists asks, like Drive, "Replace existing f
 
 ### S69 Manage versions
 From a file's menu, "Manage versions" lists its saved versions newest first (Drive parity); I can download any version or restore an older one, which becomes the newest version.
+
+### S72 Disconnect session and refund (decision 3)
+Wallet menu → "Disconnect session and refund" sends the session key's leftover tFIL/FIL back to my wallet (signed by the key, no wallet prompt), forgets the key in this browser and says how much came back. The next save asks for a session again. A later login in the same browser reuses a key that still holds gas (`login`, no new 0.05 funding) instead of funding a new one.
+
+### S73 Share page for guests (decision 4)
+Details → share link opens a FiFolders page (`/share/?cid=…&name=…&by=…`) with the file name, size, who shared it (FiPerson name/avatar, links to their person page), Open and Download (saved with the real file name, not `<cid>`). The raw gateway URL stays as "Gateway preview".
+
+### S74 Signatures say what they are for (decision 5)
+FiClub "remove admin" signatures (EIP-712 v2, contract `0x412B9363019591588073B3489CB09d28d2a55A03` on Calibration) carry the plain-language purpose "Remove this admin from the FiClub". FiPen signatures (EIP-712 v2) carry a purpose I type ("I sign this document." by default), shown first in the wallet and in the signature details; old v1 FiPen signatures still verify.
+
+### S75 FiPen on phones (decision 7)
+On a phone FiPen reflows text to the screen width (no sideways scroll; the document's page size is unchanged for others). Home/End move to the start/end of the visual line. A guest's copy waits in the guest's own drive under `/Copies/`; the guest always sees a save status ("Your edits are saved with the owner" / "Owner offline. Your edits are kept here…" / "Copy waiting in your drive (/Copies/…)").
+

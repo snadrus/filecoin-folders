@@ -30,6 +30,9 @@ describe("ficlub blob", () => {
   it("typed data is v4 JSON", () => {
     const t = JSON.parse(typedDataJson(314159, K, { clubId: 1n, target: C, nonce: 0n, deadline: 5n }));
     expect(t.primaryType).toBe("RemoveAdmin");
-    expect(t.domain).toMatchObject({ name: "FiClub", version: "1", chainId: 314159 });
+    expect(t.domain).toMatchObject({ name: "FiClub", version: "2", chainId: 314159 });
+    // Plain-language purpose first, so the wallet shows what the signature is for (decision 5).
+    expect(t.types.RemoveAdmin[0]).toEqual({ name: "purpose", type: "string" });
+    expect(t.message.purpose).toBe("Remove this admin from the FiClub");
   });
 });

@@ -6,7 +6,7 @@ import { CALIBRATION_RPC, isAddress, type Address } from "../view/schema.js";
 import type { KV } from "../view/resolve.js";
 
 /** FiClub on Filecoin Calibration (deployments/ficlub-calibration.json). */
-export const CALIBRATION_FICLUB = "0x4f73E1504d848eC4e3e74047940bD97EA79A3521" as const;
+export const CALIBRATION_FICLUB = "0x412B9363019591588073B3489CB09d28d2a55A03" as const;
 export const COWORKERS_CACHE_PREFIX = "fiperson:clubs:v1:";
 const SEL = { clubsOf: "3c2b9cf4", getClub: "5adf16af", listMembers: "c4d63bd4", listAdmins: "7f8e156a" } as const;
 const PAGE = 200n;

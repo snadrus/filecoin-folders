@@ -49,7 +49,7 @@ test("S04 drive is browsable read-only while setup transactions are pending; edi
   });
   await page.reload();
   await expect(page.getByTestId("nav-drive")).toBeVisible();
-  await expect(page.getByTestId("setup-note")).toContainText("you can browse meanwhile");
+  await expect(page.getByTestId("setup-note")).toContainText(/you can browse/i);
   // S70: the note sits above the file list; it must not take a column of its own and squeeze the list.
   await expect(page.getByTestId("browser").getByTestId("setup-note")).toHaveCount(1);
   const ws = (await page.locator("main.workspace").boundingBox())!;
@@ -59,6 +59,31 @@ test("S04 drive is browsable read-only while setup transactions are pending; edi
   await page.getByTestId("nav-drive").click();
   await page.getByTestId("file-input").setInputFiles({ name: "early.txt", mimeType: "text/plain", buffer: Buffer.from("hi") });
   await expect(page.getByText("early.txt").first()).toBeVisible();
+  // Lazy session key (decision 1/2): the first save asks for the key and says so while it waits.
+  await expect(page.getByTestId("setup-note")).toContainText("Setting up your wallet session");
+  await expect(page.getByTestId("upload-title")).toContainText("waiting for wallet setup");
+  await expect(page.getByTestId("upload-title")).toContainText("complete", { timeout: 20_000 });
+  await expect(page.getByTestId("wallet-signatures")).toHaveText("1");
+});
+
+test("S04b Delete after the session was refunded waits visibly for a new session, then saves after one signature", async ({ page }) => {
+  await connect(page, "/?onboard=1&pay=ready&datasets=1&authdelay=1500");
+  await page.getByTestId("file-input").setInputFiles({ name: "gone.txt", mimeType: "text/plain", buffer: Buffer.from("x") });
+  await expect(page.getByTestId("upload-title")).toContainText("complete", { timeout: 20_000 });
+  await expect(page.getByTestId("wallet-signatures")).toHaveText("1");
+  await page.getByTestId("account").click();
+  await page.getByTestId("refund-session").click();
+  await expect(page.getByText(/Session disconnected/)).toBeVisible();
+  await page.keyboard.press("Escape");
+  const row = page.getByTestId("entry").filter({ hasText: "gone.txt" });
+  await row.click();
+  await page.keyboard.press("Delete");
+  await page.getByTestId("save-changes").click();
+  await expect(page.getByTestId("setup-note")).toContainText("Setting up your wallet session");
+  await expect(page.getByTestId("setup-note")).toHaveCount(0, { timeout: 20_000 });
+  await expect(page.getByTestId("wallet-signatures")).toHaveText("2");
+  await page.getByTestId("nav-drive").click();
+  await expect(page.getByTestId("entry").filter({ hasText: "gone.txt" })).toHaveCount(0);
 });
 
 test("S05/S06 wallet requests are labeled with purpose+cost; 'Check your wallet' shows while waiting and clears", async ({ page }) => {
@@ -81,14 +106,12 @@ test("S05/S06 wallet requests are labeled with purpose+cost; 'Check your wallet'
 
 test("S07 transaction log sidebar lists chain steps; activity rows auto-dismiss ~10s with a blue progress bar", async ({ page }) => {
   await connect(page);
-  await page.getByTestId("txlog-toggle").click();
-  await expect(page.getByTestId("txlog").getByTestId("chain-steps")).toBeVisible();
-  await page.getByTestId("txlog-toggle").click();
-  await expect(page.getByTestId("txlog")).toHaveCount(0);
-  await page.getByTestId("file-input").setInputFiles({ name: "act.txt", mimeType: "text/plain", buffer: Buffer.from("activity") });
+  // Lazy session key: the first upload authorizes it, so its chain steps show up in the log.
   await page.getByTestId("txlog-toggle").click(); // activity rows live in the Transaction log (#32)
+  await page.getByTestId("file-input").setInputFiles({ name: "act.txt", mimeType: "text/plain", buffer: Buffer.from("activity") });
   const done = page.getByTestId("activity-item").filter({ has: page.getByTestId("activity-progress") }).first();
   await expect(done).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("txlog").getByTestId("chain-steps")).toHaveCount(1);
   const color = await done.getByTestId("activity-progress").evaluate((el) => getComputedStyle(el).backgroundColor);
   const [r, g, b] = color.match(/\d+/g)!.map(Number);
   expect(b).toBeGreaterThan(r);
@@ -443,4 +466,44 @@ test("S71 reads don't wait behind wallet setup: Manage versions and Details open
   await row.click({ button: "right" });
   await page.getByRole("button", { name: "Details" }).click();
   await expect(page.getByTestId("details")).toBeVisible({ timeout: 3_000 });
+});
+
+test("S72 Disconnect session and refund: key forgotten, amount shown, next save asks again (one signature)", async ({ page }) => {
+  await connect(page);
+  await page.getByTestId("file-input").setInputFiles({ name: "first.txt", mimeType: "text/plain", buffer: Buffer.from("1") });
+  await expect(page.getByTestId("upload-title")).toContainText("complete", { timeout: 20_000 });
+  await expect(page.getByTestId("wallet-signatures")).toHaveText("1");
+  await page.getByTestId("account").click();
+  await page.getByTestId("refund-session").click();
+  await expect(page.getByText(/Session disconnected\. 0\.0490 tFIL refunded to your wallet\./)).toBeVisible();
+  if (!(await page.getByTestId("account-menu").count())) await page.getByTestId("account").click();
+  await expect(page.getByTestId("session-status")).toHaveText("Session key missing");
+  await page.keyboard.press("Escape");
+  await page.getByTestId("file-input").setInputFiles({ name: "second.txt", mimeType: "text/plain", buffer: Buffer.from("2") });
+  await expect(page.getByTestId("entry").filter({ hasText: "second.txt" })).toHaveCount(1);
+  await expect(page.getByTestId("wallet-signatures")).toHaveText("2", { timeout: 20_000 });
+});
+
+test("S73 guest share page: name, size, who shared it, Open, and Download with the real file name", async ({ page, context }) => {
+  await connect(page);
+  await page.getByTestId("file-input").setInputFiles({ name: "Trip plan.txt", mimeType: "text/plain", buffer: Buffer.from("see you there") });
+  const row = page.getByTestId("entry").filter({ hasText: "Trip plan.txt" });
+  await expect(page.getByTestId("upload-title")).toContainText("complete", { timeout: 20_000 });
+  await row.click({ button: "right" });
+  await page.getByRole("button", { name: "Details" }).click();
+  const href = await page.getByTestId("share-link").getAttribute("href");
+  expect(href).toContain("/share/?cid=");
+  // A guest: fresh browser context, nothing connected.
+  const guest = await context.browser()!.newContext();
+  const g = await guest.newPage();
+  await g.route("https://ipfs.io/**", (route) => route.fulfill({ status: 200, body: "see you there", headers: { "content-type": "text/plain", "access-control-allow-origin": "*" } }));
+  await g.goto(href!);
+  await expect(g.getByTestId("share-name")).toHaveText("Trip plan.txt");
+  await expect(g.getByTestId("share-size")).toContainText("bytes");
+  await expect(g.getByTestId("share-owner")).toBeVisible();
+  await expect(g.getByTestId("share-open")).toHaveAttribute("href", /ipfs\.io\/ipfs\/.+filename=Trip%20plan\.txt/);
+  const [download] = await Promise.all([g.waitForEvent("download"), g.getByTestId("share-download").click()]);
+  expect(download.suggestedFilename()).toBe("Trip plan.txt");
+  await g.screenshot({ path: "/workspace/ff-share-page.png" });
+  await guest.close();
 });

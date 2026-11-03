@@ -25,8 +25,11 @@ contract FiClub {
         mapping(uint256 => uint256) pos;
     }
 
+    /// @notice Plain-language purpose wallets show first when an admin signs (EIP-712 v2). Fixed, so a signer
+    ///         can't be shown one purpose while the contract checks another.
+    string public constant REMOVE_ADMIN_PURPOSE = "Remove this admin from the FiClub";
     bytes32 public constant REMOVE_ADMIN_TYPEHASH =
-        keccak256("RemoveAdmin(uint256 clubId,address target,uint256 nonce,uint256 deadline)");
+        keccak256("RemoveAdmin(string purpose,uint256 clubId,address target,uint256 nonce,uint256 deadline)");
     bytes32 private constant DOMAIN_TYPEHASH =
         keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
     uint256 private constant HALF_N = 0x7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0;
@@ -155,11 +158,11 @@ contract FiClub {
     // ---------- views ----------
 
     function domainSeparator() public view returns (bytes32) {
-        return keccak256(abi.encode(DOMAIN_TYPEHASH, keccak256("FiClub"), keccak256("1"), block.chainid, address(this)));
+        return keccak256(abi.encode(DOMAIN_TYPEHASH, keccak256("FiClub"), keccak256("2"), block.chainid, address(this)));
     }
 
     function removeAdminDigest(uint256 clubId, address target, uint256 nonce, uint256 deadline) public view returns (bytes32) {
-        bytes32 structHash = keccak256(abi.encode(REMOVE_ADMIN_TYPEHASH, clubId, target, nonce, deadline));
+        bytes32 structHash = keccak256(abi.encode(REMOVE_ADMIN_TYPEHASH, keccak256(bytes(REMOVE_ADMIN_PURPOSE)), clubId, target, nonce, deadline));
         return keccak256(abi.encodePacked("\x19\x01", domainSeparator(), structHash));
     }
 

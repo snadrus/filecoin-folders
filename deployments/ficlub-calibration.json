@@ -2,11 +2,13 @@
   "network": "filecoin-calibration",
   "chainId": 314159,
   "contract": "FiClub",
-  "address": "0x4f73E1504d848eC4e3e74047940bD97EA79A3521",
+  "version": "2 (EIP-712 RemoveAdmin with plain-language purpose)",
+  "address": "0x412B9363019591588073B3489CB09d28d2a55A03",
   "deployer": "0x2d633437f7E2138B400AF6882bee2d79C81CF401",
-  "txHash": "0x061c946048ed310a9249d7b3ced998596033bc61320207faea0cb5c3349fe481",
-  "block": 4211705,
-  "gasUsed": 75677052,
-  "commit": "bcc70b3",
-  "date": "2026-11-02"
+  "txHash": "0xa89a74e5af79aae92d1655ea0493609c20f600fe05d54f0b55b25ad50fb2f753",
+  "block": 4212873,
+  "gasUsed": 76767897,
+  "verified": { "sourcify": "exact_match", "blockscout": "https://filecoin-testnet.blockscout.com/address/0x412B9363019591588073B3489CB09d28d2a55A03" },
+  "previous": { "address": "0x4f73E1504d848eC4e3e74047940bD97EA79A3521", "block": 4211705, "note": "v1 typed data (no purpose); superseded" },
+  "date": "2026-11-03"
 }

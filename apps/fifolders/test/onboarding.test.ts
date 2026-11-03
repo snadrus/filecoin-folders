@@ -107,9 +107,8 @@ describe("mocked wallet and SessionKeyRegistry", () => {
 
     root.querySelector<HTMLButtonElement>("[data-testid=fix-payments]")?.click();
     await settle(app);
-    // Session-key authorization starts on its own once payment is enabled.
-    expect(root.querySelector("[data-testid=wallet-signatures]")?.textContent).toContain("Wallet signatures 3");
-    expect(root.querySelector("[data-testid=session-status]")?.textContent).toContain("Session key ready");
+    // Lazy session key: payment takes 2 signatures; creating the dataset (the first write) authorizes the key.
+    expect(root.querySelector("[data-testid=wallet-signatures]")?.textContent).toContain("Wallet signatures 2");
 
     root.querySelector<HTMLButtonElement>("[data-testid=create-dataset]")?.click();
     await settle(app);
@@ -162,6 +161,48 @@ describe("mocked wallet and SessionKeyRegistry", () => {
     await prepareOnboarding(app, io);
     expect(await resumeOnboarding(app, io)).toBe(false);
     expect(app.volume).toBeNull();
+  });
+});
+
+describe("lazy session key (Andy decision 1-3)", () => {
+  it("Connect asks for no session key; the first upload authorizes it, shows progress, then saves", async () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const app = new DriveApp({
+      volume: null, owner: "", chain: "calibration", encrypted: false, volumeName: "My Drive",
+      cas: { takeMerged: () => false }, felarumiUrl: "https://felarumi.example", felanumioUrl: "https://felanumio.example",
+    });
+    const io = createMockOnboarding(new URLSearchParams("pay=ready&datasets=1&authdelay=150"));
+    await prepareOnboarding(app, io);
+    app.mount(root);
+    await app.settled;
+    root.querySelector("form")?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    await settle(app);
+    expect(root.querySelector("[data-testid=nav-drive]")).toBeTruthy();
+    expect(root.querySelector("[data-testid=wallet-signatures]")?.textContent).toBe("0");
+    const pending = app.uploadFiles([new File(["hi"], "lazy.txt", { type: "text/plain" })]);
+    await until(() => root.querySelector("[data-testid=setup-note]")?.textContent?.includes("Setting up your wallet session") === true);
+    await until(() => root.querySelector("[data-testid=upload-title]")?.textContent?.includes("waiting for wallet setup") === true);
+    await pending;
+    await until(() => root.querySelector("[data-testid=wallet-signatures]")?.textContent === "1");
+    await settle(app);
+    expect((await app.volume!.ls("/")).some((e) => e.name === "lazy.txt")).toBe(true);
+    expect(root.querySelector("[data-testid=upload-title]")?.textContent).toContain("complete");
+  });
+
+  it("Disconnect session and refund forgets the key; the next save authorizes again", async () => {
+    const { app, root } = await openMockDrive();
+    if (!root.querySelector("[data-testid=refund-session]")) root.querySelector<HTMLElement>("[data-action=account]")?.click();
+    expect(root.querySelector("[data-testid=refund-session]")).toBeTruthy();
+    root.querySelector<HTMLElement>("[data-testid=refund-session]")?.click();
+    await settle(app);
+    expect(root.textContent).toContain("refunded to your wallet");
+    if (!root.querySelector("[data-testid=account-menu]")) root.querySelector<HTMLElement>("[data-action=account]")?.click();
+    expect(root.querySelector("[data-testid=session-status]")?.textContent).toContain("Session key missing");
+    await app.uploadFiles([new File(["x"], "after.txt", { type: "text/plain" })]);
+    await until(() => root.querySelector("[data-testid=wallet-signatures]")?.textContent === "2");
+    await settle(app);
+    expect((await app.volume!.ls("/")).some((e) => e.name === "after.txt")).toBe(true);
   });
 });
 
@@ -261,6 +302,11 @@ async function openMockDrive(): Promise<{ app: DriveApp; root: HTMLElement }> {
   root.querySelector("form")?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
   await settle(app);
   expect(root.querySelector("[data-testid=nav-drive]")).toBeTruthy();
+  // Lazy session key: Connect asks for nothing; the key is authorized at the first save (or here, by hand).
+  expect(root.querySelector("[data-testid=wallet-signatures]")?.textContent).toBe("0");
+  root.querySelector<HTMLElement>("[data-action=account]")?.click();
+  root.querySelector<HTMLElement>("[data-testid=authorize-session]")?.click();
+  await settle(app);
   expect(root.querySelector("[data-testid=wallet-signatures]")?.textContent).toBe("1");
   return { app, root };
 }

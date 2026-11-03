@@ -8,7 +8,8 @@
 - Any admin: `addMember`, `removeMember`, `addAdmin`, `updateClub`.
 - `removeAdmin(clubId, account)` (direct): only while the club has **≤ 2 admins**. Self-removal (stepping down) is allowed. The **last admin can never be removed**.
 - `removeAdminWithSignatures(clubId, target, deadline, sig1, sig2)`: required when there are **> 2 admins**. Two EIP-712 signatures from **two distinct current admins** over
-  `RemoveAdmin(uint256 clubId,address target,uint256 nonce,uint256 deadline)`, domain `{name:"FiClub", version:"1", chainId, verifyingContract}`.
+  `RemoveAdmin(string purpose,uint256 clubId,address target,uint256 nonce,uint256 deadline)`, domain `{name:"FiClub", version:"2", chainId, verifyingContract}`.
+  `purpose` is the fixed plain-language text `REMOVE_ADMIN_PURPOSE` = "Remove this admin from the FiClub", shown first in the wallet (v2; v1 had no purpose).
   The **target may be one of the signers** (an admin may co-sign their own removal). Anyone may submit. Per-club `nonce` (bumped on every signature removal) prevents replay; `deadline` expires the signatures; low-s enforced.
 - Views: `isMember`, `isAdmin`, `memberCount`, `adminCount`, `listMembers/listAdmins(clubId, offset, limit)`, `clubsOf(account, offset, limit)` / `clubsOfCount` (on-chain index of clubs where the account is a member or admin), `getClub`, `nonceOf`, `removeAdminDigest`, `domainSeparator`.
 - Events: `ClubCreated`, `ClubUpdated`, `MemberAdded/Removed`, `AdminAdded/Removed`, `AdminRemovedBySignatures(clubId, account, signer1, signer2, nonce)`.
@@ -31,7 +32,7 @@
 - `pnpm --filter fifolders e2e:ficlub-anvil` — real contract on a local anvil chain (deploys with anvil's public test key).
 
 ## Deployed (Calibration)
-`0x4f73E1504d848eC4e3e74047940bD97EA79A3521` — tx `0x061c9460…fe481`, block 4211705, gasUsed 75,677,052, ~0.0000188 FIL (see deployments/ficlub-calibration.json). The page uses it by default; `VITE_E2E=1` keeps the mock backend.
+`0x412B9363019591588073B3489CB09d28d2a55A03` (v2, purpose field) — tx `0xa89a74e5…2f753`, block 4212873, gasUsed 76,767,897, ~0.000019 tFIL; verified on Sourcify (exact match) and Blockscout (see deployments/ficlub-calibration.json). Superseded v1: `0x4f73E1504d848eC4e3e74047940bD97EA79A3521`. Mainnet deploys go through /fideploy/ (artifacts regenerated). The page uses it by default; `VITE_E2E=1` keeps the mock backend.
 
 ## Deploy command
 ```

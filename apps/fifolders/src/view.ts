@@ -26,7 +26,7 @@ export interface UploadRow {
   id: string;
   name: string;
   progress: number;
-  status: "uploading" | "done" | "error";
+  status: "uploading" | "waiting" | "done" | "error";
 }
 
 export interface ToastRow {
@@ -140,6 +140,7 @@ export interface ViewModel {
     version: bigint;
     pieceCid: string;
     shareUrl?: string;
+    directUrl?: string;
     qr?: string;
     copies: number;
     providers: string[];
@@ -778,7 +779,7 @@ function renderDetails(details: ViewModel["details"] & object): string {
       details.shareUrl
         ? `<label>${details.previewable && !details.stat.importedCar ? "Share" : "Piece link"}</label>
       <a data-testid="share-link" href="${escapeHtml(details.shareUrl)}">${escapeHtml(details.shareUrl)}</a>
-      ${details.previewable && !details.stat.importedCar ? `<a data-testid="gateway-preview" href="${escapeHtml(details.shareUrl)}" target="_blank" rel="noreferrer">Gateway preview</a>` : ""}
+      ${details.previewable && !details.stat.importedCar ? `<a data-testid="gateway-preview" href="${escapeHtml(details.directUrl ?? details.shareUrl)}" target="_blank" rel="noreferrer">Gateway preview</a>` : ""}
       <div class="qr" data-testid="share-qr">${details.qr ?? ""}</div>`
         : ""
     }
@@ -857,8 +858,10 @@ function renderAccount(model: ViewModel): string {
            <p class="note">${escapeHtml(model.costs.depositNote)}</p>`}
       <p class="account-line" data-testid="session-status">${panel.sessionReady ? `Session key until ${escapeHtml(panel.sessionExpiry || "soon")}` : "Session key missing"}</p>
       ${panel.sessionReady
-        ? `<button type="button" data-action="refresh-session" data-testid="session-refresh">Refresh session key</button>`
-        : `<button type="button" class="primary slim" data-action="authorize" data-testid="authorize-session">${escapeHtml(step?.action === "authorize" ? step.label : "Authorize session key")}</button>`}
+        ? `<button type="button" data-action="refresh-session" data-testid="session-refresh">Refresh session key</button>
+           <button type="button" data-action="refund-session" data-testid="refund-session" title="Send the session key's leftover tFIL/FIL back to your wallet and forget the key in this browser">Disconnect session and refund</button>`
+        : `<button type="button" class="primary slim" data-action="authorize" data-testid="authorize-session">${escapeHtml(step?.action === "authorize" ? step.label : "Authorize session key")}</button>
+           <p class="note" data-testid="session-lazy-note">Not needed to browse. Your first save asks for it (1 signature).</p>`}
       ${step && step.action !== "fix-payments" && step.action !== "authorize" ? `<button type="button" class="primary slim" data-action="${step.action}" data-testid="setup-step">${escapeHtml(step.label)}</button>` : ""}
       <button type="button" data-action="create-dataset" data-testid="create-dataset">Create new dataset</button>
       <p class="note">${escapeHtml(model.costs.datasetNote)}</p>
@@ -943,19 +946,22 @@ function renderUploads(uploads: UploadRow[], open: boolean | null): string {
   const active = uploads.some((item) => item.status === "uploading");
   const failed = uploads.filter((item) => item.status === "error").length;
   const done = uploads.filter((item) => item.status === "done").length;
+  const waiting = uploads.filter((item) => item.status === "waiting").length;
   const title = active
     ? `Uploading ${uploads.filter((item) => item.status === "uploading").length}`
-    : failed
+    : waiting
+      ? `${waiting} upload${waiting === 1 ? "" : "s"} waiting for wallet setup`
+      : failed
       ? `${failed} upload${failed === 1 ? "" : "s"} failed`
       : `${done} upload${done === 1 ? "" : "s"} complete`;
-  const expanded = open ?? (active || failed > 0);
+  const expanded = open ?? (active || waiting > 0 || failed > 0);
   const toggle = `<button type="button" data-action="toggle-uploads" data-testid="toggle-uploads" aria-expanded="${expanded}" aria-label="${expanded ? "Collapse" : "Expand"} uploads"><span class="material-symbols-outlined" aria-hidden="true">${expanded ? "expand_more" : "expand_less"}</span></button>`;
   return `<section class="uploads" data-testid="upload-panel" data-collapsed="${expanded ? "false" : "true"}">
     <header><span data-testid="upload-title">${title}</span><span class="upload-actions">${toggle}<button type="button" data-action="dismiss-uploads" aria-label="Close uploads">×</button></span></header>
     ${!expanded ? "" : uploads
       .map(
         (item) => `<div class="upload-row" data-status="${item.status}">
-          <span>${escapeHtml(item.name)}</span>
+          <span>${escapeHtml(item.name)}</span>${item.status === "waiting" ? `<span class="note" data-testid="upload-waiting">Waiting for wallet setup</span>` : ""}
           <progress value="${item.progress}" max="100"></progress>
         </div>`,
       )

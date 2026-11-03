@@ -5,6 +5,11 @@ test("costs open from the storage view, the new button is prominent, and a docum
   await page.getByTestId("connect-wallet").click();
   await expect(page.getByTestId("nav-drive")).toBeVisible();
   await expect(page.getByTestId("chain-steps")).toHaveCount(0);
+  // Lazy session key: authorize from the wallet menu so the log has chain steps.
+  await page.getByTestId("account").click();
+  await page.getByTestId("authorize-session").click();
+  await expect(page.getByTestId("session-status")).toContainText("Session key until");
+  await page.keyboard.press("Escape");
   await page.getByTestId("txlog-toggle").click();
   await expect(page.getByTestId("txlog").getByTestId("chain-steps")).toContainText("Authorized");
   await page.getByTestId("txlog-toggle").click();

@@ -18,7 +18,7 @@ export const CHAINS: Record<number, ChainInfo> = {
     rpc: "https://api.calibration.node.glif.io/rpc/v1",
     explorer: "https://calibration.filfox.info/en/address/",
     faucet: "https://faucet.calibnet.chainsafe-fil.io/",
-    known: { FolderRegistryV2: "0x9C06335D7DE588Caa104ee4FC3bb7cd8Aba62443", FiClub: "0x4f73E1504d848eC4e3e74047940bD97EA79A3521", SessionKeyRegistry: "0x518411c2062E119Aaf7A8B12A2eDf9a939347655" },
+    known: { FolderRegistryV2: "0x9C06335D7DE588Caa104ee4FC3bb7cd8Aba62443", FiClub: "0x412B9363019591588073B3489CB09d28d2a55A03", SessionKeyRegistry: "0x518411c2062E119Aaf7A8B12A2eDf9a939347655" },
   },
 };
 

@@ -32,7 +32,7 @@ Schema and on-chain layout: [docs/identity.md](../../docs/identity.md).
 
 ## `fiperson/clubs`
 
-- `findMyClubs(address, { call?, contract? })` scans FiClub (`clubsOf`, `getClub`, `listMembers`, `listAdmins`; default Calibration `0x4f73E1504d848eC4e3e74047940bD97EA79A3521`) and caches `{ clubs, coworkers }` under `fiperson:clubs:v1:<addr>`. `cachedClubs`, `cachedCoworkers` read it back synchronously.
+- `findMyClubs(address, { call?, contract? })` scans FiClub (`clubsOf`, `getClub`, `listMembers`, `listAdmins`; default Calibration `0x412B9363019591588073B3489CB09d28d2a55A03`) and caches `{ clubs, coworkers }` under `fiperson:clubs:v1:<addr>`. `cachedClubs`, `cachedCoworkers` read it back synchronously.
 
 ## `fiperson/people`
 
