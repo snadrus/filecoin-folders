@@ -335,3 +335,18 @@ test("S63b mouse on focusable rows: Shift-click extends, move + trash + restore 
   await expect(rows).toHaveCount(0);
   expect(errors).toEqual([]);
 });
+
+test("S65 Delete shows 'moved to trash · Undo' like Drive, and Undo puts the file back", async ({ page }) => {
+  await connect(page);
+  await page.getByTestId("file-input").setInputFiles([{ name: "oops.txt", mimeType: "text/plain", buffer: Buffer.from("o") }]);
+  const rows = page.getByTestId("entry");
+  await expect(rows).toHaveCount(1);
+  await rows.first().click();
+  await page.keyboard.press("Delete");
+  await expect(rows).toHaveCount(0);
+  const toast = page.getByTestId("toast").filter({ hasText: "moved to trash" });
+  await expect(toast).toContainText("“oops.txt” moved to trash");
+  await toast.getByRole("button", { name: "Undo" }).click();
+  await expect(rows).toHaveCount(1);
+  await expect(rows.first()).toContainText("oops.txt");
+});

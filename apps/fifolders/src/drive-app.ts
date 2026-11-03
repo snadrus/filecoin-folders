@@ -1053,8 +1053,13 @@ export class DriveApp {
       this.selected = this.selected.map((item) => (item === move.from ? move.to : item));
     }
     this.writeOrigins();
+    // Drive: "File moved to trash · Undo".
+    this.#lastTrashed = moves.map((move) => move.to);
+    this.toasts = this.toasts.filter((toast) => toast.action !== "undo-trash");
+    this.toastAction(moves.length === 1 ? `“${baseName(moves[0]!.from)}” moved to trash` : `${moves.length} items moved to trash`, "undo-trash", "Undo");
     this.render();
   }
+  #lastTrashed: string[] = [];
 
   private async restorePaths(paths: string[]): Promise<void> {
     const view = await this.editingVolume();
@@ -1511,6 +1516,14 @@ export class DriveApp {
         this.toast(errorText(error));
         this.render();
       }
+      return;
+    }
+    if (action === "undo-trash") {
+      const paths = this.#lastTrashed;
+      this.#lastTrashed = [];
+      this.toasts = this.toasts.filter((toast) => toast.action !== "undo-trash");
+      this.render();
+      if (paths.length) void this.enqueue(() => this.restorePaths(paths));
       return;
     }
     if (action === "dismiss-toast") {
