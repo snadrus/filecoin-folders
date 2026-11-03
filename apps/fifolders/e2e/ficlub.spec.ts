@@ -29,7 +29,7 @@ async function as(page: Page, addr: string) {
   await page.reload();
 }
 
-test("not-deployed banner, create club, members/admins, direct remove, 2-sig removal via blob", async ({ page }) => {
+test("S52 not-deployed banner, create club, members/admins, direct remove, 2-sig removal via blob", async ({ page }) => {
   await page.goto("/ficlub/");
   await expect(page.getByTestId("ficlub-not-deployed")).toContainText("FiClub contract not deployed yet");
   await page.getByTestId("ficlub-connect").click();

@@ -122,6 +122,10 @@ interface ContextModel {
   target: string;
 }
 
+/** Snackbar lifetimes (plain / with an action button). */
+export const TOAST_MS = 8_000;
+export const TOAST_ACTION_MS = 10_000;
+
 export class DriveApp {
   volume: Volume | null;
   owner: string;
@@ -779,11 +783,22 @@ export class DriveApp {
   private toast(text: string): void {
     const id = `t${++this.#toastSeq}`;
     this.toasts = [...this.toasts, { id, text }].slice(-4);
+    this.autoHide(id, TOAST_MS);
   }
 
   private toastAction(text: string, action: string, actionLabel: string): void {
     const id = `t${++this.#toastSeq}`;
     this.toasts = [...this.toasts, { id, text, action, actionLabel }].slice(-4);
+    this.autoHide(id, TOAST_ACTION_MS);
+  }
+
+  /** Snackbars hide themselves like Drive's (× still closes at once). */
+  private autoHide(id: string, ms: number): void {
+    setTimeout(() => {
+      if (!this.toasts.some((toast) => toast.id === id)) return;
+      this.toasts = this.toasts.filter((toast) => toast.id !== id);
+      if (this.root) this.render();
+    }, ms);
   }
 
   /** Drop the open volume so the next read loads another dataset; shows the loading state meanwhile. */

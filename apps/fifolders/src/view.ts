@@ -536,7 +536,7 @@ function renderBrowser(model: ViewModel): string {
         ? `<div class="empty" data-testid="drive-loading" role="status"><span class="spinner" aria-hidden="true"></span> Loading your drive from Filecoin…</div>`
         : filled
           ? ""
-          : `<p class="empty" data-testid="empty">${escapeHtml(emptyCopy(model))}</p>`;
+          : renderEmpty(model);
   const blocked = model.mainnetBlocked
     ? `<p class="banner" data-testid="mainnet-banner">Registry not deployed</p>`
     : "";
@@ -690,6 +690,19 @@ function entryIcon(entry: Stat, kind: FelKind | ""): string {
   if (kind === "felarumi") return felarumiSvg();
   if (kind === "felanumio") return felanumioSvg();
   return `<span class="material-symbols-outlined file-icon" aria-hidden="true">${materialIcon(entry)}</span>`;
+}
+
+/** Drive-style empty state: icon, headline, one line of what to do next. */
+function renderEmpty(model: ViewModel): string {
+  const hint: Record<string, [string, string]> = {
+    loose: ["inventory_2", "Pieces in this dataset that no folder points to show up here — for example files saved with Filecoin Drive. Select them and use “Add to drive” to file them without re-uploading."],
+    trash: ["delete", "Items you remove stay here until you delete them forever."],
+    starred: ["star", "Star files to find them here quickly."],
+    recent: ["schedule", "Files you open or change show up here."],
+  };
+  const [icon, line] = model.query.trim() ? ["search", "Try a different name."] : (hint[model.nav] ?? ["folder_open", "Drop files here or use New to add files and folders."]);
+  return `<div class="empty-state"><span class="material-symbols-outlined empty-icon" aria-hidden="true">${icon}</span>
+    <p class="empty" data-testid="empty">${model.nav === "loose" && !model.query.trim() ? `No loose pieces${model.looseSummary ? `<small class="empty-stats">${escapeHtml(model.looseSummary)}</small>` : ""}` : escapeHtml(emptyCopy(model))}</p><p class="empty-hint">${escapeHtml(line)}</p></div>`;
 }
 
 function emptyCopy(model: ViewModel): string {
