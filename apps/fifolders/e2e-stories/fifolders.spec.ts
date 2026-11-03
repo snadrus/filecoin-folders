@@ -302,3 +302,31 @@ test.describe("S64 phone: menus and dialogs sit above the Uploads panel", () => 
     expect(covered).toEqual([]);
   });
 });
+
+test("S63b mouse on focusable rows: Shift-click extends, move + trash run with no page errors", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(String(e)));
+  await connect(page);
+  await page.getByTestId("new-button").click();
+  await page.getByRole("button", { name: "New folder" }).click();
+  await page.getByTestId("dialog-input").fill("Docs");
+  await page.keyboard.press("Enter");
+  await page.getByTestId("file-input").setInputFiles([
+    { name: "report.txt", mimeType: "text/plain", buffer: Buffer.from("r") },
+    { name: "notes.md", mimeType: "text/plain", buffer: Buffer.from("n") },
+  ]);
+  const rows = page.getByTestId("entry");
+  await expect(rows).toHaveCount(3);
+  await rows.nth(1).click();
+  await rows.nth(2).click({ modifiers: ["Shift"] });
+  await expect(page.locator("[data-testid=entry][data-selected=true]")).toHaveCount(2);
+  await rows.filter({ hasText: "report.txt" }).click();
+  await rows.filter({ hasText: "report.txt" }).click({ button: "right" });
+  await page.getByRole("button", { name: "Move to", exact: true }).click();
+  await page.getByRole("button", { name: "Move", exact: true }).click();
+  await expect(rows).toHaveCount(2);
+  await rows.filter({ hasText: "notes.md" }).click();
+  await page.keyboard.press("Delete");
+  await expect(rows).toHaveCount(1);
+  expect(errors).toEqual([]);
+});

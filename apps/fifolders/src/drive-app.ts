@@ -445,14 +445,24 @@ export class DriveApp {
     // Document-level: after a click on a row focus sits on <body>, outside the root.
     root.ownerDocument.addEventListener("keydown", (event) => { if (this.root === root) this.onKey(event); });
     // Tabbing into the file list selects the focused row (Drive does the same), then ↑/↓/Enter/F2 work from there.
+    // Only keyboard focus selects: a mouse press focuses the row too, and the click handler owns Shift/Ctrl-click.
+    let pointer = false;
+    let refocusing = false;
+    root.addEventListener("pointerdown", () => { pointer = true; setTimeout(() => { pointer = false; }, 0); }, true);
     root.addEventListener("focusin", (event) => {
+      if (pointer || refocusing) return;
       const row = (event.target as HTMLElement | null)?.closest<HTMLElement>("[data-testid=entry]");
       if (!row || this.root !== root) return;
       const path = decodeURIComponent(row.dataset.path || "");
       if (!path || this.selected.includes(path)) return;
       this.selected = [path];
-      this.render();
-      root.querySelector<HTMLElement>(`[data-testid=entry][data-path="${encodeURIComponent(path)}"]`)?.focus({ preventScroll: true });
+      refocusing = true;
+      try {
+        this.render();
+        root.querySelector<HTMLElement>(`[data-testid=entry][data-path="${encodeURIComponent(path)}"]`)?.focus({ preventScroll: true });
+      } finally {
+        refocusing = false;
+      }
     });
     root.addEventListener("dragstart", (event) => this.onDragStart(event));
     root.addEventListener("dragover", (event) => this.onDragOver(event));
