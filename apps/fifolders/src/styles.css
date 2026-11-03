@@ -315,3 +315,25 @@ button:disabled { cursor: default; opacity: 0.45; }
   background: color-mix(in srgb, currentColor 6%, transparent);
 }
 .wallet-toast small { display: block; opacity: 0.8; }
+
+/* Sidebar dataset picker */
+.dataset-switch { position: relative; }
+.dataset-toggle { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px 12px; border-radius: 999px; background: var(--surface); border: 1px solid var(--line); color: var(--ink); font-size: 13px; text-align: left; }
+.dataset-toggle:hover { background: var(--soft); }
+.dataset-toggle .material-symbols-outlined { font-size: 18px; color: var(--accent-dark); }
+.dataset-toggle-text { flex: 1; font-weight: 500; }
+.dataset-menu { position: absolute; top: calc(100% + 4px); left: 0; width: 260px; z-index: 30; background: var(--surface); border-radius: 12px; box-shadow: var(--shadow); padding: 6px; display: flex; flex-direction: column; gap: 2px; }
+.dataset-menu-title { margin: 4px 10px 6px; font-size: 12px; color: var(--muted); }
+.dataset-item { display: flex; align-items: flex-start; gap: 8px; padding: 8px 10px; border-radius: 8px; text-align: left; color: var(--ink); background: transparent; }
+.dataset-item:hover { background: var(--hover); }
+.dataset-item.on { background: var(--select); }
+.dataset-check { width: 18px; font-size: 18px; color: var(--accent-dark); }
+.dataset-text { display: flex; flex-direction: column; gap: 2px; }
+.dataset-id { font-weight: 500; }
+.dataset-meta { font-size: 12px; color: var(--muted); }
+.dataset-tag { margin-left: 4px; padding: 1px 6px; border-radius: 999px; background: var(--restore); color: var(--accent-dark); font-size: 11px; font-weight: 500; }
+.toast .toast-action { margin-left: 8px; color: #8ac7ff; font-weight: 600; background: transparent; }
+.dataset-item.not-drive { opacity: 0.6; }
+.dataset-item.not-drive:hover, .dataset-item.not-drive.on { opacity: 1; }
+.dataset-drive { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--accent-dark); font-weight: 500; }
+.dataset-drive .material-symbols-outlined { font-size: 14px; }

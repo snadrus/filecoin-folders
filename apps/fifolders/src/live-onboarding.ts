@@ -8,7 +8,7 @@ import {
   fromSecp256k1,
   getExpirations,
 } from "@filoz/synapse-core/session-key";
-import { createSynapseStorage, createViemRegistry, folderCommitPermission, folderRegistryAbi, openVolume } from "fil-folders";
+import { bytesToPieceCid, createSynapseStorage, createViemRegistry, folderCommitPermission, folderRegistryAbi, namespaceId, openVolume, volumeKey } from "fil-folders";
 import {
   createPublicClient,
   createWalletClient,
@@ -40,6 +40,11 @@ import {
   loadSession,
   paymentsReady,
   saveLastDataset,
+  loadDriveMark,
+  saveDriveMark,
+  markDrives,
+  type DriveMark,
+  wasAutoPicked,
   saveSession,
   sessionGateFromExpiries,
   sessionUsable,
@@ -266,6 +271,69 @@ export function createLiveOnboarding(): OnboardingIO {
     return [...remote, ...pending.filter((dataset) => !ids.has(dataset.id))];
   }
 
+  /**
+   * Which datasets hold FiFolders manifests: every manifest piece the wallet committed to the
+   * FolderRegistry (chunked, cached log scan) plus the current head, matched against each
+   * dataset's piece list. Results cache per dataset+piece count; best effort, never blocks long.
+   */
+  async function detectDrives(choice: ChainChoice, volumeName: string, datasets: DatasetRecord[], owner?: Address): Promise<DatasetRecord[]> {
+    const address = owner ?? requireRoot();
+    const chainId = chainOf(choice).id;
+    const cached = datasets.map((dataset) => loadDriveMark(chainId, address, dataset.id, dataset.pieceCount));
+    const missing = datasets.filter((dataset, index) => !cached[index] && /^\d+$/.test(dataset.id) && dataset.pieceCount !== "0");
+    let fresh = new Map<string, DriveMark>();
+    if (missing.length && registryReady(choice)) {
+      const work = (async () => {
+        const config = registryConfig(choice);
+        const client = publicClient(choice);
+        const registry = createViemRegistry({
+          address: config.address,
+          publicClient: client,
+          walletClient: createWalletClient({ account: address, chain: chainOf(choice), transport: http(rpcOf(choice)) }),
+          fromBlock: config.fromBlock,
+          signer: "session-key",
+        });
+        const ns = namespaceId();
+        const currentKey = volumeKey(volumeName);
+        const manifests = new Map<string, string>();
+        const records = await registry.committed({ owner: address, ns }).catch(() => []);
+        for (const record of records) {
+          const cid = safeCid(record.pieceCid);
+          if (cid) manifests.set(cid, record.key === currentKey ? volumeName : manifests.get(cid) ?? "");
+        }
+        const head = await registry.head(address, ns, currentKey).catch(() => null);
+        const headCid = head ? safeCid(head.pieceCid) : "";
+        if (headCid) manifests.set(headCid, volumeName);
+        const { Synapse } = await import("@filoz/synapse-sdk");
+        const synapse = Synapse.create({ account: address, chain: chainOf(choice), transport: publicTransport(choice), source: "fifolders" });
+        const pieces = new Map<string, string[]>();
+        await Promise.all(
+          missing.map(async (dataset) => {
+            try {
+              pieces.set(dataset.id, (await createSynapseStorage(synapse, { dataSetId: BigInt(dataset.id) }).list?.()) ?? []);
+            } catch {
+              // Unknown stays unmarked and uncached so the next snapshot retries.
+            }
+          }),
+        );
+        const out = new Map<string, DriveMark>();
+        for (const marked of markDrives(missing.filter((dataset) => pieces.has(dataset.id)), pieces, manifests)) {
+          const mark: DriveMark = { pieces: marked.pieceCount, drive: marked.drive, ...(marked.driveName ? { driveName: marked.driveName } : {}) };
+          saveDriveMark(chainId, address, marked.id, mark);
+          out.set(marked.id, mark);
+        }
+        return out;
+      })();
+      const timeout = new Promise<Map<string, DriveMark>>((resolve) => setTimeout(() => resolve(new Map()), 12_000));
+      fresh = await Promise.race([work.catch(() => new Map<string, DriveMark>()), timeout]);
+    }
+    return datasets.map((dataset, index) => {
+      const mark = cached[index] ?? fresh.get(dataset.id);
+      if (!mark) return dataset;
+      return { ...dataset, drive: mark.drive, ...(mark.driveName ? { driveName: mark.driveName } : {}) };
+    });
+  }
+
   return {
     async discover() {
       wallets = await discoverWallets();
@@ -324,7 +392,7 @@ export function createLiveOnboarding(): OnboardingIO {
           args: [address],
         }) as Promise<bigint>,
         legacyRegistry(input.chain, client),
-        listDatasets(input.chain),
+        listDatasets(input.chain).then((list) => detectDrives(input.chain, input.volumeName, list)),
       ]);
       const stored = loadSession(chain.id, address);
       const now = BigInt(Math.floor(Date.now() / 1000));
@@ -345,6 +413,7 @@ export function createLiveOnboarding(): OnboardingIO {
       const sessionReady = Boolean(stored && gate !== "expired");
       const remembered = selectedDataset || loadLastDataset(chain.id, address);
       const chosen = chooseDataset(datasets, remembered);
+      const autoPicked = wasAutoPicked(datasets, remembered, chosen.selectedId);
       selectedDataset = chosen.selectedId ?? "";
       const pay = await readPayments(input.chain, address);
       return {
@@ -360,6 +429,7 @@ export function createLiveOnboarding(): OnboardingIO {
         datasets,
         selectedDatasetId: selectedDataset,
         createPrimary: datasets.length === 0,
+        autoPicked,
         legacyRegistry: legacy,
         signatures,
         connectPrompts,
@@ -571,7 +641,7 @@ export function createLiveOnboarding(): OnboardingIO {
         // New origin or cleared storage: find the owner's datasets on chain instead of showing nothing.
         const found = await synapse.storage.findDataSets({ address });
         const live = found.filter((dataset) => dataset.isLive !== false).map((dataset) => toDataset(input.chain, dataset));
-        datasetId = chooseDataset(live, null).selectedId ?? "";
+        datasetId = chooseDataset(await detectDrives(input.chain, input.volumeName, live, address), null).selectedId ?? "";
       }
       if (!datasetId || datasetId.startsWith("provider:")) return null;
       const storage = withProviderFallback(createSynapseStorage(synapse, { dataSetId: BigInt(datasetId), copies: 2 }), input.chain);
@@ -772,4 +842,12 @@ export function isMaxApproved(approval: unknown): boolean {
   const a = approval as { isApproved?: unknown; rateAllowance?: unknown; lockupAllowance?: unknown; maxLockupPeriod?: unknown };
   const big = (value: unknown) => (typeof value === "bigint" ? value : typeof value === "number" ? BigInt(Math.trunc(value)) : 0n);
   return Boolean(a.isApproved) && big(a.rateAllowance) === MAX_UINT256 && big(a.lockupAllowance) >= MAX_UINT256 / 2n && big(a.maxLockupPeriod) >= FWSS_LOCKUP_PERIOD;
+}
+
+function safeCid(bytes: Uint8Array): string {
+  try {
+    return bytes.length ? bytesToPieceCid(bytes) : "";
+  } catch {
+    return "";
+  }
 }

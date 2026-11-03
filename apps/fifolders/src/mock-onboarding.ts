@@ -11,6 +11,7 @@ import {
   loadSession,
   paymentsReady,
   saveLastDataset,
+  wasAutoPicked,
   saveSession,
   sessionGateFromExpiries,
   walletStorageKey,
@@ -97,8 +98,10 @@ export function createMockOnboarding(params: URLSearchParams): OnboardingIO {
     const onchain = stored ? expiryFor(stored.sessionAddress) : 0n;
     const gate = stored ? sessionGateFromExpiries(permissionExpiries(stored.sessionAddress), now) : "expired";
     const sessionReady = Boolean(stored && gate !== "expired");
-    const list = datasets();
-    const chosen = chooseDataset(list, loadLastDataset(MOCK_CHAIN_ID, MOCK_ADDRESS));
+    const driveIds = new Set((params.get("drives") ?? "").split(",").filter(Boolean));
+    const list = datasets().map((dataset) => (driveIds.has(dataset.id) ? { ...dataset, drive: true, driveName: "My Drive" } : dataset));
+    const remembered = loadLastDataset(MOCK_CHAIN_ID, MOCK_ADDRESS);
+    const chosen = chooseDataset(list, remembered);
     const deposited = localStorage.getItem(PAYMENTS_KEY) === "1";
     const pay = mockPay();
     const baseFunds = deposited ? 5n * 10n ** 18n : 0n;
@@ -117,6 +120,7 @@ export function createMockOnboarding(params: URLSearchParams): OnboardingIO {
       datasets: list,
       selectedDatasetId: chosen.selectedId ?? "",
       createPrimary: list.length === 0,
+      autoPicked: wasAutoPicked(list, remembered, chosen.selectedId),
       legacyRegistry: legacy,
       signatures,
       connectPrompts,

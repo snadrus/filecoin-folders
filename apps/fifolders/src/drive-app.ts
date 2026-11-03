@@ -173,7 +173,13 @@ export class DriveApp {
   } | null = null;
   preview: PreviewModel | null = null;
   uploads: UploadRow[] = [];
-  toasts: { id: string; text: string }[] = [];
+  toasts: { id: string; text: string; action?: string; actionLabel?: string }[] = [];
+  /** Left-sidebar dataset switcher open. */
+  datasetMenu = false;
+  /** Addresses already told which dataset was auto-picked this page load. */
+  #autoPickToasted = new Set<string>();
+  /** Switch the open drive to another dataset (reload tree from chain). */
+  onSwitchDataset: ((id: string) => Promise<void>) | null = null;
   connectError = "";
   mainnetBlocked = false;
   dropPath: string | null = null;
@@ -375,6 +381,15 @@ export class DriveApp {
     }
     this.panel = panel;
     this.owner = panel.address;
+    const autoKey = `${panel.address.toLowerCase()}:${panel.selectedDatasetId}`;
+    if (panel.autoPicked && panel.datasets.length > 1 && panel.selectedDatasetId && !this.pickedDataset && !this.#autoPickToasted.has(autoKey)) {
+      this.#autoPickToasted.add(autoKey);
+      this.toastAction(
+        `Using your latest dataset (#${panel.selectedDatasetId}). You can switch datasets from the sidebar.`,
+        "open-datasets",
+        "Change",
+      );
+    }
     this.setupError = error;
     this.connectError = "";
     this.render();
@@ -715,6 +730,50 @@ export class DriveApp {
   private toast(text: string): void {
     const id = `t${++this.#toastSeq}`;
     this.toasts = [...this.toasts, { id, text }].slice(-4);
+  }
+
+  private toastAction(text: string, action: string, actionLabel: string): void {
+    const id = `t${++this.#toastSeq}`;
+    this.toasts = [...this.toasts, { id, text, action, actionLabel }].slice(-4);
+  }
+
+  /** Drop the open volume so the next read loads another dataset; shows the loading state meanwhile. */
+  resetForDataset(): void {
+    this.volume = null;
+    this.readOnly = false;
+    this.#draft = null;
+    this.#draftReady = false;
+    this.#baseline = null;
+    this.entries = [];
+    this.selected = [];
+    this.looseRows = [];
+    this.cwd = "/";
+    this.loadState = "loading";
+    this.loadError = "";
+    this.render();
+  }
+
+  private async switchDataset(id: string): Promise<void> {
+    this.datasetMenu = false;
+    if (!id || id === this.panel?.selectedDatasetId) {
+      this.render();
+      return;
+    }
+    if (this.staged.length) {
+      this.toast("Save or discard your unsaved changes before switching datasets.");
+      this.render();
+      return;
+    }
+    this.pickDataset(id);
+    if (!this.onSwitchDataset) return;
+    try {
+      await this.onSwitchDataset(id);
+    } catch (error) {
+      console.error("FiFolders switch dataset", error);
+      this.loadState = "error";
+      this.loadError = errorText(error);
+      this.render();
+    }
   }
 
   private async uploadList(files: File[], dest: string): Promise<void> {
@@ -1142,12 +1201,25 @@ export class DriveApp {
       this.newMenu = false;
       this.context = null;
       if (action !== "account") this.accountMenu = false;
+      if (action !== "dataset-toggle" && action !== "open-datasets") this.datasetMenu = false;
     }
     if (action === "new-toggle") {
       this.newMenu = !this.newMenu;
       this.context = null;
       this.accountMenu = false;
       this.render();
+      return;
+    }
+    if (action === "dataset-toggle" || action === "open-datasets") {
+      this.datasetMenu = action === "open-datasets" ? true : !this.datasetMenu;
+      this.newMenu = false;
+      this.accountMenu = false;
+      if (action === "open-datasets") this.toasts = this.toasts.filter((toast) => toast.action !== "open-datasets");
+      this.render();
+      return;
+    }
+    if (action === "switch-dataset") {
+      void this.switchDataset(actionEl?.dataset.id ?? "");
       return;
     }
     if (action === "account") {
@@ -1789,8 +1861,9 @@ export class DriveApp {
     });
     document.addEventListener("pointerdown", (event) => {
       const target = event.target as HTMLElement | null;
-      if (target?.closest("[data-menu], [data-action=account], [data-action=new-toggle]")) return;
-      if (!this.newMenu && !this.accountMenu && !this.context) return;
+      if (target?.closest("[data-menu], [data-action=account], [data-action=new-toggle], [data-action=dataset-toggle], [data-action=open-datasets]")) return;
+      if (!this.newMenu && !this.accountMenu && !this.context && !this.datasetMenu) return;
+      this.datasetMenu = false;
       this.newMenu = false;
       this.accountMenu = false;
       this.context = null;
@@ -1798,7 +1871,8 @@ export class DriveApp {
     });
     document.addEventListener("keydown", (event) => {
       if (event.key !== "Escape") return;
-      if (!this.newMenu && !this.accountMenu && !this.context && !this.dialog && !this.preview && !this.costsOpen) return;
+      if (!this.newMenu && !this.accountMenu && !this.context && !this.dialog && !this.preview && !this.costsOpen && !this.datasetMenu) return;
+      this.datasetMenu = false;
       this.costsOpen = false;
       this.newMenu = false;
       this.accountMenu = false;
@@ -2161,6 +2235,7 @@ export class DriveApp {
       preview: this.preview,
       uploads: this.uploads,
       toasts: this.toasts,
+      datasetMenu: this.datasetMenu,
       dropPath: this.dropPath,
       dragging: this.dragging,
       felarumiUrl: this.felarumiUrl,
