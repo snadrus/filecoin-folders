@@ -31,3 +31,13 @@ test("S61 icon buttons announce their purpose, not the icon ligature", async ({ 
   await expect(page.getByRole("button", { name: "Grid view" })).toBeVisible();
   await expect(page.getByRole("button", { name: /view_list|grid_view/ })).toHaveCount(0);
 });
+
+test("S61 the search box shows it has focus (Drive-style raised white box)", async ({ page }) => {
+  await page.goto("/?onboard=1&pay=ready&datasets=1");
+  await page.getByTestId("connect-wallet").click();
+  await page.getByTestId("nav-drive").waitFor();
+  const box = page.locator(".search");
+  const before = await box.evaluate((el) => getComputedStyle(el).boxShadow);
+  await page.getByTestId("search").focus();
+  expect(await box.evaluate((el) => getComputedStyle(el).boxShadow)).not.toBe(before);
+});
