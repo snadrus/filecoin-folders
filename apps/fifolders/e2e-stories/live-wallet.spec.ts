@@ -13,7 +13,7 @@ test("S03 connect: one labeled request, account shown, drive visible", async ({ 
   await page.goto("/");
   await page.getByTestId("connect-wallet").click();
   await expect(page.getByTestId("nav-drive")).toBeVisible({ timeout: 60_000 });
-  await expect(page.getByTestId("account-label")).toContainText(w.address.slice(0, 6));
+  await expect(page.getByTestId("account")).toContainText(w.address.slice(0, 6));
   expect(w.calls.filter((c) => c.method === "eth_requestAccounts").length).toBe(1);
 });
 
@@ -106,7 +106,7 @@ test("S44 wallet switches account or chain mid-session: session restarts in plac
   const other = "0x1111111111111111111111111111111111111111";
   w.accountOverride = other;
   await w.emit("accountsChanged", [other]);
-  await expect(page.getByTestId("account-label")).toContainText("0x1111", { timeout: 30_000 });
+  await expect(page.getByTestId("account")).toContainText("0x1111", { timeout: 30_000 });
   await expect(page.getByTestId("nav-drive")).toBeVisible();
   // Chain switch: a notice, no prompt.
   await w.emit("chainChanged", "0x13a");
