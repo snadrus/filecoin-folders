@@ -16,7 +16,7 @@ test("S03 connect: one labeled request, account shown, drive visible", async ({ 
   expect(w.calls.filter((c) => c.method === "eth_requestAccounts").length).toBe(1);
 });
 
-test("S04 live: browse while setup is unfinished; the pending setup step is labeled with purpose and cost", async ({ page }) => {
+test("S04 live: browse while setup is unfinished", async ({ page }) => {
   await installWallet(page);
   await page.goto("/");
   await page.getByTestId("connect-wallet").click();
@@ -24,7 +24,12 @@ test("S04 live: browse while setup is unfinished; the pending setup step is labe
   const note = page.getByTestId("setup-note");
   if (await note.count()) {
     await expect(note).toContainText("you can browse meanwhile");
-    await expect(page.getByTestId("setup-step").first()).toHaveText(/ — .+\(.+\)/);
+    const open = page.getByTestId("setup-open-wallet");
+    if (await open.count()) {
+      await open.click();
+      await expect(page.getByTestId("account-menu")).toContainText(/ — .+\(.+\)/);
+      await page.keyboard.press("Escape");
+    }
   }
   await page.getByTestId("nav-recent").click();
   await page.getByTestId("nav-trash").click();

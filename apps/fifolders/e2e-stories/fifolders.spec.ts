@@ -62,7 +62,8 @@ test("S05/S06 wallet requests are labeled with purpose+cost; 'Check your wallet'
     for (const key of Object.keys(localStorage)) if (key.startsWith("fifolders:session:")) localStorage.removeItem(key);
   });
   await page.reload();
-  const step = page.getByTestId("setup-step");
+  await page.getByTestId("setup-open-wallet").click();
+  const step = page.getByTestId("account-menu").getByTestId("authorize-session");
   await expect(step).toHaveText(/^Authorize session key — .+ \(.+\)$/);
   await step.click();
   // The mock wallet has no prompt UI; the labeled request shows in Activity. The live wallet spec checks the toast.
@@ -90,17 +91,14 @@ test("S07 transaction log sidebar lists chain steps; activity rows auto-dismiss 
 });
 
 test("S08 dataset selection persists across reload", async ({ page }) => {
-  await connect(page, "/?onboard=1&pay=ready&datasets=2");
+  await connect(page, "/?onboard=1&pay=ready&datasets=3&drives=2");
   await page.getByTestId("account").click();
-  const select = page.getByTestId("dataset-select");
-  await expect(select).toBeVisible();
-  const values = await select.locator("option").evaluateAll((os) => os.map((o) => (o as HTMLOptionElement).value));
-  expect(values.length).toBeGreaterThanOrEqual(2);
-  await select.selectOption(values[1]);
+  const menu = page.getByTestId("dataset-menu");
+  await menu.getByTestId("dataset-item").filter({ hasText: "#1" }).click();
   await page.reload();
   await expect(page.getByTestId("nav-drive")).toBeVisible();
   await page.getByTestId("account").click();
-  await expect(page.getByTestId("dataset-select")).toHaveValue(values[1]);
+  await expect(page.getByTestId("dataset-menu").locator("[aria-checked=true]")).toContainText("#1");
 });
 
 test("S09 loose pieces summary reconciles with the piece count", async ({ page }) => {
