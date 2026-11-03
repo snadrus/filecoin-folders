@@ -68,7 +68,7 @@ export function groupByFolder<T extends { folder?: string }>(rows: T[]): { folde
     .map(([folder, items]) => ({ folder, rows: items }));
 }
 
-const INDEX_API = "https://api.filecoin.io";
+import { FILECOIN_API as INDEX_API } from "./filecoin-api.js";
 
 /**
  * Per-piece metadata for one dataset. Filecoin index API first (metadata + added block in one
