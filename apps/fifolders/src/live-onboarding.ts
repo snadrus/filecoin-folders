@@ -166,6 +166,8 @@ export function createLiveOnboarding(): OnboardingIO {
     localStorage.setItem("fifolders:wallet-permitted", "1");
   }
 
+  const followed = new WeakSet<object>();
+
   async function bindProvider(rdns: string | null): Promise<void> {
     wallets = await discoverWallets();
     const match = rdns ? wallets.find((wallet) => wallet.rdns === rdns) : undefined;
@@ -175,6 +177,20 @@ export function createLiveOnboarding(): OnboardingIO {
     const picked = chosen?.provider ?? window.ethereum ?? null;
     provider = picked ? watchWalletPrompts(picked) : null;
     if (!provider) throw new Error("No injected wallet found. Install a browser wallet such as MetaMask.");
+    if (picked) followWallet(picked as Eip1193Provider & { on?: (event: string, fn: (value: unknown) => void) => void });
+  }
+
+  /** A different account or chain in the wallet invalidates this session's signer: start over from a fresh page. */
+  function followWallet(source: { on?: (event: string, fn: (value: unknown) => void) => void }): void {
+    if (followed.has(source) || typeof source.on !== "function") return;
+    followed.add(source);
+    source.on("accountsChanged", (value) => {
+      const next = Array.isArray(value) && typeof value[0] === "string" ? value[0].toLowerCase() : "";
+      if (root && next !== root.toLowerCase()) location.reload();
+    });
+    source.on("chainChanged", () => {
+      if (root) location.reload();
+    });
   }
 
   async function onchainExpiries(choice: ChainChoice, sessionAddress: Address): Promise<bigint[]> {
