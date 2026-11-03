@@ -25,6 +25,12 @@ export interface SynapseStorageOptions {
   copies?: number;
   /** JSON-only progress. File bytes are never included. */
   onReplication?: (notice: ReplicationNotice) => void;
+  /**
+   * Resolve `put` as soon as the primary provider has stored the piece and submitted the add-pieces
+   * transaction, instead of waiting for on-chain confirmation (and secondary copies). Small records
+   * (identity profiles) use this so the pointer commit is not stuck behind slow receipts or null rounds.
+   */
+  resolveOnAdded?: boolean;
 }
 
 export interface ReplicationProvider {
@@ -97,13 +103,20 @@ export function createSynapseStorage(synapse: SynapseLike, options: SynapseStora
           throw new Error(fundingShortfall(prepared.costs, contexts.length));
         }
       }
+      let storedCid: string | undefined;
+      let early: ((value: { pieceCid: string; size: number }) => void) | undefined;
+      const earlyResult = new Promise<{ pieceCid: string; size: number }>((resolve) => (early = resolve));
       const notice = noticeFromContexts(contexts, options.copies ?? (contexts.length ? 2 : 1));
       options.onReplication?.(notice);
       const uploadOptions = contexts.length
         ? {
             contexts,
             callbacks: {
+              onStored: (_providerId: bigint | number | string, cid: unknown) => {
+                if (cid != null) storedCid ??= pieceCidString(cid as never);
+              },
               onPiecesAdded: (txHash: string, providerId: bigint | number | string) => {
+                if (options.resolveOnAdded && storedCid) early?.({ pieceCid: storedCid, size: bytes.byteLength });
                 const row = notice.providers.find((provider) => provider.providerId === String(providerId));
                 if (row) {
                   row.transactionHash = txHash;
@@ -139,7 +152,24 @@ export function createSynapseStorage(synapse: SynapseLike, options: SynapseStora
           }
         : legacyOptions;
       try {
-        const result = (await synapse.storage.upload(contexts.length ? bytes : data, uploadOptions)) as UploadReturn;
+        const uploading = synapse.storage.upload(contexts.length ? bytes : data, uploadOptions) as Promise<UploadReturn>;
+        if (options.resolveOnAdded && contexts.length) {
+          const first = await Promise.race([uploading.then((result) => ({ result })), earlyResult.then((done) => ({ done }))]);
+          if ("done" in first) {
+            uploading.then(
+              (result) => {
+                applyUploadResult(notice, result);
+                options.onReplication?.(cloneNotice(notice));
+              },
+              (error: unknown) => {
+                notice.error = error instanceof Error ? error.message : "Confirmation failed";
+                options.onReplication?.(cloneNotice(notice));
+              },
+            );
+            return first.done;
+          }
+        }
+        const result = await uploading;
         const pieceCid = pieceCidString(result.pieceCid);
         const size = asSize(result.size, bytes.byteLength);
         if (!Number.isSafeInteger(size) || size < 0) throw new Error("Synapse upload did not return a piece size");

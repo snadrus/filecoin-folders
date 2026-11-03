@@ -27,3 +27,6 @@ h1 { font-weight: 500; font-size: 26px; margin: 16px 0 8px; }
 .toast small { color: #bdc1c6; }
 .spinner { width: 14px; height: 14px; border: 2px solid #8ab4f8; border-top-color: transparent; border-radius: 50%; animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+.photo { display: flex; gap: 8px; margin-top: 6px; }
+.photo button { background: #fff; color: #1a73e8; border: 1px solid #dadce0; border-radius: 18px; padding: 6px 14px; font: inherit; font-weight: 500; cursor: pointer; }
+.photo button:hover { background: #f1f6fe; }

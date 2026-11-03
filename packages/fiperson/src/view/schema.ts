@@ -27,6 +27,19 @@ export interface IdentityAvatar {
   emoji?: string;
   /** `#rrggbb`. */
   color?: string;
+  /** Small square picture as a `data:image/(webp|png|jpeg);base64,…` URL (≤ {@link AVATAR_IMAGE_MAX} chars). Shown instead of the emoji. */
+  image?: string;
+}
+
+/** Max length of `avatar.image` (data URL chars, ~18 KB of image). A 128px WebP is usually 3–10 KB. */
+export const AVATAR_IMAGE_MAX = 24_000;
+/** Side of the stored square avatar picture, px. */
+export const AVATAR_IMAGE_SIZE = 128;
+const IMAGE_RE = /^data:image\/(?:webp|png|jpeg);base64,[A-Za-z0-9+/]+={0,2}$/;
+
+/** A safe inline avatar picture (data URL of webp/png/jpeg within the size limit), else "". */
+export function cleanAvatarImage(value: unknown): string {
+  return typeof value === "string" && value.length <= AVATAR_IMAGE_MAX && IMAGE_RE.test(value) ? value : "";
 }
 
 /** Version 1 profile document. Unknown fields are kept on read. */
@@ -82,7 +95,8 @@ export function normalizeIdentity(address: string, draft: IdentityDraft, now: Da
   const doc: IdentityV1 = { v: 1, schema: IDENTITY_SCHEMA, address: address.toLowerCase() as Address, displayName, updatedAt: now.toISOString() };
   const emoji = cleanEmoji(draft.avatar?.emoji);
   const color = typeof draft.avatar?.color === "string" && COLOR_RE.test(draft.avatar.color) ? draft.avatar.color.toLowerCase() : "";
-  if (emoji || color) doc.avatar = { ...(emoji ? { emoji } : {}), ...(color ? { color } : {}) };
+  const image = cleanAvatarImage(draft.avatar?.image);
+  if (emoji || color || image) doc.avatar = { ...(emoji ? { emoji } : {}), ...(color ? { color } : {}), ...(image ? { image } : {}) };
   const bio = cleanText(draft.bio, BIO_MAX);
   if (bio) doc.bio = bio;
   return doc;

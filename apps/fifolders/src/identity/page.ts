@@ -1,8 +1,36 @@
-import { AVATAR_COLORS, BIO_MAX, DISPLAY_NAME_MAX, IdentityError, LEGACY_NAME_KEY, avatarHtml, buildIdentity, escapeHtml as esc, guestName, writeIdentityCache, type ResolvedIdentity } from "fiperson/edit";
+import { AVATAR_COLORS, AVATAR_IMAGE_MAX, AVATAR_IMAGE_SIZE, BIO_MAX, DISPLAY_NAME_MAX, IdentityError, LEGACY_NAME_KEY, avatarHtml, buildIdentity, escapeHtml as esc, guestName, writeIdentityCache, type ResolvedIdentity } from "fiperson/edit";
 import { onWalletPrompts, isUserRejection, type WalletPrompt } from "../wallet-prompts.js";
 import { IdentityBlocked, type IdentityIO } from "./io.js";
 
 export { LEGACY_NAME_KEY };
+
+/** Center-crop `file` to a square and scale it to {@link AVATAR_IMAGE_SIZE}px; WebP (PNG fallback) data URL within {@link AVATAR_IMAGE_MAX}. */
+export async function avatarImageFromFile(file: Blob, size = AVATAR_IMAGE_SIZE): Promise<string> {
+  if (!file.type.startsWith("image/")) throw new IdentityError("Pick an image file (PNG, JPEG, WebP, GIF…).");
+  let bitmap: ImageBitmap;
+  try {
+    bitmap = await createImageBitmap(file);
+  } catch {
+    throw new IdentityError("That image could not be read. Try a PNG or JPEG.");
+  }
+  const side = Math.min(bitmap.width, bitmap.height);
+  for (const px of [size, 96, 64]) {
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = px;
+    const ctx = canvas.getContext("2d")!;
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(bitmap, (bitmap.width - side) / 2, (bitmap.height - side) / 2, side, side, 0, 0, px, px);
+    for (const q of [0.85, 0.7, 0.5]) {
+      const webp = canvas.toDataURL("image/webp", q);
+      if (webp.startsWith("data:image/webp") && webp.length <= AVATAR_IMAGE_MAX) return webp;
+    }
+    const jpeg = canvas.toDataURL("image/jpeg", 0.8);
+    const png = canvas.toDataURL("image/png");
+    const best = png.length <= AVATAR_IMAGE_MAX ? png : jpeg;
+    if (best.length <= AVATAR_IMAGE_MAX) return best;
+  }
+  throw new IdentityError("That image is too detailed to store. Try a simpler picture.");
+}
 export const COLORS = AVATAR_COLORS;
 
 /** Only same-origin return targets (FiPen/FiGrid/FiFolders pages). */
@@ -20,7 +48,7 @@ interface State {
   address: string | null;
   loading: boolean;
   resolved: ResolvedIdentity | null;
-  draft: { displayName: string; emoji: string; color: string; bio: string };
+  draft: { displayName: string; emoji: string; color: string; bio: string; image: string };
   busy: string;
   error: string;
   blocked: { message: string; url: string } | null;
@@ -33,7 +61,7 @@ export class IdentityPage {
     address: null,
     loading: false,
     resolved: null,
-    draft: { displayName: "", emoji: "", color: "", bio: "" },
+    draft: { displayName: "", emoji: "", color: "", bio: "", image: "" },
     busy: "",
     error: "",
     blocked: null,
@@ -50,6 +78,7 @@ export class IdentityPage {
     });
     root.addEventListener("click", (event) => void this.onClick(event));
     root.addEventListener("input", (event) => this.onInput(event));
+    root.addEventListener("change", (event) => void this.onFile(event));
     root.addEventListener("submit", (event) => {
       event.preventDefault();
       void this.save();
@@ -77,8 +106,8 @@ export class IdentityPage {
       // ignore
     }
     this.state.draft = id
-      ? { displayName: id.displayName, emoji: id.avatar?.emoji ?? "", color: id.avatar?.color ?? "", bio: id.bio ?? "" }
-      : { displayName: legacy || guestName(address), emoji: "", color: "", bio: "" };
+      ? { displayName: id.displayName, emoji: id.avatar?.emoji ?? "", color: id.avatar?.color ?? "", bio: id.bio ?? "", image: id.avatar?.image ?? "" }
+      : { displayName: legacy || guestName(address), emoji: "", color: "", bio: "", image: "" };
     this.render();
   }
 
@@ -97,15 +126,35 @@ export class IdentityPage {
     } else if (action === "color") {
       this.state.draft.color = el.dataset.color === this.state.draft.color ? "" : el.dataset.color || "";
       this.render();
+    } else if (action === "pick-image") {
+      this.root.querySelector<HTMLInputElement>("[data-testid=identity-image-file]")?.click();
+    } else if (action === "remove-image") {
+      this.state.draft.image = "";
+      this.render();
     } else if (action === "return" && this.returnTo) {
       this.navigate(this.returnTo);
     }
   }
 
+  private async onFile(event: Event): Promise<void> {
+    const input = event.target as HTMLInputElement;
+    if (input.dataset.testid !== "identity-image-file") return;
+    const file = input.files?.[0];
+    input.value = "";
+    if (!file) return;
+    this.state.error = "";
+    try {
+      this.state.draft.image = await avatarImageFromFile(file);
+    } catch (error) {
+      this.state.error = error instanceof IdentityError ? error.message : "That image could not be used.";
+    }
+    this.render();
+  }
+
   private onInput(event: Event): void {
     const input = event.target as HTMLInputElement;
     const field = input.dataset.field as keyof State["draft"] | undefined;
-    if (!field) return;
+    if (!field || input.type === "file") return;
     this.state.draft[field] = input.value;
     this.paintPreview();
   }
@@ -118,7 +167,7 @@ export class IdentityPage {
     let doc;
     try {
       const d = this.state.draft;
-      doc = buildIdentity(address, { displayName: d.displayName, avatar: { emoji: d.emoji, color: d.color }, bio: d.bio });
+      doc = buildIdentity(address, { displayName: d.displayName, avatar: { emoji: d.emoji, color: d.color, image: d.image }, bio: d.bio });
     } catch (error) {
       this.state.error = error instanceof IdentityError ? error.message : String(error);
       this.render();
@@ -159,7 +208,7 @@ export class IdentityPage {
   private preview(): string {
     const d = this.state.draft;
     const name = d.displayName.trim() || "Your name";
-    const person = { address: this.state.address ?? undefined, displayName: name, avatar: { emoji: d.emoji.trim(), color: d.color } };
+    const person = { address: this.state.address ?? undefined, displayName: name, avatar: { emoji: d.emoji.trim(), color: d.color, image: d.image } };
     return `<div class="preview" data-testid="identity-preview">${avatarHtml(person, 44)}<span><strong>${esc(name)}</strong><small>${esc(this.state.address ?? "")}</small></span></div>`;
   }
 
@@ -202,6 +251,12 @@ export class IdentityPage {
         ${status}
         <label class="field">Display name <span class="req">required</span>
           <input data-field="displayName" data-testid="identity-name" required maxlength="${DISPLAY_NAME_MAX}" value="${esc(d.displayName)}" /></label>
+        <div class="field">Picture <span class="opt">optional · cropped to a ${AVATAR_IMAGE_SIZE}px square, shown instead of the emoji</span>
+          <div class="photo">
+            <input type="file" accept="image/*" data-testid="identity-image-file" hidden />
+            <button type="button" data-action="pick-image" data-testid="identity-image-pick">${d.image ? "Change picture" : "Upload picture"}</button>
+            ${d.image ? `<button type="button" data-action="remove-image" data-testid="identity-image-remove">Remove picture</button>` : ""}
+          </div></div>
         <label class="field">Avatar emoji <span class="opt">optional</span>
           <input data-field="emoji" data-testid="identity-emoji" maxlength="16" placeholder="🦊" value="${esc(d.emoji)}" /></label>
         <div class="field">Color <span class="opt">optional</span><div class="colors">${COLORS.map((c) => `<button type="button" class="swatch${c === d.color ? " on" : ""}" data-action="color" data-color="${c}" style="background:${c}" aria-label="Color ${c}" aria-pressed="${c === d.color}"></button>`).join("")}</div></div>
