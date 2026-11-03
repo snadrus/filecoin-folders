@@ -69,6 +69,7 @@ try {
 
 // Mount first so the UI is always visible; resume runs behind it and may show the renew banner.
 app.mount(root);
+if (import.meta.env.VITE_E2E === "1") (window as unknown as { __ffapp?: DriveApp }).__ffapp = app;
 // Background failures (wallet extensions, SDK polling) are reported, never fatal.
 window.addEventListener("error", (event) => app.reportBackgroundError(event.error ?? event.message));
 window.addEventListener("unhandledrejection", (event) => app.reportBackgroundError(event.reason));

@@ -4,7 +4,7 @@ import { filecoinCalibration } from "viem/chains";
 import { withWalletIntent } from "../wallet-prompts.js";
 import { FICLUB_ABI } from "./abi.js";
 import type { ClubView, RemovalBlob } from "./core.js";
-import { REMOVE_ADMIN_TYPES, domainOf } from "./core.js";
+import { REMOVE_ADMIN_PURPOSE, REMOVE_ADMIN_TYPES, domainOf } from "./core.js";
 import { CLUB_INTENTS, type ClubIO } from "./io.js";
 import { connectAccount, getProvider, peekAccount } from "./wallet.js";
 
@@ -67,7 +67,7 @@ export function createLiveClubIO(address: Address, rpc?: string, chainId?: numbe
     async signRemoval(signer, c, target, deadline, step) {
       const w = await wallet();
       return withWalletIntent(step === 2 ? CLUB_INTENTS.sign2 : CLUB_INTENTS.sign1, () =>
-        w.signTypedData({ account: signer, domain: domainOf(chain.id, address), types: REMOVE_ADMIN_TYPES, primaryType: "RemoveAdmin", message: { clubId: c.id, target, nonce: c.nonce, deadline } }),
+        w.signTypedData({ account: signer, domain: domainOf(chain.id, address), types: REMOVE_ADMIN_TYPES, primaryType: "RemoveAdmin", message: { purpose: REMOVE_ADMIN_PURPOSE, clubId: c.id, target, nonce: c.nonce, deadline } }),
       );
     },
     submitRemoval: async (blob: RemovalBlob, sig2: Hex) =>

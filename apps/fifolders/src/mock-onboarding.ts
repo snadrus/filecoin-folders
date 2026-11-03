@@ -9,6 +9,7 @@ import {
   formatToken,
   loadLastDataset,
   loadSession,
+  clearSession,
   paymentsReady,
   saveLastDataset,
   wasAutoPicked,
@@ -274,6 +275,17 @@ export function createMockOnboarding(params: URLSearchParams): OnboardingIO {
     },
     async reopen() {
       return null;
+    },
+    async refundSession(_chain, report?: ChainReporter) {
+      const stored = loadSession(MOCK_CHAIN_ID, MOCK_ADDRESS);
+      if (!stored) return { refunded: 0n };
+      report?.({ flow: "session", phase: "submitted", hash: "0xrefund" });
+      const next = book();
+      delete next[`${MOCK_ADDRESS.toLowerCase()}:${stored.sessionAddress.toLowerCase()}`];
+      localStorage.setItem(REGISTRY_KEY, JSON.stringify(next));
+      clearSession(MOCK_CHAIN_ID, MOCK_ADDRESS);
+      report?.({ flow: "session", phase: "done", hash: "0xrefund" });
+      return { refunded: 49_000_000_000_000_000n };
     },
     disconnect() {
       connected = false;

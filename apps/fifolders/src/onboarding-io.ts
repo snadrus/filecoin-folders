@@ -32,5 +32,10 @@ export interface OnboardingIO {
    * Null when unknown, encrypted or not yet created. Writes on it are never attempted.
    */
   peek?(input: { chain: ChainChoice; volumeName: string; owner?: string }): Promise<Session | null>;
+  /**
+   * "Disconnect session and refund": send what is left on the session key back to the root wallet
+   * (signed locally by the key, no wallet prompt) and forget the key in this browser.
+   */
+  refundSession?(chain: ChainChoice, report?: ChainReporter): Promise<{ refunded: bigint }>;
   disconnect(): void;
 }

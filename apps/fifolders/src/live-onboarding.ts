@@ -40,6 +40,7 @@ import {
   formatToken,
   loadLastDataset,
   loadSession,
+  clearSession,
   paymentsReady,
   saveLastDataset,
   loadDriveMark,
@@ -504,15 +505,27 @@ export function createLiveOnboarding(): OnboardingIO {
       const client = await walletClient(choice);
       const intent = sessionIntent();
       report?.({ flow: "session", phase: "signing", label: intentText(intent) });
-      const hash = await withWalletIntent(intent, () => client.writeContract({
-        address: chain.contracts.sessionKeyRegistry.address,
-        abi: chain.contracts.sessionKeyRegistry.abi,
-        functionName: "loginAndFund",
-        args: [sessionKey.address, expiresAt, permissions, SESSION_ORIGIN],
-        value: SESSION_FUND_WEI,
-        account: address,
-        chain,
-      }));
+      // Same browser, key still holds gas from an earlier login: re-authorize it without sending more tFIL.
+      const leftover = existing ? await publicClient(choice).getBalance({ address: sessionKey.address }).catch(() => 0n) : 0n;
+      const reuse = leftover >= SESSION_FUND_WEI / 2n;
+      const hash = await withWalletIntent(intent, () => reuse
+        ? client.writeContract({
+            address: chain.contracts.sessionKeyRegistry.address,
+            abi: chain.contracts.sessionKeyRegistry.abi,
+            functionName: "login",
+            args: [sessionKey.address, expiresAt, permissions, SESSION_ORIGIN],
+            account: address,
+            chain,
+          })
+        : client.writeContract({
+            address: chain.contracts.sessionKeyRegistry.address,
+            abi: chain.contracts.sessionKeyRegistry.abi,
+            functionName: "loginAndFund",
+            args: [sessionKey.address, expiresAt, permissions, SESSION_ORIGIN],
+            value: SESSION_FUND_WEI,
+            account: address,
+            chain,
+          }));
       signatures += SIGNATURES.sessionLogin;
       const receipt = await watchReceipt(choice, hash, "session", report);
       if (receipt.status !== "success") throw new Error("Session key login failed.");
@@ -531,6 +544,34 @@ export function createLiveOnboarding(): OnboardingIO {
     },
     sessionGate(choice) {
       return gateFor(choice);
+    },
+    async refundSession(choice, report?: ChainReporter) {
+      const address = requireRoot();
+      const chain = chainOf(choice);
+      const stored = loadSession(chain.id, address);
+      if (!stored) return { refunded: 0n };
+      const account = privateKeyToAccount(stored.privateKey as Hex);
+      const reader = publicClient(choice);
+      const balance = await reader.getBalance({ address: account.address });
+      let refunded = 0n;
+      if (balance > 0n) {
+        const fees = await reader.estimateFeesPerGas();
+        const maxFee = fees.maxFeePerGas ?? (await reader.getGasPrice());
+        const gas = await reader.estimateGas({ account, to: address, value: 1n }).catch(() => 3_000_000n);
+        // FEVM gas estimates are loose; keep a 30% margin so the sweep never underfunds itself.
+        const reserve = ((gas * 13n) / 10n) * maxFee;
+        if (balance > reserve) {
+          const sender = createWalletClient({ account, chain, transport: http(rpcOf(choice)) });
+          refunded = balance - reserve;
+          const hash = await sender.sendTransaction({ account, chain, to: address, value: refunded, gas: (gas * 13n) / 10n, maxFeePerGas: maxFee });
+          const receipt = await watchReceipt(choice, hash, "session", report);
+          if (receipt.status !== "success") throw new Error("Refund transaction failed.");
+          report?.({ flow: "session", phase: "done", hash });
+        }
+      }
+      clearSession(chain.id, address);
+      confirmedLogins.delete(stored.sessionAddress.toLowerCase());
+      return { refunded };
     },
     async fixPayments(choice, report?: ChainReporter, force = false) {
       const address = requireRoot();

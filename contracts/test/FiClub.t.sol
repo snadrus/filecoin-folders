@@ -226,4 +226,16 @@ contract FiClubTest is Test {
         club.removeAdmin(id, a);
         assertEq(club.adminCount(id), 1);
     }
+
+    /// Decision 5: the signed RemoveAdmin carries a fixed plain-language purpose (EIP-712 v2).
+    function test_removeAdminDigestIncludesPurpose() public view {
+        bytes32 typehash = keccak256("RemoveAdmin(string purpose,uint256 clubId,address target,uint256 nonce,uint256 deadline)");
+        assertEq(club.REMOVE_ADMIN_TYPEHASH(), typehash);
+        assertEq(club.REMOVE_ADMIN_PURPOSE(), "Remove this admin from the FiClub");
+        bytes32 domain = keccak256(abi.encode(
+            keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
+            keccak256("FiClub"), keccak256("2"), block.chainid, address(club)));
+        bytes32 structHash = keccak256(abi.encode(typehash, keccak256("Remove this admin from the FiClub"), uint256(1), address(0xBEEF), uint256(0), uint256(99)));
+        assertEq(club.removeAdminDigest(1, address(0xBEEF), 0, 99), keccak256(abi.encodePacked("\x19\x01", domain, structHash)));
+    }
 }

@@ -10,8 +10,12 @@ export interface ClubView {
   admins: Address[];
 }
 
+/** Plain-language purpose (EIP-712 v2), shown first in the wallet. Must match FiClub.REMOVE_ADMIN_PURPOSE. */
+export const REMOVE_ADMIN_PURPOSE = "Remove this admin from the FiClub";
+
 export const REMOVE_ADMIN_TYPES = {
   RemoveAdmin: [
+    { name: "purpose", type: "string" },
     { name: "clubId", type: "uint256" },
     { name: "target", type: "address" },
     { name: "nonce", type: "uint256" },
@@ -27,7 +31,7 @@ export interface RemoveAdminMessage {
 }
 
 export function domainOf(chainId: number, verifyingContract: Address) {
-  return { name: "FiClub", version: "1", chainId, verifyingContract } as const;
+  return { name: "FiClub", version: "2", chainId, verifyingContract } as const;
 }
 
 /** JSON for eth_signTypedData_v4 (numbers as decimal strings). */
@@ -44,7 +48,7 @@ export function typedDataJson(chainId: number, contract: Address, msg: RemoveAdm
     },
     primaryType: "RemoveAdmin",
     domain: domainOf(chainId, contract),
-    message: { clubId: msg.clubId.toString(), target: msg.target, nonce: msg.nonce.toString(), deadline: msg.deadline.toString() },
+    message: { purpose: REMOVE_ADMIN_PURPOSE, clubId: msg.clubId.toString(), target: msg.target, nonce: msg.nonce.toString(), deadline: msg.deadline.toString() },
   });
 }
 

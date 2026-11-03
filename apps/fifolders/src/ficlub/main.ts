@@ -11,7 +11,7 @@ if (!root) throw new Error("missing #ficlub-app");
 async function boot(): Promise<void> {
   const env = import.meta.env;
   // Calibration deployment (deployments/ficlub-calibration.json); env overrides. E2E mock runs ignore it.
-  const CALIBRATION_FICLUB = "0x4f73E1504d848eC4e3e74047940bD97EA79A3521";
+  const CALIBRATION_FICLUB = "0x412B9363019591588073B3489CB09d28d2a55A03";
   const address = env.VITE_FICLUB_ADDRESS_LOCAL || env.VITE_FICLUB_ADDRESS_CALIBRATION || (env.VITE_E2E === "1" ? "" : CALIBRATION_FICLUB);
   if (!address) {
     const { createMockClubIO } = await import("./mock-io.js");

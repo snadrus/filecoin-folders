@@ -467,7 +467,10 @@ describe("DriveApp polish", () => {
     root.querySelector<HTMLButtonElement>("[data-action=details]")!.click();
     await app.settled;
     expect(root.querySelector("[data-testid=indexing-status]")?.textContent).toBe("Not checked");
-    expect(root.querySelector("[data-testid=share-link]")?.getAttribute("href")).toMatch(/^https:\/\/ipfs\.io\/ipfs\//);
+    const href = root.querySelector("[data-testid=share-link]")?.getAttribute("href") ?? "";
+    expect(href).toContain("/share/?cid=");
+    expect(new URL(href).searchParams.get("name")).toBeTruthy();
+    expect(root.querySelector("[data-testid=gateway-preview]")?.getAttribute("href") ?? "https://ipfs.io/ipfs/").toMatch(/^https:\/\/ipfs\.io\/ipfs\//);
     root.querySelector<HTMLButtonElement>("[data-testid=check-indexing]")!.click();
     await app.settled;
     expect(root.querySelector("[data-testid=indexing-status]")?.textContent).toBe("Checking 1/5");

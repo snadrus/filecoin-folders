@@ -77,6 +77,7 @@ import {
 } from "./staged.js";
 import { loadSavedView, persistMemoryVolume, saveView } from "./volume-persist.js";
 import { COPIES_KEY, copyTarget, dropCopy, loadCopies } from "./participant-copies.js";
+import { sharePageUrl } from "./share/share-page.js";
 import { renderApp, type ActivityRow, type DialogState, type UploadRow, type ViewModel } from "./view.js";
 
 export interface DriveAppOptions {
@@ -145,6 +146,39 @@ export class DriveApp {
   onDisconnect?: DriveAppOptions["onDisconnect"];
   /** Read on-chain session-key expirations before a session-key action. */
   onEnsureSession?: () => Promise<SessionGate>;
+  /** Public read is open and a save is wanted: authorize the session key now (lazy, first save only). */
+  onNeedSession?: () => Promise<void>;
+  /** Wallet session setup for a waiting save is running (signature or confirmation). */
+  sessionPending = false;
+  /** Leave the writable session: later saves stage and ask for a session key again. */
+  demoteToReadOnly(): void {
+    if (!this.volume) return;
+    this.readOnly = true;
+    this.render();
+  }
+  /** Lazy session setup failed or was refused: say so, keep edits staged, offer Save again. */
+  sessionSetupFailed(message: string): void {
+    this.sessionPending = false;
+    this.#afterUpgrade = [];
+    for (const row of this.uploads) if (row.status === "waiting") row.status = "error";
+    this.toast(`${message} Your changes are kept — press Save to try again.`);
+    this.render();
+  }
+  private requestSession(): void {
+    if (this.sessionPending || !this.onNeedSession) return;
+    this.sessionPending = true;
+    this.render();
+    void this.onNeedSession().finally(() => {
+      this.sessionPending = false;
+      // Belt and braces: if the writable volume is in and a save is still wanted, run it now.
+      void this.enqueue(async () => {
+        if (this.readOnly || !this.#saveWanted || !this.staged.length) return;
+        this.#saveWanted = false;
+        await this.saveStaged();
+      });
+      if (this.root) this.render();
+    });
+  }
   /** `loginAndFund` on the stored key, then rebind live clients. Not queued. */
   onRenewSession?: () => Promise<void>;
   sessionPrompt: Exclude<SessionGate, "ok"> | null = null;
@@ -176,6 +210,7 @@ export class DriveApp {
     version: bigint;
     pieceCid: string;
     shareUrl?: string;
+    directUrl?: string;
     qr?: string;
     copies: number;
     providers: string[];
@@ -276,6 +311,8 @@ export class DriveApp {
     this.render();
   }
   #saveWanted = false;
+  /** Writes that waited for the lazy session key (e.g. Add to drive); run once the writable volume is in. */
+  #afterUpgrade: (() => Promise<void>)[] = [];
 
   /** Show the drive from a public read; edits stage locally until {@link attach} brings the writable volume. */
   attachReadOnly(options: DriveAppOptions): void {
@@ -361,6 +398,7 @@ export class DriveApp {
         this.#saveWanted = false;
         await this.saveStaged();
       } else await this.refresh();
+      for (const task of this.#afterUpgrade.splice(0)) await task();
     });
     if (options.volume) void this.recoverPendingUpload();
   }
@@ -840,6 +878,12 @@ export class DriveApp {
       .finally(() => this.render());
   }
 
+  /** Toast from outside the class (controller), repainted right away. */
+  notice(text: string): void {
+    this.toast(text);
+    if (this.root) this.render();
+  }
+
   private toast(text: string): void {
     const id = `t${++this.#toastSeq}`;
     this.toasts = [...this.toasts, { id, text: friendlyError(text) }].slice(-4);
@@ -900,7 +944,19 @@ export class DriveApp {
     }
   }
 
+  /** The drive is on screen but its (public) volume is still opening: wait briefly instead of dropping the edit. */
+  private async waitForVolume(ms: number): Promise<boolean> {
+    const until = Date.now() + ms;
+    while (!this.volume && Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 50));
+    return Boolean(this.volume);
+  }
+
   private async uploadList(files: File[], dest: string): Promise<void> {
+    if (files.length && !this.volume && this.panel && !(await this.waitForVolume(15_000))) {
+      this.toast("Your drive is still opening — try the upload again in a moment.");
+      this.render();
+      return;
+    }
     if (!files.length || !this.volume) return;
     const payloads = await Promise.all(
       files.map(async (file) => ({
@@ -972,10 +1028,12 @@ export class DriveApp {
     this.render();
     try {
       await this.stage(ops, { autosave: true });
-      const failed = this.autoSaveUploads && ops.some((op) => op.op === "put" && this.staged.some((item) => item.op === "put" && item.path === op.path));
+      const left = this.autoSaveUploads && ops.some((op) => op.op === "put" && this.staged.some((item) => item.op === "put" && item.path === op.path));
+      // Saved later: lazy session setup is running (or just finished and the save is queued next).
+      const waiting = left && (this.readOnly || this.sessionPending || this.#saveWanted);
       for (const row of rows) {
-        row.progress = 100;
-        row.status = failed ? "error" : "done";
+        row.progress = waiting ? 60 : 100;
+        row.status = waiting ? "waiting" : left ? "error" : "done";
       }
     } catch (error) {
       for (const row of rows) row.status = "error";
@@ -1259,13 +1317,23 @@ export class DriveApp {
       uploadComplete: true,
       encrypted: this.encrypted,
     });
+    // Guests get the FiFolders share page (name, who shared it, Open/Download), not a raw storage URL.
+    const pageUrl = shareUrl
+      ? sharePageUrl(location.href, {
+          name: stat.name,
+          ...(stat.importedCar ? { direct: shareUrl } : { cid: stat.ipfs }),
+          ...(typeof stat.size === "number" ? { size: stat.size } : {}),
+          owner: this.owner,
+          chain: this.chain,
+        })
+      : undefined;
     const indexing = stat.ipfs ? indexingLabel(localIndexStore(this.scopeKey()).read()[stat.ipfs]) : undefined;
     this.details = {
       stat,
       history,
       version: head.version,
       pieceCid,
-      ...(shareUrl ? { shareUrl, qr: qrSvg(shareUrl) } : {}),
+      ...(pageUrl && shareUrl ? { shareUrl: pageUrl, directUrl: shareUrl, qr: qrSvg(pageUrl) } : {}),
       copies: catalog.length || (stat.type === "file" ? DEFAULT_STORAGE_COPIES : 0),
       providers: catalog.map((copy) => copy.providerId),
       ...(indexing ? { indexing } : {}),
@@ -1350,6 +1418,7 @@ export class DriveApp {
       action === "add-funds" ||
       action === "create-dataset" ||
       action === "refresh-session" ||
+      action === "refund-session" ||
       action === "open-drive"
     ) {
       void this.enqueue(async () => {
@@ -2289,8 +2358,11 @@ export class DriveApp {
       }
     }
     const volume = this.volume;
-    // A public read cannot commit; queued editor saves wait for the writable volume.
-    if (!volume || this.readOnly) return;
+    // A public read cannot commit; queued editor saves wait for the writable volume (lazy session: ask for it now).
+    if (!volume || this.readOnly) {
+      if (volume && this.onNeedSession && loadOps().some((op) => op.kind === "fel-save" && op.status !== "done" && op.status !== "error" && op.content)) this.requestSession();
+      return;
+    }
     let edited = false;
     for (const op of loadOps()) {
       if ((op.kind === "upload" || op.kind === "commit") && op.path && op.pieceCid) {
@@ -2442,6 +2514,14 @@ export class DriveApp {
 
   /** Reference Filecoin Drive pieces from the manifest in one commit. */
   private async adoptPieces(cids: string[], base: string): Promise<void> {
+    if (this.volume && this.readOnly && this.onNeedSession) {
+      // Lazy session key: set it up now, then add the files right after (no second click).
+      this.#afterUpgrade.push(() => this.adoptPieces(cids, base));
+      this.toast("Adding to the drive needs a one-time wallet session (1 signature). Adding right after.");
+      this.requestSession();
+      this.render();
+      return;
+    }
     if (!this.volume || this.readOnly) {
       this.toast("Finish wallet setup first — adding to the drive needs a commit.");
       this.render();
@@ -2602,7 +2682,13 @@ export class DriveApp {
         title: intent.title,
         detail: [intent.purpose, `(${intent.cost})`].filter(Boolean).join(" "),
       })),
-      setupNote: this.readOnly ? "Finishing wallet setup… you can browse meanwhile" : "",
+      setupNote: this.readOnly
+        ? this.sessionPending
+          ? `Setting up your wallet session (1 signature, one time)… ${this.staged.length ? `${this.staged.length} change${this.staged.length === 1 ? "" : "s"} will save right after` : "your save continues right after"}`
+          : this.onNeedSession && this.panel?.paymentsReady && this.panel?.selectedDatasetId
+            ? "You can browse now. Your first save sets up a wallet session (1 signature)."
+            : "Finishing wallet setup… you can browse meanwhile"
+        : "",
       loadState: !this.volume && this.panel && this.loadState === "idle" ? "loading" : this.loadState,
       loadError: this.loadError,
       setupStep: this.readOnly ? this.readOnlyStep() : null,
@@ -2749,7 +2835,10 @@ export class DriveApp {
     if (!this.volume || !this.staged.length) return;
     if (this.readOnly) {
       this.#saveWanted = true;
-      this.toast("Kept as unsaved changes — they save once wallet setup finishes.");
+      if (this.onNeedSession) {
+        if (!this.sessionPending) this.toast("Saving needs a one-time wallet session (1 signature). Your changes save right after.");
+        this.requestSession();
+      } else this.toast("Kept as unsaved changes — they save once wallet setup finishes.");
       await this.refresh();
       return;
     }
@@ -2788,6 +2877,10 @@ export class DriveApp {
       await this.rememberCopies();
       if (ops.some((op) => op.op === "rm")) await this.scheduleUnreferenced();
     });
+    for (const row of this.uploads) if (row.status === "waiting") {
+      row.status = ok ? "done" : "error";
+      row.progress = 100;
+    }
     if (ok) this.finishOp(id);
     else this.failOp(id, "Couldn't save");
   }

@@ -122,6 +122,11 @@ describe("drive feedback", () => {
     expect(root.querySelector("[data-testid=connect-wallet]")).toBeTruthy();
     root.querySelector("form")?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
     await settle(app);
+    // Lazy session key: authorize by hand from the wallet menu (a first save would do the same).
+    root.querySelector<HTMLElement>("[data-action=account]")?.click();
+    root.querySelector<HTMLElement>("[data-testid=authorize-session]")?.click();
+    await settle(app);
+    if (root.querySelector("[data-testid=account-menu]")) root.querySelector<HTMLElement>("[data-action=account]")?.click();
     expect(root.querySelector("[data-testid=chain-steps]")).toBeNull();
     root.querySelector<HTMLButtonElement>("[data-testid=txlog-toggle]")!.click();
     expect(root.querySelector("[data-testid=txlog] [data-testid=chain-steps]")).toBeTruthy();

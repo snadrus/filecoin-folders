@@ -1,10 +1,21 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
-test("first visit signs in once when payment and a dataset already exist", async ({ page }) => {
+/** Lazy session key: Connect asks for nothing; authorize by hand from the wallet menu (a first save would too). */
+async function authorize(page: Page): Promise<void> {
+  await page.getByTestId("account").click();
+  await page.getByTestId("authorize-session").click();
+  await expect(page.getByTestId("session-status")).toContainText("Session key until");
+  await page.keyboard.press("Escape");
+}
+
+test("first visit asks for no signature at Connect; the first save signs once", async ({ page }) => {
   await page.goto("/?onboard=1&pay=ready&datasets=1");
   await page.getByTestId("connect-wallet").click();
   await expect(page.getByTestId("nav-drive")).toBeVisible();
-  await expect(page.getByTestId("wallet-signatures")).toHaveText("1");
+  await expect(page.getByTestId("wallet-signatures")).toHaveText("0");
+  await page.getByTestId("file-input").setInputFiles({ name: "first.txt", mimeType: "text/plain", buffer: Buffer.from("1") });
+  await expect(page.getByTestId("entry").filter({ hasText: "first.txt" })).toBeVisible();
+  await expect(page.getByTestId("wallet-signatures")).toHaveText("1", { timeout: 20_000 });
 
   await page.reload();
   await expect(page.getByTestId("nav-drive")).toBeVisible();
@@ -21,8 +32,8 @@ test("missing payment and dataset take one fix and no extra signature to create"
   await expect(page.getByTestId("wallet-signatures")).toContainText("Wallet signatures 0");
 
   await page.getByTestId("fix-payments").click();
-  await expect(page.getByTestId("wallet-signatures")).toContainText("Wallet signatures 3");
-  await expect(page.getByTestId("session-status")).toContainText("Session key ready");
+  // Lazy session key: payments take 2 signatures; creating the dataset (the first write) authorizes the key.
+  await expect(page.getByTestId("wallet-signatures")).toContainText("Wallet signatures 2");
   await page.getByTestId("create-dataset").click();
   await expect(page.getByTestId("nav-drive")).toBeVisible();
   await expect(page.getByTestId("wallet-signatures")).toHaveText("3");
@@ -41,6 +52,7 @@ test("an expired session key renews with one signature and retries the upload", 
   await page.goto("/?onboard=1&pay=ready&datasets=1");
   await page.getByTestId("connect-wallet").click();
   await expect(page.getByTestId("nav-drive")).toBeVisible();
+  await authorize(page);
   await expect(page.getByTestId("wallet-signatures")).toHaveText("1");
   await page.evaluate(() => {
     const key = Object.keys(localStorage).find((item) => item.startsWith("fifolders:session:"));
@@ -106,6 +118,7 @@ test("the public drive renders read-only before the session key is authorized", 
   await page.goto("/?onboard=1&pay=ready&datasets=1&authdelay=1500");
   await page.getByTestId("connect-wallet").click();
   await expect(page.getByTestId("nav-drive")).toBeVisible();
+  await authorize(page);
   await expect(page.getByTestId("setup-note")).toHaveCount(0, { timeout: 10_000 });
   // Expire the session key, then reload: the drive must show before any signature.
   await page.evaluate(() => {
@@ -113,18 +126,18 @@ test("the public drive renders read-only before the session key is authorized", 
   });
   await page.reload();
   await expect(page.getByTestId("nav-drive")).toBeVisible();
-  await expect(page.getByTestId("setup-note")).toContainText("Finishing wallet setup… you can browse meanwhile");
+  await expect(page.getByTestId("setup-note")).toContainText("You can browse now. Your first save sets up a wallet session");
   await expect(page.getByTestId("wallet-signatures")).toHaveText("0");
   await expect(page.getByTestId("setup-step")).toHaveCount(0);
   await page.getByTestId("setup-open-wallet").click();
   const step = page.getByTestId("account-menu").getByTestId("authorize-session");
   await expect(step).toHaveText("Authorize session key — lets FiFolders save for 7 days without asking each time (~0.05 FIL)");
 
-  // An edit while read-only is staged, not lost.
+  await page.keyboard.press("Escape");
+  // An edit while read-only is staged, not lost, and starts the one-time session setup itself.
   await page.getByTestId("file-input").setInputFiles({ name: "early.txt", mimeType: "text/plain", buffer: Buffer.from("hi") });
   await expect(page.getByText("early.txt").first()).toBeVisible();
-
-  await step.click();
+  await expect(page.getByTestId("setup-note")).toContainText("Setting up your wallet session");
   if (!(await page.getByTestId("txlog").isVisible())) await page.getByTestId("txlog-toggle").click();
   await expect(page.getByTestId("activity")).toContainText("Authorize this browser to save");
   await expect(page.getByTestId("activity")).not.toContainText("Send transaction");
