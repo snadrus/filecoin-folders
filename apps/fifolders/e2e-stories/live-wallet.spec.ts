@@ -100,7 +100,7 @@ test("S44 wallet switches account or chain mid-session: session restarts in plac
   await expect(page.getByTestId("nav-drive")).toBeVisible({ timeout: 60_000 });
   await page.getByTestId("nav-trash").click();
   await page.evaluate(() => ((window as any).__noReload = true));
-  const signing = () => w.calls.filter((c) => ["eth_requestAccounts", "personal_sign", "eth_signTypedData_v4", "eth_sendTransaction", "wallet_switchEthereumChain"].includes(c.method)).length;
+  const signing = () => w.calls.filter((c) => ["eth_requestAccounts", "personal_sign", "eth_signTypedData_v4", "eth_sendTransaction", "wallet_switchEthereumChain"].includes(c.method.split(":")[0])).length;
   const before = signing();
   // Account switch: the wallet now exposes another account to this site.
   const other = "0x1111111111111111111111111111111111111111";
@@ -153,7 +153,7 @@ test("S45 payment approval, session key, upload on live (Calibration spend)", as
   await expect(page.getByTestId("activity-indicator")).toHaveCount(0, { timeout: 420_000 });
   const txs = w.calls.filter((c) => c.outcome.startsWith("tx ")).map((c) => c.outcome.slice(3));
   const fil1 = await filBalance();
-  console.log(`S45 spend: ${formatEther(fil0 - fil1)} tFIL gas; txs: ${txs.join(", ") || "none"}; signatures: ${w.calls.filter((c) => c.method === "eth_signTypedData_v4" || c.method === "personal_sign").length}`);
+  console.log(`S45 spend: ${formatEther(fil0 - fil1)} tFIL gas; txs: ${txs.join(", ") || "none"}; signatures: ${w.calls.filter((c) => c.method.startsWith("eth_signTypedData_v4") || c.method === "personal_sign").length}`);
   await expect(page.getByTestId("setup-error")).toHaveCount(0);
 });
 
