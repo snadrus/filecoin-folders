@@ -21,7 +21,7 @@ import { chainStepTitle, explorerHref, stepDetail, type ChainReport, type ChainS
 import { INTENTS, intentText, onWalletPrompts, sessionIntent, withWalletIntent, type WalletPrompt, walletPrompts } from "./wallet-prompts.js";
 import { ACTIVITY_DISMISS_MS, dismissActivity, loadDismissed } from "./activity.js";
 import { defaultFelTitle, felTarget, rememberFelTarget, remapFelTargets } from "./fel-names.js";
-import { directoryFile, loosePieces, rememberPiece, sniffMime, type LoosePiece } from "./loose.js";
+import { adoptItems, directoryFile, loosePieces, rememberPiece, sniffMime, type LoosePiece } from "./loose.js";
 import { readPieceDetails, type PieceDetail } from "./drive-pieces.js";
 import {
   TRASH_PATH,
@@ -96,7 +96,8 @@ export interface DriveAppOptions {
 }
 
 interface DialogModel {
-  mode: "new-folder" | "rename" | "move" | "new-felarumi" | "new-felanumio";
+  mode: "new-folder" | "rename" | "move" | "new-felarumi" | "new-felanumio" | "adopt";
+  note?: string;
   title: string;
   submit: string;
   value: string;
@@ -1411,6 +1412,17 @@ export class DriveApp {
       this.render();
       return;
     }
+    if (action === "loose-adopt" || action === "loose-adopt-folder" || action === "loose-adopt-all") {
+      const drive = this.looseRows.filter((row) => row.origin === "drive");
+      const picked =
+        action === "loose-adopt"
+          ? drive.filter((row) => row.pieceCid === actionEl?.dataset.cid)
+          : action === "loose-adopt-folder"
+            ? drive.filter((row) => (row.folder ?? "") === (actionEl?.dataset.folder ?? ""))
+            : drive;
+      this.openAdopt(picked.map((row) => row.pieceCid));
+      return;
+    }
     if (action === "loose-expand") {
       const cid = actionEl?.dataset.cid ?? "";
       if (this.looseExpanded.has(cid)) this.looseExpanded.delete(cid);
@@ -1705,6 +1717,14 @@ export class DriveApp {
       const path = this.dialog.path;
       this.dialog = null;
       await this.rename(path, name);
+      return;
+    }
+    if (this.dialog.mode === "adopt" && this.dialog.paths) {
+      const base = form.querySelector<HTMLInputElement>("[data-testid=dialog-input]")?.value ?? this.dialog.value;
+      const cids = this.dialog.paths;
+      this.dialog = null;
+      this.render();
+      await this.adoptPieces(cids, base || "/");
       return;
     }
     if (this.dialog.mode === "move" && this.dialog.paths) {
@@ -2113,7 +2133,8 @@ export class DriveApp {
    * List the dataset's piece CIDs, then read only the ones no folder entry points at.
    */
   private async collectLoose(tree: Stat[]): Promise<LoosePiece[]> {
-    const referenced = new Set(tree.flatMap((entry) => (entry.pieceCid ? [entry.pieceCid] : [])));
+    // Adopted Filecoin Drive files point at their piece through `located`.
+    const referenced = new Set(tree.flatMap((entry) => [...(entry.pieceCid ? [entry.pieceCid] : []), ...(entry.format === "unixfs" && entry.located ? [entry.located] : [])]));
     const storage = this.volume?.storage as
       | { inner?: { pieces?: Map<string, Uint8Array>; list?: () => Promise<string[]>; get?: (cid: string) => Promise<Uint8Array> } }
       | undefined;
@@ -2148,6 +2169,48 @@ export class DriveApp {
   }
 
   looseSummary = "";
+
+  private openAdopt(cids: string[]): void {
+    const rows = this.looseRows.filter((row) => cids.includes(row.pieceCid));
+    const files = adoptItems(rows, "/").length;
+    if (!files) {
+      this.toast("Nothing to add: these pieces could not be read.");
+      this.render();
+      return;
+    }
+    const plaintext = this.encrypted ? " This volume is encrypted, but adopted files stay plaintext (they are public on Filecoin already)." : "";
+    this.dialog = {
+      mode: "adopt",
+      title: `Add ${files} ${files === 1 ? "file" : "files"} to drive`,
+      submit: "Add to drive",
+      value: "/",
+      paths: cids,
+      note: `Destination folder. Filecoin Drive folder paths are kept under it. No re-upload: one manifest commit (gas ~0.01 FIL + a penny for the manifest piece). Files keep depending on the Filecoin Drive dataset staying paid.${plaintext}`,
+    };
+    this.render();
+  }
+
+  /** Reference Filecoin Drive pieces from the manifest in one commit. */
+  private async adoptPieces(cids: string[], base: string): Promise<void> {
+    if (!this.volume || this.readOnly) {
+      this.toast("Finish wallet setup first — adding to the drive needs a commit.");
+      this.render();
+      return;
+    }
+    const items = adoptItems(this.looseRows.filter((row) => cids.includes(row.pieceCid)), base);
+    if (!items.length) return;
+    const id = this.beginOp({ kind: "commit", label: `Add ${items.length} Filecoin Drive ${items.length === 1 ? "file" : "files"} to drive`, stage: "saving" });
+    const ok = await this.run(async () => {
+      await withWalletIntent(INTENTS.adopt(items.length), () => this.volume!.adopt(items));
+      this.#draft = null;
+      this.#baseline = null;
+    });
+    if (ok) {
+      this.finishOp(id);
+      this.toast(`Added ${items.length} ${items.length === 1 ? "file" : "files"} to your drive.`);
+    } else this.failOp(id, "Couldn't add to drive");
+    await this.refresh();
+  }
   /** Filecoin Drive directory pieces expanded in the Loose pieces view. */
   looseExpanded = new Set<string>();
 
@@ -2214,6 +2277,8 @@ export class DriveApp {
           testid: this.dialog.mode === "move" ? "move-confirm" : "dialog-submit",
           folders: this.dialog.folders,
           dest: this.dialog.dest,
+          ...(this.dialog.note ? { note: this.dialog.note } : {}),
+          ...(this.dialog.mode === "adopt" ? { label: "Destination folder", testid: "adopt-confirm" } : {}),
         }
       : null;
     const pending = loadOps();

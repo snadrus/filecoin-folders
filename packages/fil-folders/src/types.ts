@@ -23,6 +23,12 @@ export interface FileNode {
   ipfs?: string;
   /** True when the file bytes are an imported CAR archive, stored unchanged. */
   importedCar?: boolean;
+  /**
+   * "unixfs": the bytes are a UnixFS DAG inside a foreign CAR piece (e.g. Filecoin Pin's
+   * Filecoin Drive). `pieceCid` is the file's UnixFS CID and `located` the storage piece.
+   * With `importedCar`, the whole located piece is the file. Never encrypted.
+   */
+  format?: "unixfs";
   enc?: ContentEnc;
 }
 
@@ -52,6 +58,10 @@ export interface ManifestEntry {
   mime?: string;
   ipfs?: string;
   importedCar?: boolean;
+  /** Additive (v1-compatible): "unixfs" for adopted Filecoin Drive pieces. Old readers ignore it. */
+  format?: "unixfs";
+  /** Storage piece holding a `format: "unixfs"` entry. */
+  located?: string;
   enc?: ManifestEnc;
   /** Inlined children. Absent when this directory is stored as its own piece. */
   entries?: ManifestEntry[];
@@ -77,6 +87,7 @@ export interface Stat {
   located?: string;
   ipfs?: string;
   importedCar?: boolean;
+  format?: "unixfs";
 }
 
 export interface HistoryEntry {
@@ -137,4 +148,19 @@ export interface EncryptionOptions {
   chainId: number;
   /** Registry address mixed into the HKDF info and the EIP-712 domain. */
   registryAddress: Address;
+}
+
+/** A Filecoin Drive (UnixFS) piece to reference from the manifest without re-uploading. */
+export interface AdoptRef {
+  /** UnixFS CID of the file inside the piece (or the CAR root for an imported CAR). */
+  cid: string;
+  /** Storage piece CID that holds the CAR. */
+  piece: string;
+  size: number;
+  mime?: string;
+  /** IPFS root CID recorded by filecoin-pin. */
+  ipfs?: string;
+  /** The piece is an imported CAR: the file is the whole piece, served raw. */
+  importedCar?: boolean;
+  mtime?: number;
 }

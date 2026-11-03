@@ -49,6 +49,7 @@ export function toStat(node: Node, path: string, volumeName = ""): Stat {
     if (node.located !== undefined) stat.located = node.located;
     if (node.ipfs !== undefined) stat.ipfs = node.ipfs;
     if (node.importedCar) stat.importedCar = true;
+    if (node.format) stat.format = node.format;
     return stat;
   }
   return {
@@ -117,6 +118,7 @@ function shape(node: Node): unknown {
       ipfs: node.ipfs ?? null,
       importedCar: node.importedCar ?? false,
       enc: node.enc ?? null,
+      ...(node.format ? { format: node.format, located: node.located ?? null } : {}),
     };
   }
   return {

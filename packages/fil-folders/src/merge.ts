@@ -17,6 +17,7 @@ interface FlatFile {
   mime?: string;
   ipfs?: string;
   importedCar?: boolean;
+  format?: "unixfs";
   enc?: ContentEnc;
 }
 
@@ -85,6 +86,7 @@ function sameContent(a: Flat | undefined, b: Flat | undefined): boolean {
     (a.mime ?? "") === (b.mime ?? "") &&
     (a.ipfs ?? "") === (b.ipfs ?? "") &&
     Boolean(a.importedCar) === Boolean(b.importedCar) &&
+    (a.format ?? "") === (b.format ?? "") &&
     sameEnc(a.enc, b.enc)
   );
 }
@@ -125,6 +127,7 @@ function flatten(root: DirNode): Map<string, Flat> {
         if (entry.mime !== undefined) file.mime = entry.mime;
         if (entry.ipfs !== undefined) file.ipfs = entry.ipfs;
         if (entry.importedCar) file.importedCar = true;
+        if (entry.format) file.format = entry.format;
         if (entry.enc !== undefined) file.enc = entry.enc;
         map.set(path, file);
       }
@@ -164,6 +167,7 @@ function unflatten(map: Map<string, Flat>, rootMtime: number): DirNode {
       if (node.mime !== undefined) file.mime = node.mime;
       if (node.ipfs !== undefined) file.ipfs = node.ipfs;
       if (node.importedCar) file.importedCar = true;
+      if (node.format) file.format = node.format;
       if (node.enc !== undefined) file.enc = node.enc;
       parent.entries.push(file);
     }

@@ -46,6 +46,11 @@ export const INTENTS = {
     purpose: `${pieces} ${pieces === 1 ? "piece" : "pieces"}`,
     cost: "gas ~0.01 FIL",
   }),
+  adopt: (files: number): WalletIntent => ({
+    title: "Add to drive",
+    purpose: `reference ${files} Filecoin Drive ${files === 1 ? "file" : "files"} in your folders without re-uploading`,
+    cost: "one manifest commit; gas ~0.01 FIL + a penny for the manifest piece",
+  }),
   unlock: { title: "Unlock encrypted folder", purpose: "your signature derives the folder key", cost: "free" },
 } as const;
 
