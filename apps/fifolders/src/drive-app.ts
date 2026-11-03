@@ -182,6 +182,7 @@ export class DriveApp {
   } | null = null;
   preview: PreviewModel | null = null;
   uploads: UploadRow[] = [];
+  uploadsOpen: boolean | null = null;
   toasts: { id: string; text: string; action?: string; actionLabel?: string }[] = [];
   /** Addresses already told which dataset was auto-picked this page load. */
   #autoPickToasted = new Set<string>();
@@ -907,6 +908,7 @@ export class DriveApp {
       rows.push({ id: path, name: file.rel, progress: 40, status: "uploading" });
     }
     this.uploads = [...this.uploads, ...rows];
+    this.uploadsOpen = null;
     this.render();
     try {
       await this.stage(ops, { autosave: true });
@@ -1478,6 +1480,12 @@ export class DriveApp {
     }
     if (action === "close-details") {
       this.details = null;
+      this.render();
+      return;
+    }
+    if (action === "toggle-uploads") {
+      const open = this.root?.querySelector("[data-testid=toggle-uploads]")?.getAttribute("aria-expanded") === "true";
+      this.uploadsOpen = !open;
       this.render();
       return;
     }
@@ -2539,6 +2547,7 @@ export class DriveApp {
       },
       preview: this.preview,
       uploads: this.uploads,
+      uploadsOpen: this.uploadsOpen,
       toasts: this.toasts,
       dropPath: this.dropPath,
       dragging: this.dragging,

@@ -154,6 +154,8 @@ export interface ViewModel {
   };
   preview: PreviewState | null;
   uploads: UploadRow[];
+  /** null = automatic (open while uploading or on errors, collapsed once all are done, like Drive). */
+  uploadsOpen?: boolean | null;
   toasts: ToastRow[];
   walletPrompts: WalletPromptView[];
   /** Copies participants saved while the owner was away; the owner can bring each into their drive. */
@@ -227,7 +229,7 @@ function renderScreen(model: ViewModel): string {
     ${model.dialog ? renderDialog(model.dialog) : ""}
     ${model.preview ? renderPreview(model.preview) : ""}
     ${renderToasts(model.toasts)}
-    ${renderUploads(model.uploads)}
+    ${renderUploads(model.uploads, model.uploadsOpen ?? null)}
     ${renderDownloads(model)}
   </div>`;
 }
@@ -932,13 +934,21 @@ function renderToasts(toasts: ToastRow[]): string {
     .join("")}</div>`;
 }
 
-function renderUploads(uploads: UploadRow[]): string {
+function renderUploads(uploads: UploadRow[], open: boolean | null): string {
   if (!uploads.length) return "";
   const active = uploads.some((item) => item.status === "uploading");
-  const title = active ? `Uploading ${uploads.filter((item) => item.status === "uploading").length}` : "Uploads";
-  return `<section class="uploads" data-testid="upload-panel">
-    <header>${title}<button type="button" data-action="dismiss-uploads" aria-label="Close uploads">×</button></header>
-    ${uploads
+  const failed = uploads.filter((item) => item.status === "error").length;
+  const done = uploads.filter((item) => item.status === "done").length;
+  const title = active
+    ? `Uploading ${uploads.filter((item) => item.status === "uploading").length}`
+    : failed
+      ? `${failed} upload${failed === 1 ? "" : "s"} failed`
+      : `${done} upload${done === 1 ? "" : "s"} complete`;
+  const expanded = open ?? (active || failed > 0);
+  const toggle = `<button type="button" data-action="toggle-uploads" data-testid="toggle-uploads" aria-expanded="${expanded}" aria-label="${expanded ? "Collapse" : "Expand"} uploads"><span class="material-symbols-outlined" aria-hidden="true">${expanded ? "expand_more" : "expand_less"}</span></button>`;
+  return `<section class="uploads" data-testid="upload-panel" data-collapsed="${expanded ? "false" : "true"}">
+    <header><span data-testid="upload-title">${title}</span><span class="upload-actions">${toggle}<button type="button" data-action="dismiss-uploads" aria-label="Close uploads">×</button></span></header>
+    ${!expanded ? "" : uploads
       .map(
         (item) => `<div class="upload-row" data-status="${item.status}">
           <span>${escapeHtml(item.name)}</span>

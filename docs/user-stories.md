@@ -100,3 +100,6 @@ On a phone, with the Uploads panel open, the file menu and dialogs sit above it,
 
 ### S65 Undo a delete
 As a user who pressed Delete by mistake, I see "“name” moved to trash · Undo" and Undo puts the file back where it was (Drive parity).
+
+### S66 Uploads panel collapses
+After uploads finish, the Uploads panel shrinks to "N uploads complete" (expandable, closable), like Drive; it stays open while uploading or if any failed.
