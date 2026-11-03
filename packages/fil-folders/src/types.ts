@@ -73,6 +73,10 @@ export interface Manifest {
   entries: ManifestEntry[];
   /** Content CID → storage piece that holds that block. Omitted for blocks in the current CAR and for legacy pieces. */
   located?: Record<string, string>;
+  /** Root manifests only: previous root manifest piece CID ("" = first version). Absent on pre-v2 manifests. */
+  prev?: string;
+  /** Root manifests only: commit time, unix seconds. */
+  t?: number;
 }
 
 export interface Stat {

@@ -1,5 +1,5 @@
 import { guestName } from "./guest-name.js";
-import { IDENTITY_NS, IDENTITY_PROFILE_KEY_ID, isAddress, parseIdentity, type Address, type Hex, type IdentityAvatar, type IdentityV1 } from "./schema.js";
+import { CALIBRATION_REGISTRY, CALIBRATION_REGISTRY_V2, IDENTITY_NS, IDENTITY_PROFILE_KEY_ID, isAddress, parseIdentity, type Address, type Hex, type IdentityAvatar, type IdentityV1 } from "./schema.js";
 
 /** localStorage key prefix shared by every app on the origin. */
 export const IDENTITY_CACHE_PREFIX = "fil-identity:v1:";
@@ -125,6 +125,18 @@ export function resolveIdentity(address: string, options: IdentityResolverOption
  * `head` via plain JSON-RPC `eth_call` (no viem): FolderRegistry.head(address,bytes32,bytes32) selector + ABI decode.
  */
 export function registryHeadReader(rpcUrl: string, registry: string, fetchImpl: typeof fetch = fetch): IdentityResolverOptions["head"] {
+  const read = singleHeadReader(rpcUrl, registry, fetchImpl);
+  if (registry.toLowerCase() !== CALIBRATION_REGISTRY.toLowerCase()) return read;
+  // v1 address: read the v2 successor first (same `head` ABI), fall back to v1 until the pointer moves.
+  const next = singleHeadReader(rpcUrl, CALIBRATION_REGISTRY_V2, fetchImpl);
+  return async (owner, ns, key) => {
+    const head = await next(owner, ns, key).catch(() => null);
+    if (head && head.version > 0n) return head;
+    return read(owner, ns, key);
+  };
+}
+
+function singleHeadReader(rpcUrl: string, registry: string, fetchImpl: typeof fetch): IdentityResolverOptions["head"] {
   return async (owner, ns, key) => {
     const data = "0x" + HEAD_SELECTOR + owner.slice(2).toLowerCase().padStart(64, "0") + ns.slice(2) + key.slice(2);
     const res = await fetchImpl(rpcUrl, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_call", params: [{ to: registry, data }, "latest"] }) });

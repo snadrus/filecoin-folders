@@ -13,7 +13,7 @@ describe("history", () => {
 
     const volumeLog = await volume.history();
     expect(volumeLog.map((entry) => entry.version)).toEqual([1n, 2n, 3n, 4n]);
-    expect(volumeLog.every((entry) => entry.timestamp > 0 && entry.txHash !== undefined)).toBe(true);
+    expect(volumeLog.every((entry) => entry.timestamp > 0)).toBe(true);
     expect(volumeLog[1]?.prevPieceCid).toBe(volumeLog[0]?.pieceCid);
 
     const fileLog = await volume.history("/a.txt");

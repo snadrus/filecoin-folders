@@ -1,3 +1,4 @@
+import { labelMigration } from "./wallet-prompts.js";
 import { calibration } from "@filoz/synapse-core/chains";
 import {
   MemoryRegistry,
@@ -149,6 +150,7 @@ export async function connectInjected(options: {
   });
   const observed = observeRegistry(
     createViemRegistry({
+      wrapMigration: labelMigration,
       address: CALIBRATION_REGISTRY,
       publicClient,
       walletClient,

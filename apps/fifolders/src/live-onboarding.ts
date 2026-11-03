@@ -1,4 +1,4 @@
-import { INTENTS, intentText, sessionIntent, watchWalletPrompts, withWalletIntent } from "./wallet-prompts.js";
+import { INTENTS, intentText, sessionIntent, watchWalletPrompts, withWalletIntent, labelMigration } from "./wallet-prompts.js";
 import { calibration, mainnet, type Chain } from "@filoz/synapse-core/chains";
 import {
   AddPiecesPermission,
@@ -339,6 +339,7 @@ export function createLiveOnboarding(): OnboardingIO {
         const config = registryConfig(choice);
         const client = publicClient(choice);
         const registry = createViemRegistry({
+      wrapMigration: labelMigration,
           address: config.address,
           publicClient: client,
           walletClient: createWalletClient({ account: address, chain: chainOf(choice), transport: http(rpcOf(choice)) }),
@@ -640,6 +641,7 @@ export function createLiveOnboarding(): OnboardingIO {
           });
       const observed = observeRegistry(
         createViemRegistry({
+      wrapMigration: labelMigration,
           address: config.address,
           publicClient: client,
           walletClient: registryWallet,
@@ -704,6 +706,7 @@ export function createLiveOnboarding(): OnboardingIO {
       const storage = withProviderFallback(createSynapseStorage(synapse, { dataSetId: BigInt(datasetId), copies: 2 }), input.chain);
       const observed = observeRegistry(
         createViemRegistry({
+      wrapMigration: labelMigration,
           address: config.address,
           publicClient: client,
           walletClient: createWalletClient({ account: address, chain, transport: http(rpcOf(input.chain)) }),
