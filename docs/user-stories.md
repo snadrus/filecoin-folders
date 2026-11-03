@@ -91,3 +91,6 @@ As a screen-reader user, every button, link and field in FiFolders, Identity, Fi
 
 ### S62 Large uploads
 As a user uploading a file of tens of MB, it appears in the drive right away and saves; if it is too big to back up across a tab close I'm told plainly to Save first (no raw "quota exceeded" error, no lost upload).
+
+### S63 Keyboard-only file list
+As a keyboard-only user, Tab takes me into the file list (one stop, like Drive), the focused row is selected and announced by name, and ↑/↓, Enter, F2 and Delete work from there.

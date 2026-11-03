@@ -526,7 +526,7 @@ function renderBrowser(model: ViewModel): string {
         `${index ? `<span class="crumb-sep">/</span>` : ""}<button type="button" data-testid="breadcrumb" data-action="crumb" data-path="${encodeURIComponent(crumb.path)}">${escapeHtml(crumb.label)}</button>`,
     )
     .join("");
-  const rows = model.nav === "loose" ? renderLooseList(model.loose) : model.entries.map((entry) => renderEntry(entry, model)).join("");
+  const rows = model.nav === "loose" ? renderLooseList(model.loose) : model.entries.map((entry, index) => renderEntry(entry, model, index)).join("");
   const filled = model.nav === "loose" ? model.loose.length : model.entries.length;
   const empty =
     model.loadState === "error"
@@ -592,8 +592,10 @@ function sortHead(key: SortKey, label: string, model: ViewModel): string {
   return `<button type="button" class="cell head-cell" role="columnheader" data-testid="sort-${key}" data-action="sort" data-sort="${key}" aria-sort="${model.sortKey === key ? (model.sortDir < 0 ? "descending" : "ascending") : "none"}">${label}${arrow}</button>`;
 }
 
-function renderEntry(entry: Stat, model: ViewModel): string {
+function renderEntry(entry: Stat, model: ViewModel, index = 0): string {
   const selected = model.selected.includes(entry.path);
+  // Roving tabindex: Tab reaches the file list once (the last-selected row, else the first row); ↑/↓ move within it.
+  const focusTarget = model.selected.length ? model.selected.at(-1) === entry.path : index === 0;
   const kind = felKind(entry.name) ?? "";
   const drop = model.dropPath === entry.path ? "true" : "false";
   const icon = entryIcon(entry, kind as FelKind | "");
@@ -607,7 +609,7 @@ function renderEntry(entry: Stat, model: ViewModel): string {
     model.view === "grid"
       ? name
       : `<span class="cell name-cell">${name}</span><span class="cell owner" title="${escapeHtml(model.owner)}">${/^0x[0-9a-fA-F]{40}$/.test(model.owner) ? `${avatarHtml(personOf(model.owner), 20)} ${escapeHtml(personOf(model.owner).displayName)}` : escapeHtml(shortAddress(model.owner))}</span><span class="cell mtime">${escapeHtml(formatWhen(entry.mtime))}</span><span class="cell size">${entry.type === "dir" ? "—" : escapeHtml(formatBytes(entry.size))}</span>`;
-  return `<div class="entry ${model.view}" role="row" data-testid="entry" data-path="${encodeURIComponent(entry.path)}" data-type="${entry.type}" data-kind="${kind}" data-selected="${selected ? "true" : "false"}" data-drop="${drop}" data-saving="${badge ? "true" : "false"}" draggable="true">${body}</div>`;
+  return `<div class="entry ${model.view}" role="row" data-testid="entry" tabindex="${focusTarget ? 0 : -1}" aria-selected="${selected ? "true" : "false"}" aria-label="${escapeHtml(entry.name)}" data-path="${encodeURIComponent(entry.path)}" data-type="${entry.type}" data-kind="${kind}" data-selected="${selected ? "true" : "false"}" data-drop="${drop}" data-saving="${badge ? "true" : "false"}" draggable="true">${body}</div>`;
 }
 
 /** Filecoin Drive pieces group under their folder path; other loose pieces list flat after them. */
