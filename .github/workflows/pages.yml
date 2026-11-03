@@ -59,6 +59,11 @@ jobs:
           # FiPen/FiGrid must use this commit's fil-folders (e.g. 360-block log scans), not the older pin.
           rm -rf node_modules/fil-folders/dist
           cp -R ../packages/fil-folders/dist node_modules/fil-folders/dist
+          # Same for FiPerson (names, identity, avatars).
+          rm -rf node_modules/fiperson/dist
+          mkdir -p node_modules/fiperson
+          cp ../packages/fiperson/package.json node_modules/fiperson/
+          cp -R ../packages/fiperson/dist node_modules/fiperson/dist
           BUILD_ONLY=1 node --disable-warning=ExperimentalWarning --experimental-strip-types p2p/serve.ts
       - run: node scripts/stage-editors.mjs collab-edit/p2p/dist
       - run: printf '%s\n' 'fifolders.scionbase.ai' > apps/fifolders/dist/CNAME
