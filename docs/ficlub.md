@@ -30,7 +30,10 @@
 - `pnpm --filter fifolders exec playwright test e2e/ficlub.spec.ts` — mock backend + injected wallet.
 - `pnpm --filter fifolders e2e:ficlub-anvil` — real contract on a local anvil chain (deploys with anvil's public test key).
 
-## Deploy (Calibration) — not yet deployed
+## Deployed (Calibration)
+`0x4f73E1504d848eC4e3e74047940bD97EA79A3521` — tx `0x061c9460…fe481`, block 4211705, gasUsed 75,677,052, ~0.0000188 FIL (see deployments/ficlub-calibration.json). The page uses it by default; `VITE_E2E=1` keeps the mock backend.
+
+## Deploy command
 ```
 PRIVATE_KEY=... pnpm deploy:ficlub:calibration
 # then set VITE_FICLUB_ADDRESS_CALIBRATION=<deployedTo> as a Pages build var and rebuild

@@ -1,0 +1,12 @@
+{
+  "network": "filecoin-calibration",
+  "chainId": 314159,
+  "contract": "FiClub",
+  "address": "0x4f73E1504d848eC4e3e74047940bD97EA79A3521",
+  "deployer": "0x2d633437f7E2138B400AF6882bee2d79C81CF401",
+  "txHash": "0x061c946048ed310a9249d7b3ced998596033bc61320207faea0cb5c3349fe481",
+  "block": 4211705,
+  "gasUsed": 75677052,
+  "commit": "bcc70b3",
+  "date": "2026-11-02"
+}
