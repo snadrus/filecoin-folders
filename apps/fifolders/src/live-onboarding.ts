@@ -27,6 +27,7 @@ import {
 } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { discoverWallets, type AnnouncedWallet } from "./eip6963.js";
+import { activeProviderUrls } from "./filecoin-api.js";
 import { FILECOIN_DRIVE_SOURCE, loadPieceDetails, setPieceDetailSource, type PieceDetail } from "./drive-pieces.js";
 import { REGISTRY_NOT_DEPLOYED, registryReady } from "./network.js";
 import { WALLETCONNECT_RDNS, connectWalletConnect, walletChoices, walletConnectConfig, type WalletConnectLike } from "./wallets.js";
@@ -241,9 +242,17 @@ export function createLiveOnboarding(): OnboardingIO {
   function withProviderFallback<T extends { get(pieceCid: string): Promise<Uint8Array> }>(storage: T, choice: ChainChoice): T {
     const sdkGet = storage.get.bind(storage);
     const urls = () =>
-      (providerUrls ??= import("@filoz/synapse-core/sp-registry")
-        .then(({ getPDPProviders }) => getPDPProviders(publicClient(choice) as never, { onlyActive: true, limit: 200n } as never))
-        .then((out) => out.providers.map((provider) => provider.pdp?.serviceURL ?? (provider as unknown as { serviceURL?: string }).serviceURL ?? "").filter(Boolean))
+      (providerUrls ??= activeProviderUrls({
+        network: choice,
+        chainFallback: () =>
+          import("@filoz/synapse-core/sp-registry")
+            .then(({ getPDPProviders }) => getPDPProviders(publicClient(choice) as never, { onlyActive: true, limit: 200n } as never))
+            .then((out) => out.providers.map((provider) => provider.pdp?.serviceURL ?? (provider as unknown as { serviceURL?: string }).serviceURL ?? "").filter(Boolean)),
+      })
+        .then((urls) => {
+          if (!urls.length) providerUrls = null;
+          return urls;
+        })
         .catch(() => {
           providerUrls = null;
           return [] as string[];

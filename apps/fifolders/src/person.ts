@@ -2,17 +2,21 @@
 import { withTransientRetry } from "fil-folders";
 import { CALIBRATION_REGISTRY, CALIBRATION_RPC, fetchPieceFromProviders, parseIdentity, registryHeadReader, resolveIdentity, type ResolvedIdentity } from "fiperson/view";
 import { createPublicClient, http } from "viem";
+import { activeProviderUrls } from "./filecoin-api.js";
 // synapse-core rejects viem's own chain objects ("Unsupported chain: 314159"); use its chain definition.
 import { calibration } from "@filoz/synapse-core/chains";
 
 let providers: Promise<string[]> | null = null;
 
-/** PDP provider URLs from the on-chain SP registry (cached per page). */
+/** PDP provider URLs: api.filecoin.io, else the on-chain SP registry (cached per page). */
 function providerUrls(): Promise<string[]> {
-  providers ??= import("@filoz/synapse-core/sp-registry")
-    .then(({ getPDPProviders }) => getPDPProviders(createPublicClient({ chain: calibration as never, transport: withTransientRetry(http(CALIBRATION_RPC)) }) as never, { onlyActive: true, limit: 200n } as never))
-    .then((out) => out.providers.map((p) => p.pdp?.serviceURL ?? (p as unknown as { serviceURL?: string }).serviceURL ?? "").filter(Boolean))
-    .catch(() => [] as string[]);
+  providers ??= activeProviderUrls({
+    network: "calibration",
+    chainFallback: () =>
+      import("@filoz/synapse-core/sp-registry")
+        .then(({ getPDPProviders }) => getPDPProviders(createPublicClient({ chain: calibration as never, transport: withTransientRetry(http(CALIBRATION_RPC)) }) as never, { onlyActive: true, limit: 200n } as never))
+        .then((out) => out.providers.map((p) => p.pdp?.serviceURL ?? (p as unknown as { serviceURL?: string }).serviceURL ?? "").filter(Boolean)),
+  }).catch(() => [] as string[]);
   return providers;
 }
 
