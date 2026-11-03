@@ -85,3 +85,6 @@ Suites: **mock** = local build with the mock chain (`VITE_E2E=1`) + staged edito
 | S57 | /fideploy/ shows contract status and deploys from my wallet. | Status per contract by known address + exact runtime-bytecode match; gas estimate after connecting; Deploy shows "Deploy <contract>" before the wallet prompt; after the receipt the new address is bytecode-verified and the deployments JSON can be copied/downloaded. | mock |
 | S58 | Mainnet deploys need an explicit acknowledgement. | On chain 314 the Deploy buttons stay disabled until "I understand this … spends real FIL" is ticked. | mock |
 | S59 | Private FiClub instance on Calibration via /fideploy/. | One contract-creation tx from the test wallet; record shows "✓ bytecode verified". | live (spend) |
+
+### S61 Screen-reader names
+As a screen-reader user, every button, link and field in FiFolders, Identity, FiClub and FiDeploy announces a name (no bare "button" or icon ligature text such as "more_vert").
