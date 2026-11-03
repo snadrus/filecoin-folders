@@ -32,6 +32,7 @@ The registry's compare-and-swap (`prevPieceCid`) and monotonically increasing `v
 
 - `displayName` required, 1–60 chars, whitespace collapsed, control chars stripped.
 - `avatar.emoji` optional, one grapheme. `avatar.color` optional `#rrggbb`.
+- `avatar.image` optional: an uploaded picture, center-cropped and scaled to a 128px square in the browser, stored inline as a `data:image/(webp|png|jpeg);base64,…` URL of at most 24,000 chars (WebP is usually 3–10 KB). It lives in the same profile piece (no extra piece or pointer). Readers show it instead of the emoji or pixel avatar; anything else (other schemes, SVG, oversized) is dropped by `normalizeIdentity`.
 - `bio` optional, ≤ 280 chars.
 - The JSON is space-padded to 127 bytes (minimum piece size); JSON parsers ignore it.
 - Readers reject documents whose `address` does not match the pointer owner and **keep unknown fields**, so newer writers are not lossy. Breaking changes bump `v`.
@@ -56,6 +57,12 @@ See packages/fiperson/README.md. Readers use `fiperson/view`; the /identity/ pag
 - `writeIdentityCache`, `readIdentityCache`, `identityCacheKey`
 - `guestName(seed)` — deterministic "Adjective Animal" (xoshiro128++), the fallback everywhere
 - `fetchPieceFromProviders(cid, urls, accept)` — `/piece/<cid>` fallback
+
+## Saving
+
+The profile piece is uploaded to the wallet's existing dataset only (one copy) and `put` returns once the provider has stored it and submitted add-pieces; the pointer commit then follows without waiting for the piece's on-chain confirmation.
+
+All entry pages reload once on `vite:preloadError`, so a tab opened before a deploy picks up the new chunk names instead of failing with "Failed to fetch dynamically imported module".
 
 ## Costs and prompts
 

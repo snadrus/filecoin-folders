@@ -1,5 +1,6 @@
 import { avatarColors, initials, shortAddress } from "./display.js";
 import { pixelAvatarSvg } from "./pixel-avatar.js";
+import { cleanAvatarImage } from "./schema.js";
 import type { ResolvedIdentity } from "./resolve.js";
 
 export function escapeHtml(text: string): string {
@@ -16,11 +17,20 @@ export function identityUrl(here: string = location.href, page = "../identity/")
 export interface AvatarPerson {
   address?: string;
   displayName: string;
-  avatar?: { emoji?: string; color?: string };
+  avatar?: { emoji?: string; color?: string; image?: string };
 }
 
-/** Inner avatar content: identity emoji, else the wallet's pixel avatar, else the initial. */
+/** Which avatar a person shows: uploaded picture, emoji, wallet pixel avatar, or initial. */
+export function avatarKind(person: AvatarPerson): "image" | "emoji" | "pixel" | "initial" {
+  if (cleanAvatarImage(person.avatar?.image)) return "image";
+  if (person.avatar?.emoji) return "emoji";
+  return person.address ? "pixel" : "initial";
+}
+
+/** Inner avatar content: uploaded picture, else identity emoji, else the wallet's pixel avatar, else the initial. */
 export function avatarInnerHtml(person: AvatarPerson, size = 28): string {
+  const image = cleanAvatarImage(person.avatar?.image);
+  if (image) return `<img class="fiperson-avatar-img" src="${escapeHtml(image)}" alt="" width="${size}" height="${size}" style="width:100%;height:100%;object-fit:cover;display:block" />`;
   if (person.avatar?.emoji) return escapeHtml(person.avatar.emoji);
   if (person.address) return pixelAvatarSvg(person.address, size);
   return escapeHtml(initials(person.displayName));
@@ -29,16 +39,16 @@ export function avatarInnerHtml(person: AvatarPerson, size = 28): string {
 /** Round avatar HTML at `size` px. */
 export function avatarHtml(person: AvatarPerson, size = 28): string {
   const c = avatarColors(person);
-  const pixel = !person.avatar?.emoji && !!person.address;
-  return `<span class="fiperson-avatar" data-kind="${person.avatar?.emoji ? "emoji" : pixel ? "pixel" : "initial"}" style="width:${size}px;height:${size}px;border-radius:50%;overflow:hidden;flex:none;display:inline-grid;place-items:center;font-size:${Math.round(size / 2)}px;background:${escapeHtml(c.background)};color:${c.color}">${avatarInnerHtml(person, size)}</span>`;
+  return `<span class="fiperson-avatar" data-kind="${avatarKind(person)}" style="width:${size}px;height:${size}px;border-radius:50%;overflow:hidden;flex:none;display:inline-grid;place-items:center;font-size:${Math.round(size / 2)}px;background:${escapeHtml(c.background)};color:${c.color}">${avatarInnerHtml(person, size)}</span>`;
 }
 
 /** Set an existing element's content to the avatar (for editors that build their own avatar nodes). */
 export function paintAvatar(el: HTMLElement, person: AvatarPerson): void {
   const size = el.getBoundingClientRect().width || 28;
   el.innerHTML = avatarInnerHtml(person, Math.round(size));
-  el.dataset.kind = person.avatar?.emoji ? "emoji" : person.address ? "pixel" : "initial";
-  if (person.address && !person.avatar?.emoji) el.style.overflow = "hidden";
+  const kind = avatarKind(person);
+  el.dataset.kind = kind;
+  if (kind === "image" || kind === "pixel") el.style.overflow = "hidden";
 }
 
 /** Small inline person chip HTML (avatar + name). */

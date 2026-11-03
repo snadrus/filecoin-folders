@@ -22,3 +22,23 @@ describe("popup", () => {
     expect(personChipHtml({ displayName: "<x>" })).toContain("&lt;x&gt;");
   });
 });
+
+describe("avatar picture", () => {
+  const image = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==";
+  it("renders the picture instead of the emoji or pixel avatar", async () => {
+    const { avatarHtml } = await import("../src/view/index.js");
+    const html = avatarHtml({ address: "0x" + "1".repeat(40), displayName: "A", avatar: { emoji: "🦊", image } }, 32);
+    expect(html).toContain('data-kind="image"');
+    expect(html).toContain("<img");
+    expect(html).not.toContain("🦊");
+  });
+  it("normalizes: keeps safe data URLs, drops others and oversized ones", async () => {
+    const { normalizeIdentity, AVATAR_IMAGE_MAX } = await import("../src/view/index.js");
+    const a = "0x" + "1".repeat(40);
+    expect(normalizeIdentity(a, { displayName: "A", avatar: { image } }).avatar?.image).toBe(image);
+    expect(normalizeIdentity(a, { displayName: "A", avatar: { image: "javascript:alert(1)" } }).avatar).toBeUndefined();
+    expect(normalizeIdentity(a, { displayName: "A", avatar: { image: "data:image/svg+xml;base64,PHN2Zz4=" } }).avatar).toBeUndefined();
+    const big = "data:image/png;base64," + "A".repeat(AVATAR_IMAGE_MAX);
+    expect(normalizeIdentity(a, { displayName: "A", avatar: { image: big } }).avatar).toBeUndefined();
+  });
+});
