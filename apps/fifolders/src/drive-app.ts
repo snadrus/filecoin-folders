@@ -1730,6 +1730,15 @@ export class DriveApp {
       void this.openPath(this.selected[0]!);
       return;
     }
+    if (!typing && !this.dialog && this.root && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "a") {
+      const paths = [...this.root.querySelectorAll<HTMLElement>("[data-testid=entry]")].map((el) => decodeURIComponent(el.dataset.path || ""));
+      if (paths.length) {
+        event.preventDefault();
+        this.selected = paths;
+        this.render();
+      }
+      return;
+    }
     if (!typing && !this.dialog && event.key === "F2" && this.selected.length === 1 && this.volume && !this.mainnetBlocked) {
       event.preventDefault();
       void this.runContext("rename", [...this.selected], this.selected[0]!);

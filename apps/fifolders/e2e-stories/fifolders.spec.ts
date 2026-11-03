@@ -230,7 +230,7 @@ test("S50b Loose pieces empty state explains what shows up there", async ({ page
   await expect(page.locator(".empty-state")).toContainText("Add to drive");
 });
 
-test("S60 keyboard like Drive: ↑/↓ move the selection, Shift+↓ extends, F2 renames, Enter opens", async ({ page }) => {
+test("S60 keyboard like Drive: ↑/↓ move the selection, Shift+↓ extends, Ctrl+A selects all, F2 renames, Enter opens", async ({ page }) => {
   await connect(page);
   await page.getByTestId("file-input").setInputFiles([
     { name: "k1.txt", mimeType: "text/plain", buffer: Buffer.from("one") },
@@ -245,6 +245,9 @@ test("S60 keyboard like Drive: ↑/↓ move the selection, Shift+↓ extends, F2
   await page.keyboard.press("ArrowUp");
   await page.keyboard.press("Shift+ArrowDown");
   await expect(page.locator("[data-testid=entry][data-selected=true]")).toHaveCount(2);
+  await page.keyboard.press("Control+a");
+  await expect(page.locator("[data-testid=entry][data-selected=true]")).toHaveCount(2);
+  await page.keyboard.press("ArrowUp");
   await page.keyboard.press("ArrowUp");
   await page.keyboard.press("F2");
   await expect(page.getByTestId("dialog-input")).toHaveValue("k1.txt");
