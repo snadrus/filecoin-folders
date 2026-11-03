@@ -18,14 +18,14 @@ Suites: **mock** = local build with the mock chain (`VITE_E2E=1`) + staged edito
 | S08 | My dataset choice sticks. | Selecting a dataset in the account menu survives reload. | mock |
 | S09 | Loose pieces add up. | "N pieces: X in folders, Y manifests, Z loose" with X+Y+Z = N and Z rows listed; hidden when nothing is loose. | mock |
 | S10 | Refresh keeps my tree. | A folder created before reload is listed after reload. | mock |
-| S10b | A fresh browser/origin recovers my tree from chain (FolderRegistry manifest). | New profile, same wallet → same tree. | blocked (test wallet has no committed volume; creating one spends) |
+| S10b | A fresh browser/origin recovers my tree from chain (FolderRegistry manifest). | New profile, same wallet → same tree. | live (spend: STORIES_SPEND=1) |
 | S11 | Old links still work. | `/felarumi/…` → `/fipen/…`, `/felanumio/…` → `/figrid/…`, query and hash preserved. | mock |
 | S40 | Slow signature. | "Check your wallet — <request> (<cost>)" toast while waiting; UI stays usable; toast clears afterwards. | live |
 | S41 | I reject a signature. | Plain error with Retry (or Connect again); approving next time works; nothing stuck. | live |
 | S42 | My wallet is locked. | Clear error; connect works after unlock. | live |
 | S43 | Repeated clicks don't stack prompts. | Three clicks on Connect → one wallet request, one toast. | live |
 | S44 | Wallet switches account or chain mid-session. | No reload, no prompt: account change restarts the session in place for the new account; chain change shows a toast and the view stays; saving asks to switch back. | live |
-| S45 | Payment approval, deposit, dataset creation, uploads on live. | Labeled, one prompt each, cost shown, results in Activity/Tx log. | blocked |
+| S45 | Payment approval, deposit, dataset creation, uploads on live. | Labeled, one prompt each, cost shown, results in Activity/Tx log. | live (spend: STORIES_SPEND=1) |
 
 ## FiPen / FiGrid inside FiFolders
 
@@ -66,5 +66,5 @@ Suites: **mock** = local build with the mock chain (`VITE_E2E=1`) + staged edito
 | S34 | Reload a clean standalone doc. | Content kept. | both |
 | S35 | Leaving with unsaved changes warns. | `beforeunload` prompt. | both |
 | S36 | Guest edits survive an owner reload. | Guest types, owner reloads, guest types again → both see each edit exactly once (no loss, no dupes). | both |
-| S46 | FiPen signature function (Insert → Signature) with approve/reject/delay. | Labeled prompt; reject leaves the doc editable; approve locks it. | blocked (uploads the signed content) |
-| S47 | Standalone FiPen "Save to Filecoin" with a wallet. | | blocked |
+| S46 | FiPen signature function (Insert → Signature) with approve/reject/delay. | Labeled prompt; reject leaves the doc editable; approve locks it. | live (spend: STORIES_SPEND=1) |
+| S47 | Standalone FiPen "Save to Filecoin" with a wallet. | Ctrl+S → dialog → Calibration → Save with wallet → PieceCID shown; status "Saved to Filecoin". | live (spend: STORIES_SPEND=1) |
