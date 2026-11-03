@@ -1,3 +1,5 @@
+import { ipfsSha256, withPieceFallback } from "./piece-fallback.js";
+import { reportLoadStep } from "./load-steps.js";
 import { walletWithPublicReads } from "./split-transport.js";
 import { withTransientRetry } from "fil-folders";
 import { INTENTS, intentText, sessionIntent, watchWalletPrompts, withWalletIntent, labelMigration } from "./wallet-prompts.js";
@@ -238,34 +240,27 @@ export function createLiveOnboarding(): OnboardingIO {
    */
   function withProviderFallback<T extends { get(pieceCid: string): Promise<Uint8Array> }>(storage: T, choice: ChainChoice): T {
     const sdkGet = storage.get.bind(storage);
-    storage.get = async (pieceCid: string) => {
-      try {
-        return await sdkGet(pieceCid);
-      } catch (error) {
-        providerUrls ??= import("@filoz/synapse-core/sp-registry")
-          .then(({ getPDPProviders }) => getPDPProviders(publicClient(choice) as never, { onlyActive: true, limit: 200n } as never))
-          .then((out) => out.providers.map((provider) => provider.pdp?.serviceURL ?? (provider as unknown as { serviceURL?: string }).serviceURL ?? "").filter(Boolean))
-          .catch(() => [] as string[]);
-        const { calculate } = await import("@filoz/synapse-core/piece");
-        const tryOne = async (base: string): Promise<Uint8Array> => {
-          const response = await fetch(new URL(`/piece/${encodeURIComponent(pieceCid)}`, base), { signal: AbortSignal.timeout(20_000) });
-          if (!response.ok) throw new Error(`HTTP ${response.status}`);
-          const bytes = new Uint8Array(await response.arrayBuffer());
-          // Some hosts answer 200 with an HTML page: only accept bytes that hash to this piece.
-          if (calculate(bytes).toString() !== pieceCid) throw new Error("piece mismatch");
-          return bytes;
-        };
-        const urls = await providerUrls;
-        if (urls.length) {
-          try {
-            return await Promise.any(urls.map(tryOne));
-          } catch {
-            // Fall through to the SDK error.
-          }
+    const urls = () =>
+      (providerUrls ??= import("@filoz/synapse-core/sp-registry")
+        .then(({ getPDPProviders }) => getPDPProviders(publicClient(choice) as never, { onlyActive: true, limit: 200n } as never))
+        .then((out) => out.providers.map((provider) => provider.pdp?.serviceURL ?? (provider as unknown as { serviceURL?: string }).serviceURL ?? "").filter(Boolean))
+        .catch(() => {
+          providerUrls = null;
+          return [] as string[];
+        }));
+    const fallback = withPieceFallback(sdkGet, {
+      providerUrls: urls,
+      // Some hosts answer 200 with an HTML page: only accept bytes that hash to this piece.
+      verify: async (bytes, pieceCid) => {
+        const digest = ipfsSha256(pieceCid);
+        if (digest) {
+          const got = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes as BufferSource));
+          return got.length === digest.length && got.every((v, i) => v === digest[i]);
         }
-        throw error;
-      }
-    };
+        return (await import("@filoz/synapse-core/piece")).calculate(bytes).toString() === pieceCid;
+      },
+    });
+    storage.get = (pieceCid: string) => fallback.get(pieceCid);
     return storage;
   }
 
@@ -632,12 +627,15 @@ export function createLiveOnboarding(): OnboardingIO {
       if (root) saveLastDataset(chainOf(choice).id, root, id);
     },
     async enter(input) {
+      reportLoadStep("Finding your folders…");
       const address = requireRoot();
       const chain = chainOf(input.chain);
       const config = registryConfig(input.chain);
       const client = publicClient(input.chain);
       const legacy = await legacyRegistry(input.chain, client);
+      reportLoadStep("Checking this browser's wallet session…");
       const session = await sessionFor(input.chain, address);
+      reportLoadStep("Connecting to storage…");
       const { Synapse } = await import("@filoz/synapse-sdk");
       const synapse = Synapse.create({
         account: address,
@@ -689,6 +687,7 @@ export function createLiveOnboarding(): OnboardingIO {
       );
       const cacheKey = `fifolders:volume-sig:${chain.id}:${address.toLowerCase()}:${config.address.toLowerCase()}:${input.volumeName}`;
       const wallet = await walletClient(input.chain);
+      reportLoadStep("Reading your folders from Filecoin…");
       const volume = await openVolume({
         storage,
         registry: observed.registry,
@@ -723,6 +722,7 @@ export function createLiveOnboarding(): OnboardingIO {
       return opened;
     },
     async peek(input) {
+      reportLoadStep("Finding your folders…");
       const owner = input.owner ?? root ?? readStoredWallet()?.address;
       if (!owner) return null;
       const address = getAddress(owner);

@@ -19,7 +19,11 @@ export async function prepareOnboarding(app: DriveApp, io: OnboardingIO): Promis
     await continueOnboarding(app, io, input, !peeked);
   };
   app.onRetryLoad = async () => {
-    await peekDrive(app, io);
+    const peeked = await peekDrive(app, io);
+    // Session already set up: Retry reopens the writable folders too (no new signature).
+    if (!peeked && !app.volume && app.panel && canEnter(app.panel)) {
+      await openDrive(app, io, { chain: app.chain, volumeName: app.volumeName, encrypt: app.encryptPref }).catch(() => undefined);
+    }
   };
   app.onPickDataset = (id) => io.selectDataset(id, app.chain);
   app.onSwitchDataset = async (id) => {
@@ -242,12 +246,18 @@ async function openDrive(
   }
   let session: Session;
   try {
-    await app.ensureSession();
-    session = await io.enter(input);
+    try {
+      await app.ensureSession();
+      session = await io.enter(input);
+    } catch (error) {
+      if (!isSessionPermissionError(error)) throw error;
+      await app.waitForRenewal();
+      session = await io.enter(input);
+    }
   } catch (error) {
-    if (!isSessionPermissionError(error)) throw error;
-    await app.waitForRenewal();
-    session = await io.enter(input);
+    // Never wait silently: a failed open shows a plain error with Retry instead of a spinner.
+    app.notePublicReadError(error instanceof Error ? error.message : String(error));
+    throw error;
   }
   storeVolumeName(session.volumeName);
   storeEncrypt(session.chain, session.owner, session.volumeName, session.encrypted);
