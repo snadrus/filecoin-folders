@@ -1,4 +1,4 @@
-import { avatarHtml, cachedIdentity } from "fiperson/view";
+import { LEGACY_NAME_KEY, SESSION_NAME_KEYS, avatarHtml, cachedIdentity, pickDisplayName, type ResolvedIdentity } from "fiperson/view";
 import type { HistoryEntry, Stat } from "fil-folders";
 import type { ChainStepView } from "./chain-step.js";
 import { felanumioSvg, felarumiSvg, logoSvg } from "./icons.js";
@@ -368,8 +368,27 @@ function chainButton(chain: "calibration" | "mainnet", label: string, current: s
   return `<button type="button" class="chip ${chain === current ? "on" : ""}" data-action="chain" data-chain="${chain}" data-testid="chain-${chain}" aria-pressed="${pressed}">${label}</button>`;
 }
 
+function readKey(store: () => Storage, key: string): string | null {
+  try {
+    return store().getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+/** The wallet as a person (fiperson/view), same precedence as FiPen/FiGrid: identity → session name → legacy name → guest name. */
+export function personOf(owner: string): ResolvedIdentity {
+  const who = cachedIdentity(owner);
+  if (who.identity) return who;
+  const sessionName = SESSION_NAME_KEYS.map((k) => readKey(() => sessionStorage, k)).find(Boolean) ?? null;
+  return { ...who, displayName: pickDisplayName({ sessionName, legacyName: readKey(() => localStorage, LEGACY_NAME_KEY), wallet: owner }) };
+}
+
 function renderTop(model: ViewModel): string {
-  const label = model.panel?.ens || shortAddress(model.owner);
+  const isWallet = /^0x[0-9a-fA-F]{40}$/.test(model.owner);
+  const who = isWallet ? personOf(model.owner) : null;
+  const label = who?.displayName || model.panel?.ens || shortAddress(model.owner);
+  const secondary = isWallet ? model.panel?.ens || shortAddress(model.owner) : "";
   return `<header class="topbar">
     <div class="brand">${logoSvg(28)} <span>FiFolders</span></div>
     <label class="search">
@@ -378,7 +397,7 @@ function renderTop(model: ViewModel): string {
     </label>
     ${model.activityPending ? `<span class="activity-dot" data-testid="activity-indicator" title="Saving"></span>` : ""}
     ${renderStaged(model)}
-    <button class="account" data-action="account" data-testid="account" type="button">${identiconSvg(model.owner)}<span data-testid="account-label">${escapeHtml(label)}</span></button>
+    <button class="account" data-action="account" data-testid="account" type="button" title="${escapeHtml(model.owner)}">${who ? avatarHtml(who, 28) : identiconSvg(model.owner)}<span class="account-text"><span data-testid="account-label">${escapeHtml(label)}</span>${secondary ? `<small data-testid="account-address">${escapeHtml(secondary)}</small>` : ""}</span></button>
     ${model.connected ? `<span class="sr-only" data-testid="wallet-signatures">${model.panel?.signatures ?? 0}</span>` : ""}
   </header>`;
 }
@@ -579,7 +598,7 @@ function renderEntry(entry: Stat, model: ViewModel): string {
   const body =
     model.view === "grid"
       ? name
-      : `<span class="cell name-cell">${name}</span><span class="cell owner">${escapeHtml(shortAddress(model.owner))}</span><span class="cell mtime">${escapeHtml(formatWhen(entry.mtime))}</span><span class="cell size">${entry.type === "dir" ? "—" : escapeHtml(formatBytes(entry.size))}</span>`;
+      : `<span class="cell name-cell">${name}</span><span class="cell owner" title="${escapeHtml(model.owner)}">${/^0x[0-9a-fA-F]{40}$/.test(model.owner) ? `${avatarHtml(personOf(model.owner), 20)} ${escapeHtml(personOf(model.owner).displayName)}` : escapeHtml(shortAddress(model.owner))}</span><span class="cell mtime">${escapeHtml(formatWhen(entry.mtime))}</span><span class="cell size">${entry.type === "dir" ? "—" : escapeHtml(formatBytes(entry.size))}</span>`;
   return `<div class="entry ${model.view}" role="row" data-testid="entry" data-path="${encodeURIComponent(entry.path)}" data-type="${entry.type}" data-kind="${kind}" data-selected="${selected ? "true" : "false"}" data-drop="${drop}" data-saving="${badge ? "true" : "false"}" draggable="true">${body}</div>`;
 }
 
@@ -840,7 +859,7 @@ function renderAccount(model: ViewModel): string {
 /** Identity lives on its own page (/identity/); the drive shows it and links there. */
 function renderIdentity(owner: string): string {
   if (!/^0x[0-9a-fA-F]{40}$/.test(owner)) return "";
-  const who = cachedIdentity(owner);
+  const who = personOf(owner);
   const back = typeof location === "undefined" ? "" : `?return=${encodeURIComponent(location.href)}`;
   return `<div class="identity-line" data-testid="identity-summary">
       ${avatarHtml(who, 28)}

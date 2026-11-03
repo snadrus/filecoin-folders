@@ -373,3 +373,6 @@ button:disabled { cursor: default; opacity: 0.45; }
 .skeleton-row td { height: 20px; }
 .skeleton-bar { display: block; height: 10px; border-radius: 5px; background: linear-gradient(90deg, rgba(128,128,128,0.15), rgba(128,128,128,0.3), rgba(128,128,128,0.15)); background-size: 200% 100%; animation: skeleton 1.2s linear infinite; }
 @keyframes skeleton { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+.account-text { display: inline-flex; flex-direction: column; align-items: flex-start; line-height: 1.15; }
+.account-text small { color: var(--muted); font-size: 11px; }
+.cell.owner { display: inline-flex; align-items: center; gap: 6px; }

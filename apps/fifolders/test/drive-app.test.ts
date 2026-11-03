@@ -316,3 +316,17 @@ describe("DriveApp", () => {
     expect([...root.querySelectorAll("[data-testid=activity-item]")].filter((node) => node.textContent?.includes("Save 2 changes"))).toHaveLength(1);
   });
 });
+
+describe("header person", () => {
+  it("shows the FiPerson name + pixel avatar, address only as secondary text, and follows the identity", async () => {
+    const { app, root } = await mountMock();
+    const label = root.querySelector("[data-testid=account-label]")!.textContent;
+    expect(label).toBe(guestName(app.owner));
+    expect(root.querySelector("[data-testid=account-address]")!.textContent).toMatch(/^0x[0-9a-fA-F]{4}…/);
+    expect(root.querySelector("[data-testid=account] svg.fiperson-pixel")).toBeTruthy();
+    writeIdentityCache(app.owner, { identity: buildIdentity(app.owner, { displayName: "Andy J", avatar: { emoji: "🦊" } }), pieceCid: "p" });
+    root.querySelector<HTMLButtonElement>("[data-testid=account]")!.click();
+    expect(root.querySelector("[data-testid=account-label]")!.textContent).toBe("Andy J");
+    expect(root.querySelector("[data-testid=account] [data-kind=emoji]")!.textContent).toBe("🦊");
+  });
+});
