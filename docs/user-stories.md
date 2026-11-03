@@ -97,3 +97,6 @@ As a keyboard-only user, Tab takes me into the file list (one stop, like Drive),
 
 ### S64 Phone overlays
 On a phone, with the Uploads panel open, the file menu and dialogs sit above it, so every menu item (Make a copy, Star, Move to trash, Details) can be tapped.
+
+### S65 Undo a delete
+As a user who pressed Delete by mistake, I see "“name” moved to trash · Undo" and Undo puts the file back where it was (Drive parity).
