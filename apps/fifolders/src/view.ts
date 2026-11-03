@@ -448,8 +448,6 @@ function renderNav(model: ViewModel): string {
     </nav>
     ${txlog}
     <nav class="places suite" aria-label="More apps">
-      <a class="place" href="./ficlub/" data-testid="nav-ficlub"><span class="material-symbols-outlined" aria-hidden="true">groups</span> FiClub</a>
-      <a class="place" href="./fideploy/" data-testid="nav-fideploy"><span class="material-symbols-outlined" aria-hidden="true">rocket_launch</span> Deploy contracts</a>
     </nav>
     <div class="storage storage-open ${runway.low ? "low" : ""}" data-testid="storage-runway" data-action="show-costs" role="button" tabindex="0" title="What it costs">
       <p class="runway-headline" data-testid="runway-headline">${runwayHtml(runway.headline, runway.datasetLabel)}</p>
@@ -835,11 +833,12 @@ function renderPreview(preview: PreviewState): string {
   let body = `<p>No preview for this file.</p>`;
   if (preview.kind === "image" && preview.url) body = `<img alt="${escapeHtml(preview.name)}" src="${preview.url}" />`;
   else if (preview.kind === "pdf" && preview.url) body = `<iframe title="${escapeHtml(preview.name)}" src="${preview.url}"></iframe>`;
-  else if (preview.kind === "video" && preview.url) body = `<video controls src="${preview.url}"></video>`;
+  else if (preview.kind === "video" && preview.url) body = `<video controls preload="metadata" data-testid="preview-video" src="${preview.url}"></video>`;
+  else if (preview.kind === "audio" && preview.url) body = `<div class="audio-preview"><span class="material-symbols-outlined audio-art" aria-hidden="true">music_note</span><audio controls preload="metadata" data-testid="preview-audio" aria-label="${escapeHtml(preview.name)}" src="${preview.url}"></audio></div>`;
   else if (preview.kind === "text") body = `<pre data-testid="preview-text">${escapeHtml(preview.text ?? "")}</pre>`;
   return `<div class="backdrop" data-testid="preview">
     <div class="preview" role="dialog" aria-label="${escapeHtml(preview.name)}">
-      <header><h2>${escapeHtml(preview.name)}</h2><button type="button" data-action="close-preview" aria-label="Close preview"><span class="material-symbols-outlined" aria-hidden="true">close</span></button></header>
+      <header><h2>${escapeHtml(preview.name)}</h2><span class="preview-actions">${preview.url && (preview.kind === "audio" || preview.kind === "video") ? `<a class="icon-link" data-testid="preview-download" href="${preview.url}" download="${escapeHtml(preview.name)}" aria-label="Download" title="Download"><span class="material-symbols-outlined" aria-hidden="true">download</span></a>` : ""}<button type="button" data-action="close-preview" aria-label="Close preview"><span class="material-symbols-outlined" aria-hidden="true">close</span></button></span></header>
       <div class="preview-body">${body}</div>
     </div>
   </div>`;
