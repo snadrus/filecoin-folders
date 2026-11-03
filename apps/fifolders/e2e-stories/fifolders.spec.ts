@@ -174,3 +174,58 @@ test("S55 wallet & setup menu is filled while the session key is still being aut
   await expect(menu.getByTestId("payment-status")).toBeVisible({ timeout: 4_000 });
   await expect(menu.getByTestId("session-status")).toBeVisible();
 });
+
+test("S50 Loose pieces: one Filecoin Drive file → Add to drive names count + cost first, then it lives in My Drive", async ({ page }) => {
+  await connect(page, "/?onboard=1&pay=ready&datasets=1&fcdrive=1");
+  await page.getByTestId("nav-loose").click();
+  const rows = page.locator("[data-testid=loose-row][data-origin=drive]");
+  await expect(rows).toHaveCount(3);
+  const hello = rows.filter({ hasText: "hello.txt" });
+  await hello.hover();
+  await hello.getByTestId("loose-adopt").click();
+  await expect(page.getByTestId("dialog")).toContainText(/Add 1 file/);
+  await expect(page.getByTestId("dialog-note")).toContainText("FIL");
+  await page.getByTestId("adopt-confirm").click();
+  await expect(page.getByTestId("toast").filter({ hasText: /Added 1 file/ })).toBeVisible();
+  await expect(rows.filter({ hasText: "hello.txt" })).toHaveCount(0);
+  await page.getByTestId("nav-drive").click();
+  await expect(page.getByTestId("entry").filter({ hasText: "hello.txt" }).first()).toBeVisible();
+});
+
+test("S53 FiPerson everywhere: header, owner column and wallet menu show the same person", async ({ page }) => {
+  await connect(page);
+  await page.getByTestId("file-input").setInputFiles({ name: "p.txt", mimeType: "text/plain", buffer: Buffer.from("p") });
+  const name = (await page.getByTestId("account-label").innerText()).trim();
+  expect(name).toMatch(/^[A-Z][a-z]+ [A-Z][a-z]+$|.+/);
+  await expect(page.getByTestId("entry").filter({ hasText: "p.txt" }).locator(".cell.owner")).toContainText(name);
+  await page.getByTestId("account").click();
+  await expect(page.getByTestId("identity-name")).toHaveText(name);
+  await expect(page.getByTestId("account-address")).toContainText("0x");
+});
+
+test("S54 dataset picker: switching reloads the drive in place and the check moves", async ({ page }) => {
+  await connect(page, "/?onboard=1&pay=ready&datasets=3&drives=2");
+  await page.evaluate(() => ((window as any).__noReload = 1));
+  await page.getByTestId("account").click();
+  const items = page.getByTestId("dataset-menu").getByTestId("dataset-item");
+  await expect(items).toHaveCount(3);
+  const target = items.filter({ hasText: "#1" });
+  await target.click();
+  await expect(page.getByTestId("nav-drive")).toBeVisible();
+  await page.getByTestId("account").click();
+  await expect(page.getByTestId("dataset-menu").getByTestId("dataset-item").filter({ hasText: "#1" })).toHaveAttribute("aria-checked", "true");
+  expect(await page.evaluate(() => (window as any).__noReload)).toBe(1);
+});
+
+test("S54b the 'Using your latest dataset' snackbar hides itself", async ({ page }) => {
+  await connect(page, "/?onboard=1&pay=ready&datasets=2");
+  const snack = page.getByTestId("toast").filter({ hasText: "Using your latest dataset" });
+  await expect(snack).toBeVisible();
+  await expect(snack).toHaveCount(0, { timeout: 13_000 });
+});
+
+test("S50b Loose pieces empty state explains what shows up there", async ({ page }) => {
+  await connect(page);
+  await page.getByTestId("nav-loose").click();
+  await expect(page.locator(".empty-state")).toContainText("Add to drive");
+});

@@ -202,6 +202,11 @@ button:disabled { cursor: default; opacity: 0.45; }
 .entry.grid .file-icon { font-size: 40px; }
 .entry.grid .fel-icon { width: 40px; height: 40px; }
 .empty { color: var(--muted); padding: 32px 8px; }
+.empty-state { display: flex; flex-direction: column; align-items: center; text-align: center; padding: 48px 16px; }
+.empty-state .empty { color: var(--ink); font-size: 18px; padding: 8px 0 4px; margin: 0; }
+.empty-state .empty-hint { color: var(--muted); max-width: 420px; margin: 0; line-height: 1.5; }
+.empty-state .empty-stats { display: block; font-size: 12px; color: var(--muted); margin-top: 2px; }
+.empty-state .empty-icon { font-size: 64px; width: auto; color: #c4c7c5; }
 .banner { background: var(--banner); border-radius: 8px; padding: 10px 12px; }
 .session-banner { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 8px 16px 0; }
 .session-banner.expired { background: #fde8e6; }

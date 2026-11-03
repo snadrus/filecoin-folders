@@ -7,6 +7,8 @@ const NEW = "0x00000000000000000000000000000000000c1ab0";
 
 /** Fake Calibration wallet: v2 already deployed (bytecode match), FiClub absent; a deploy mints NEW with FiClub's runtime code. */
 test.beforeEach(async ({ page }) => {
+  // No real chain in this test: the pre-connect public read must not race the fake wallet.
+  await page.route(/glif\.io/, (route) => route.abort());
   await page.addInitScript(
     ({ me, v2code, clubCode, fresh }) => {
       const w = window as unknown as Record<string, unknown>;
