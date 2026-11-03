@@ -181,18 +181,23 @@ export function createLiveOnboarding(): OnboardingIO {
     if (picked) followWallet(picked as Eip1193Provider & { on?: (event: string, fn: (value: unknown) => void) => void });
   }
 
-  /** A different account or chain in the wallet invalidates this session's signer: start over from a fresh page. */
+  /** A different account or chain in the wallet: tell the controller, which restarts the session in place. */
+  let walletChange: (change: { account?: string; chainId?: string }) => void = () => undefined;
   function followWallet(source: { on?: (event: string, fn: (value: unknown) => void) => void }): void {
     if (followed.has(source) || typeof source.on !== "function") return;
     followed.add(source);
     source.on("accountsChanged", (value) => {
-      const next = Array.isArray(value) && typeof value[0] === "string" ? value[0].toLowerCase() : "";
-      if (root && next !== root.toLowerCase()) location.reload();
+      const next = Array.isArray(value) && typeof value[0] === "string" ? value[0] : "";
+      if (!root || next.toLowerCase() === root.toLowerCase()) return;
+      const stored = readStoredWallet();
+      if (next && stored) localStorage.setItem(walletStorageKey(), JSON.stringify({ ...stored, address: getAddress(next) }));
+      walletChange({ account: next });
     });
-    source.on("chainChanged", () => {
-      if (root) location.reload();
+    source.on("chainChanged", (value) => {
+      if (root) walletChange({ chainId: String(value) });
     });
   }
+
 
   async function onchainExpiries(choice: ChainChoice, sessionAddress: Address): Promise<bigint[]> {
     const permissions = fifoldersPermissions();
@@ -410,6 +415,9 @@ export function createLiveOnboarding(): OnboardingIO {
       await ensureChain(ethereum, input.chain);
       rememberWallet(input.chain, input.rdns || readStoredWallet()?.rdns || wallets[0]?.rdns || "window.ethereum");
       registryConfig(input.chain);
+    },
+    onWalletChange(fn) {
+      walletChange = fn;
     },
     async silent(chain) {
       if (localStorage.getItem("fifolders:wallet-permitted") !== "1") return false;

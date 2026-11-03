@@ -166,9 +166,38 @@ test.describe("FiPen two-user collaboration (trystero/nostr)", () => {
   }
 });
 
+test.describe("FiPen guest edits during an owner reload", () => {
+  test.describe.configure({ timeout: 180_000 });
+  test("S36 guest edits typed while the owner reloads are replayed once", async ({ browser }) => {
+    const oc = await browser.newContext();
+    const owner = await oc.newPage();
+    await newDoc(owner);
+    await owner.keyboard.type("Owner line");
+    const gc = await browser.newContext();
+    const guest = await gc.newPage();
+    await guest.goto(owner.url());
+    await editorReady(guest);
+    await expect.poll(() => text(guest), { timeout: 60_000 }).toBe("Owner line");
+    await focusDoc(guest);
+    await guest.keyboard.press("Control+End");
+    // Typed right before the owner goes away: these ops are unacked by the old hub.
+    await guest.keyboard.type(" +g1");
+    await owner.reload();
+    await editorReady(owner);
+    await expect(guest.locator("#p2p-wait")).toBeHidden({ timeout: 60_000 });
+    await focusDoc(guest);
+    await guest.keyboard.press("Control+End");
+    await guest.keyboard.type(" +g2");
+    for (const p of [owner, guest]) await expect.poll(() => text(p), { timeout: 60_000 }).toBe("Owner line +g1 +g2");
+    await oc.close();
+    await gc.close();
+  });
+});
+
 test.describe("FiPen single-user reload matrix (standalone)", () => {
   test("S34 reload clean doc keeps content and status", async ({ page }) => {
     await newDoc(page);
+    await expect(page.locator("#status")).toHaveText("New, unsaved");
     await page.keyboard.type("persist me");
     await page.waitForTimeout(1500);
     await page.reload();

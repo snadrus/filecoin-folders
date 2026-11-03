@@ -92,23 +92,26 @@ test("S43 repeated clicks do not stack duplicate wallet prompts", async ({ page 
   expect(w.calls.filter((c) => c.method === "eth_requestAccounts").length).toBe(1);
 });
 
-test("S44 wallet switches account or chain mid-session: UI follows, no stale account", async ({ page }) => {
+test("S44 wallet switches account or chain mid-session: session restarts in place, no reload, no prompt", async ({ page }) => {
   const w = await installWallet(page);
   await page.goto("/");
   await page.getByTestId("connect-wallet").click();
   await expect(page.getByTestId("nav-drive")).toBeVisible({ timeout: 60_000 });
-  // The wallet moves to an account this site is not connected to.
-  w.locked = true;
-  await w.emit("accountsChanged", ["0x1111111111111111111111111111111111111111"]);
-  await expect(page.getByTestId("connect-wallet")).toBeVisible({ timeout: 20_000 });
-  w.locked = false;
-  await page.getByTestId("connect-wallet").click();
-  await expect(page.getByTestId("nav-drive")).toBeVisible({ timeout: 60_000 });
-  // Chain switch: the page starts over and asks to switch back (labeled), never signs on the wrong chain.
-  const before = w.calls.length;
+  await page.getByTestId("nav-trash").click();
+  await page.evaluate(() => ((window as any).__noReload = true));
+  const signing = () => w.calls.filter((c) => ["eth_requestAccounts", "personal_sign", "eth_signTypedData_v4", "eth_sendTransaction", "wallet_switchEthereumChain"].includes(c.method)).length;
+  const before = signing();
+  // Account switch: the wallet now exposes another account to this site.
+  const other = "0x1111111111111111111111111111111111111111";
+  w.accountOverride = other;
+  await w.emit("accountsChanged", [other]);
+  await expect(page.getByTestId("account-label")).toContainText("0x1111", { timeout: 30_000 });
+  await expect(page.getByTestId("nav-drive")).toBeVisible();
+  // Chain switch: a notice, no prompt.
   await w.emit("chainChanged", "0x13a");
-  await expect.poll(() => w.calls.slice(before).some((c) => c.method === "wallet_switchEthereumChain"), { timeout: 30_000 }).toBe(true);
-  await expect(page.getByTestId("nav-drive")).toBeVisible({ timeout: 60_000 });
+  await expect(page.getByTestId("toast").filter({ hasText: "switched network" })).toBeVisible({ timeout: 10_000 });
+  expect(await page.evaluate(() => (window as any).__noReload)).toBe(true);
+  expect(signing()).toBe(before);
 });
 
 test("S45 payment approval / deposit / dataset / upload on live", async () => {

@@ -30,7 +30,7 @@ test.describe("FiPen inside FiFolders", () => {
     const b = (await doc.locator("#p2p-save").boundingBox())!;
     expect(b.x).toBeGreaterThan(t.x + t.width - 1);
     expect(Math.abs(b.y + b.height / 2 - (t.y + t.height / 2))).toBeLessThan(20);
-    await expect(doc.locator("#status")).toHaveText("All changes saved");
+    await expect(doc.locator("#status")).toHaveText("New, unsaved");
   });
 
   test("S13 typing marks Unsaved; Save button and Cmd/Ctrl+S save to the drive", async ({ page }) => {
@@ -158,9 +158,9 @@ test.describe("FiGrid inside FiFolders", () => {
     const grid = await newFromDrive(page, "FiGrid spreadsheet");
     await grid.waitForFunction(() => (window as any).__sheet?.ready === true, null, { timeout: 45_000 });
     await expect(page.getByTestId("dialog-input")).toHaveCount(0);
-    const box = (await grid.locator("#grid").boundingBox())!;
-    await grid.mouse.click(box.x + 80, box.y + 32);
+    // A1 is focused on open: typing works without a click.
     await expect(grid.locator("#namebox")).toHaveText("A1");
+    await expect(grid.locator("#formula")).toBeFocused();
     await grid.keyboard.type("42");
     await grid.keyboard.press("Enter");
     await grid.keyboard.type("=A1*2");

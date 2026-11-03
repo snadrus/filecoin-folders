@@ -9,6 +9,8 @@ export interface OnboardingIO {
   connect(input: { rdns: string | null; chain: ChainChoice }): Promise<void>;
   /** Restore the permitted account without `eth_requestAccounts`. */
   silent(chain: ChainChoice): Promise<boolean>;
+  /** Wallet switched account (address), disconnected (""), or changed chain (chainId). Never prompts. */
+  onWalletChange?(fn: (change: { account?: string; chainId?: string }) => void): void;
   snapshot(input: { chain: ChainChoice; volumeName: string }): Promise<WalletPanel>;
   authorize(chain: ChainChoice, force?: boolean, report?: ChainReporter): Promise<void>;
   /**
