@@ -18,6 +18,7 @@ import { REGISTRY_NOT_DEPLOYED, registryReady, saveNetworkPreference } from "./n
 import { qrSvg } from "./qr.js";
 import { loadRemovals, piecesEligibleForRemoval, saveRemovals, schedulePieceRemovals, type RemovalAdapters } from "./removal.js";
 import { chainStepTitle, explorerHref, stepDetail, type ChainReport, type ChainStepView } from "./chain-step.js";
+import { onWalletPrompts, walletPrompts } from "./wallet-prompts.js";
 import { ACTIVITY_DISMISS_MS, dismissActivity, loadDismissed } from "./activity.js";
 import { defaultFelTitle, felTarget, rememberFelTarget, remapFelTargets } from "./fel-names.js";
 import { loosePieces, rememberPiece, type LoosePiece } from "./loose.js";
@@ -361,6 +362,9 @@ export class DriveApp {
       void this.enqueue(() => this.onSubmit(event));
     });
     this.listenForOps();
+    onWalletPrompts(() => {
+      if (this.root) this.render();
+    });
     void this.enqueue(() => this.refresh());
   }
 
@@ -1070,6 +1074,12 @@ export class DriveApp {
       if (actionEl !== target && actionEl?.classList.contains("costs-backdrop")) return;
       this.costsOpen = false;
       this.render();
+      return;
+    }
+    if (action === "wallet-retry" || action === "wallet-cancel") {
+      const prompt = walletPrompts().find((item) => String(item.id) === actionEl?.dataset.id);
+      if (action === "wallet-retry") prompt?.retry();
+      else prompt?.cancel();
       return;
     }
     if (action === "dismiss-activity") {
@@ -1981,6 +1991,7 @@ export class DriveApp {
       activityPending: pending.some((op) => op.status === "pending") || this.busy,
       runway,
       looseSummary: this.looseSummary,
+      walletPrompts: walletPrompts().map(({ id, what, state }) => ({ id, what, state })),
       txlogOpen: this.txlogOpen,
       loose: this.looseRows.map((piece) => ({
         pieceCid: piece.pieceCid,

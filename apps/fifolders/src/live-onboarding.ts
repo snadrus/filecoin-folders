@@ -1,3 +1,4 @@
+import { watchWalletPrompts } from "./wallet-prompts.js";
 import { calibration, mainnet, type Chain } from "@filoz/synapse-core/chains";
 import {
   AddPiecesPermission,
@@ -166,7 +167,8 @@ export function createLiveOnboarding(): OnboardingIO {
     const stored = readStoredWallet();
     const remembered = stored ? wallets.find((wallet) => wallet.rdns === stored.rdns) : undefined;
     const chosen = match ?? remembered ?? wallets[0];
-    provider = chosen?.provider ?? window.ethereum ?? null;
+    const picked = chosen?.provider ?? window.ethereum ?? null;
+    provider = picked ? watchWalletPrompts(picked) : null;
     if (!provider) throw new Error("No injected wallet found. Install a browser wallet such as MetaMask.");
   }
 
@@ -231,7 +233,7 @@ export function createLiveOnboarding(): OnboardingIO {
           origin: window.location.origin,
           init: initWalletConnect,
         });
-        provider = connected.provider as Eip1193Provider;
+        provider = watchWalletPrompts(connected.provider as Eip1193Provider);
         root = getAddress(connected.address);
         await ensureChain(provider, input.chain);
         rememberWallet(input.chain, WALLETCONNECT_RDNS);
