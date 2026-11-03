@@ -25,6 +25,8 @@ export interface FifoldersOp {
   content?: string;
   /** Editor title at save time; names the file. */
   title?: string;
+  /** Secondary detail (cost, tx stage) shown under the purpose in the Transaction log. */
+  detail?: string;
   volume?: string;
   owner?: string;
   error?: string;

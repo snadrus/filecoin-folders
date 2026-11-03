@@ -171,7 +171,9 @@ describe("expired session key renews and retries", () => {
     const before = readStoredSession();
     setMockExpiry(-60);
     const pending = app.uploadFiles([new File(["hello"], "note.txt", { type: "text/plain" })]);
-    await until(() => root.querySelector("[data-testid=session-renew]")?.textContent?.includes("Session expired — Renew (1 signature)") === true);
+    await until(() => root.querySelector("[data-testid=session-renew]")?.textContent?.includes("Reconnect wallet session") === true);
+    expect(root.querySelector("[data-testid=txlog-toggle] [data-testid=txlog-spinner]")).toBeTruthy();
+    expect(root.querySelector(".setup-backdrop")).toBeNull();
     const queued = loadOpsFile();
     expect(queued.some((op) => op.kind === "commit" && op.status === "pending")).toBe(true);
     expect(queued.some((op) => op.status === "error")).toBe(false);
@@ -228,10 +230,12 @@ describe("expired session key renews and retries", () => {
     const pending = app.uploadFiles([new File(["soon"], "soon.txt", { type: "text/plain" })]);
     await pending;
     await settle(app);
+    expect(root.querySelector("[data-testid=txlog-spinner]")).toBeTruthy();
+    root.querySelector<HTMLButtonElement>("[data-testid=txlog-toggle]")!.click();
     const banner = root.querySelector("[data-testid=session-renew]");
     expect(banner?.getAttribute("data-prompt")).toBe("soon");
-    expect(banner?.textContent).toContain("Session expires soon — Renew (1 signature)");
-    expect(banner?.textContent).not.toContain("Session expired —");
+    expect(banner?.textContent).toContain("Reconnect wallet session");
+    expect(banner?.textContent).toContain("ends soon");
     expect((await app.volume!.ls("/")).map((entry) => entry.name)).toContain("soon.txt");
     expect(root.querySelector("[data-testid=wallet-signatures]")?.textContent).toBe("1");
   });

@@ -12,11 +12,11 @@ Suites: **mock** = local build with the mock chain (`VITE_E2E=1`) + staged edito
 | S02 | As any user I get the light theme. | `data-theme="light"` and a light background even when the OS prefers dark. | mock |
 | S03 | As a user I connect my wallet. | One `eth_requestAccounts`; short address shown; drive visible. | live |
 | S04 | As a user I can browse while setup transactions are pending. | Drive, Recent, Trash navigable; note "Finishing wallet setup… you can browse meanwhile"; pending step labeled "<title> — <purpose> (<cost>)"; edits made meanwhile are staged, not lost. | mock + live |
-| S05 | Every wallet request says what it is for and what it costs. | Setup steps, Activity rows and the wallet toast read "<title> — <purpose> (<cost>)". | mock + live |
+| S05 | Every wallet request says what it is for and what it costs. | Setup steps and the wallet toast read "<title> — <purpose> (<cost>)". Transaction log rows are titled by purpose only ("Save “Notes” to My Drive", "Authorize this browser to save", "Add 3 Filecoin Drive files"; never "Send transaction"/gas); cost is the secondary line. | mock + live |
 | S06 | Session-key authorization is one labeled pop-up. | "Authorize session key — lets FiFolders save for 7 days without asking each time (~0.05 FIL)"; after approval the note clears and the signature count is 1. | mock |
-| S07 | I can see what happened on chain. | Transaction-log sidebar toggles and lists chain steps; finished Activity rows show a blue progress bar and auto-dismiss after ~10 s. | mock |
+| S07 | I can see what happened on chain. | One "Transaction log" sidebar entry (spinner + pending count while anything is pending) opens the log: purpose rows, on-chain details; finished rows show a blue progress bar and auto-dismiss after ~10 s. A lapsed/expiring session is a pending "Reconnect wallet session" row with a Reconnect button (log opens itself on expiry) plus the wallet toast — no split panel or setup pop-up. | mock |
 | S08 | My dataset choice sticks. | Selecting a dataset in the account menu survives reload. | mock |
-| S09 | Loose pieces add up. | "N pieces: X in folders, Y manifests, Z loose" with X+Y+Z = N and Z rows listed; hidden when nothing is loose. | mock |
+| S09 | Loose pieces add up. | "N pieces: X in folders, Y manifests, Z loose" with X+Y+Z = N and Z rows listed; hidden when nothing is loose. Clicking Loose pieces switches view at once with a spinner/skeleton; rows appear as each piece resolves ("Reading pieces k of N…"). | mock |
 | S10 | Refresh keeps my tree. | A folder created before reload is listed after reload. | mock |
 | S10b | A fresh browser/origin recovers my tree from chain (FolderRegistry manifest). | New profile, same wallet → same tree. | live (spend: STORIES_SPEND=1) |
 | S11 | Old links still work. | `/felarumi/…` → `/fipen/…`, `/felanumio/…` → `/figrid/…`, query and hash preserved. | mock |

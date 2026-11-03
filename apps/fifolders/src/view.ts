@@ -65,6 +65,8 @@ export interface ActivityRow {
   id: string;
   label: string;
   status: "pending" | "done" | "error";
+  /** Secondary detail: cost, error, stage. Never in the title. */
+  detail?: string;
   /** Done rows: ms already elapsed of the 10 s auto-dismiss. */
   elapsedMs?: number;
 }
@@ -106,6 +108,8 @@ export interface ViewModel {
   loose: LooseRow[];
   /** "N pieces: X in folders, Y manifests, Z loose" so the dataset count reconciles. */
   looseSummary: string;
+  /** Loose view still resolving pieces, e.g. "Reading pieces 3 of 12…". */
+  looseProgress?: string;
   txlogOpen: boolean;
   badges: Record<string, string>;
   chain: "calibration" | "mainnet";
@@ -209,7 +213,6 @@ function renderScreen(model: ViewModel): string {
           ? ` <button type="button" class="text-button" data-action="account" data-testid="setup-open-wallet">Wallet &amp; setup</button>`
           : ""
       }</div>` : ""}
-      ${renderSessionBanner(model)}
       ${renderBrowser(model)}
       ${model.details ? renderDetails(model.details) : ""}
     </main>
@@ -267,12 +270,13 @@ function renderSetupShell(model: ViewModel): string {
   if (!panel) return "";
   const picked = panel.datasets.find((dataset) => dataset.id === panel.selectedDatasetId);
   const ready = Boolean(panel.selectedDatasetId && panel.paymentsReady && panel.sessionReady);
-  const needsUser = !ready || Boolean(model.setupError);
+  // A lapsed session on a set-up wallet is a Transaction log entry ("Reconnect wallet session"), not a setup pop-up.
+  const reconnectOnly = Boolean(panel.selectedDatasetId && panel.paymentsReady && !panel.sessionReady && model.sessionPrompt);
+  const needsUser = (!ready && !reconnectOnly) || Boolean(model.setupError);
   return `<div class="shell">
     ${renderTop(model)}
     ${renderNav(model)}
     <main class="workspace">
-      ${renderSessionBanner(model)}
       <div class="empty" data-testid="drive-pending">${picked ? `Opening ${escapeHtml(datasetLabel(picked))}…` : "Pick a dataset to open your drive."}</div>
     </main>
     ${needsUser ? `<div class="costs-backdrop setup-backdrop">${renderSetup(model)}</div>` : ""}
@@ -319,7 +323,6 @@ function renderSetup(model: ViewModel): string {
       <p class="balances" data-testid="balances"><span>${escapeHtml(panel.fil)} FIL</span><span>${escapeHtml(panel.usdfc)} USDFC</span></p>
       ${legacy}
       ${failed ? renderChainSteps(model.chainSteps) : ""}
-      ${renderSessionBanner(model)}
       ${payment}
       ${session}
       <div class="datasets" data-testid="datasets">
@@ -334,14 +337,30 @@ function renderSetup(model: ViewModel): string {
   </div>`;
 }
 
-function renderSessionBanner(model: ViewModel): string {
+function renderSessionEntry(model: ViewModel): string {
   if (!model.sessionPrompt) return "";
   const expired = model.sessionPrompt === "expired";
-  const text = expired ? "Session expired — Renew (1 signature)" : "Session expires soon — Renew (1 signature)";
-  return `<div class="banner session-banner ${expired ? "expired" : "soon"}" data-testid="session-renew" data-prompt="${model.sessionPrompt}" role="status">
-    <span>${text}</span>
-    <button type="button" data-testid="session-renew-button" data-action="renew-session">Renew</button>
+  return `<div class="activity-item session-entry" data-testid="session-renew" data-prompt="${model.sessionPrompt}" data-status="pending" role="status">
+    <span class="spinner small" aria-hidden="true"></span>
+    <span class="activity-text"><span class="activity-title">Reconnect wallet session</span>
+      <span class="note">${expired ? "Your save session ended. One wallet signature reconnects it." : "Your save session ends soon. One wallet signature keeps it going."}</span></span>
+    <button type="button" data-testid="session-renew-button" data-action="renew-session">Reconnect</button>
   </div>`;
+}
+
+function renderActivityItem(item: ActivityRow): string {
+  const mark = item.status === "pending" ? `<span class="spinner small" aria-hidden="true"></span>` : `<span class="activity-mark" aria-hidden="true"></span>`;
+  return `<div class="activity-item" data-testid="activity-item" data-status="${item.status}">
+    ${mark}
+    <span class="activity-text"><span class="activity-title">${escapeHtml(item.label)}</span>${item.detail ? `<span class="note">${escapeHtml(item.detail)}</span>` : ""}</span>
+    ${item.status === "error" ? `<button type="button" data-action="retry-activity" data-id="${escapeHtml(item.id)}" data-testid="retry-activity">Retry</button><button type="button" class="activity-dismiss" data-action="dismiss-activity" data-id="${escapeHtml(item.id)}" data-testid="dismiss-activity" aria-label="Dismiss">×</button>` : ""}
+    ${item.status === "done" ? `<span class="activity-progress" data-testid="activity-progress" style="animation-delay:-${Math.max(0, Math.round(item.elapsedMs ?? 0))}ms"></span>` : ""}
+  </div>`;
+}
+
+/** Pending work behind the single Transaction log entry (ops, wallet prompts, session renewal). */
+export function txlogPending(model: ViewModel): number {
+  return model.activity.filter((item) => item.status === "pending").length + (model.sessionPrompt ? 1 : 0);
 }
 
 function chainButton(chain: "calibration" | "mainnet", label: string, current: string): string {
@@ -388,23 +407,12 @@ function renderChainSteps(steps: ChainStepView[]): string {
 
 function renderNav(model: ViewModel): string {
   const runway = model.runway;
-  const txlog = model.chainSteps.length
-    ? `<button type="button" class="place txlog-toggle ${model.txlogOpen ? "on" : ""}" data-action="toggle-txlog" data-testid="txlog-toggle">
-        <span class="material-symbols-outlined" aria-hidden="true">receipt_long</span> Transaction log (${model.chainSteps.length})
-      </button>`
-    : "";
-  const activity = model.activity.length
-    ? `<section class="activity" data-testid="activity">${model.activity
-        .map(
-          (item) => `<div class="activity-item" data-testid="activity-item" data-status="${item.status}">
-            <span class="activity-mark" aria-hidden="true"></span>
-            <span>${escapeHtml(item.label)}</span>
-            ${item.status === "error" ? `<button type="button" data-action="retry-activity" data-id="${escapeHtml(item.id)}" data-testid="retry-activity">Retry</button><button type="button" class="activity-dismiss" data-action="dismiss-activity" data-id="${escapeHtml(item.id)}" data-testid="dismiss-activity" aria-label="Dismiss">×</button>` : ""}
-            ${item.status === "done" ? `<span class="activity-progress" data-testid="activity-progress" style="animation-delay:-${Math.max(0, Math.round(item.elapsedMs ?? 0))}ms"></span>` : ""}
-          </div>`,
-        )
-        .join("")}</section>`
-    : "";
+  const pending = txlogPending(model);
+  const errors = model.activity.some((item) => item.status === "error");
+  const txlog = `<button type="button" class="place txlog-toggle ${model.txlogOpen ? "on" : ""}" data-action="toggle-txlog" data-testid="txlog-toggle" data-pending="${pending}">
+      ${pending ? `<span class="spinner small" data-testid="txlog-spinner" aria-hidden="true"></span>` : `<span class="material-symbols-outlined" aria-hidden="true">receipt_long</span>`} Transaction log
+      ${pending ? `<span class="badge" data-testid="txlog-count">${pending}</span>` : errors ? `<span class="badge error" data-testid="txlog-count">!</span>` : ""}
+    </button>`;
   return `<aside class="nav">
     <button class="new" data-testid="new-button" data-action="new-toggle" type="button" ${model.mainnetBlocked ? "disabled" : ""}>
       <span class="material-symbols-outlined" aria-hidden="true">add</span> New
@@ -417,7 +425,6 @@ function renderNav(model: ViewModel): string {
       ${navItem("trash", "delete", "Trash", model.nav)}
     </nav>
     ${txlog}
-    ${activity}
     <div class="storage storage-open ${runway.low ? "low" : ""}" data-testid="storage-runway" data-action="show-costs" role="button" tabindex="0" title="What it costs">
       <p class="runway-headline" data-testid="runway-headline">${runwayHtml(runway.headline, runway.datasetLabel)}</p>
       ${runway.detail ? `<p class="runway-detail" data-testid="runway-detail">${runwayHtml(runway.detail, runway.datasetLabel)}</p>` : ""}
@@ -498,6 +505,8 @@ function renderBrowser(model: ViewModel): string {
   const empty =
     model.loadState === "error"
       ? `<div class="empty" data-testid="load-error" role="alert">Could not load your drive from Filecoin. Your files are safe on chain.${model.loadError ? ` <small>${escapeHtml(model.loadError)}</small>` : ""} <button type="button" data-action="retry-load" data-testid="retry-load">Retry</button></div>`
+      : model.loadState === "loading" && !filled && model.nav === "loose"
+        ? `<div class="empty loose-skeleton" data-testid="drive-loading" role="status"><p data-testid="loose-loading"><span class="spinner" aria-hidden="true"></span> ${escapeHtml(model.looseProgress || "Finding loose pieces…")}</p>${'<span class="skeleton-bar"></span>'.repeat(4)}</div>`
       : model.loadState === "loading" && !filled
         ? `<div class="empty" data-testid="drive-loading" role="status"><span class="spinner" aria-hidden="true"></span> Loading your drive from Filecoin…</div>`
         : filled
@@ -538,7 +547,8 @@ function renderBrowser(model: ViewModel): string {
           </div>`
         : `<div class="grid">${rows}</div>`
     }
-    ${model.nav === "loose" && model.looseSummary && filled ? `<p class="note" data-testid="loose-summary">${escapeHtml(model.looseSummary)}</p>` : ""}
+    ${model.nav === "loose" && filled && model.loadState === "loading" ? `<p class="note loose-pending" data-testid="loose-loading"><span class="spinner small" aria-hidden="true"></span> ${escapeHtml(model.looseProgress || "Loading more pieces…")}</p>` : ""}
+    ${model.nav === "loose" && model.looseSummary && filled && model.loadState !== "loading" ? `<p class="note" data-testid="loose-summary">${escapeHtml(model.looseSummary)}</p>` : ""}
     ${empty}
   </section>`;
 }
@@ -843,7 +853,9 @@ function renderIdentity(owner: string): string {
 function renderTxlog(model: ViewModel): string {
   return `<section class="txlog" data-testid="txlog" aria-label="Transaction log">
     <header>Transaction log<button type="button" class="close" data-action="toggle-txlog" aria-label="Close">×</button></header>
-    ${renderChainSteps(model.chainSteps) || `<p class="note">No transactions yet.</p>`}
+    <div class="activity" data-testid="activity">${renderSessionEntry(model)}${model.activity.map(renderActivityItem).join("")}</div>
+    ${model.chainSteps.length ? `<details class="txlog-details"${model.activity.length || model.sessionPrompt ? "" : " open"}><summary>On-chain details</summary>${renderChainSteps(model.chainSteps)}</details>` : ""}
+    ${!model.activity.length && !model.sessionPrompt && !model.chainSteps.length ? `<p class="note">Nothing yet. Saves and wallet requests show up here.</p>` : ""}
   </section>`;
 }
 

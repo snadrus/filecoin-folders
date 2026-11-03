@@ -67,6 +67,15 @@ export function createMockOnboarding(params: URLSearchParams): OnboardingIO {
   }
 
   if (params.get("fcdrive") === "1") seedFilecoinDrive(storage);
+  // E2E: slow piece reads so the Loose pieces loading state is observable.
+  const pieceDelay = Number(params.get("piecedelay") ?? "0");
+  if (pieceDelay > 0) {
+    const get = storage.get.bind(storage);
+    storage.get = async (cid: string) => {
+      await new Promise((resolve) => setTimeout(resolve, pieceDelay));
+      return get(cid);
+    };
+  }
 
   function book(): RegistryBook {
     try {

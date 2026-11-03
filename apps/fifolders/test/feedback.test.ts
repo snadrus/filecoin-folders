@@ -181,7 +181,8 @@ describe("drive feedback", () => {
     expect([...first.blocks.values()].some((block) => new TextDecoder().decode(block).includes("hello"))).toBe(true);
     expect(first.blocks.size).toBeGreaterThan(1);
     expect(loadOps().some((op) => op.id === "save-1")).toBe(false);
-    expect(root.textContent).toContain("saved");
+    root.querySelector<HTMLButtonElement>("[data-testid=txlog-toggle]")!.click();
+    expect(root.textContent).toContain("Saved “Notes.felarumi” to My Drive");
 
     upsertOp(
       newOp({

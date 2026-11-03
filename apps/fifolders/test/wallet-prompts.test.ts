@@ -100,9 +100,20 @@ describe("wallet prompt toast", () => {
     await Promise.resolve();
     expect(root.querySelector("[data-testid=wallet-prompt-title]")?.textContent).toBe("Save changes");
     expect(root.querySelector("[data-testid=wallet-prompt-detail]")?.textContent).toContain("2 pieces (gas ~0.01 FIL)");
-    expect(loadOps().some((op) => op.kind === "wallet" && op.label === "Save changes — 2 pieces (gas ~0.01 FIL)")).toBe(true);
+    expect(loadOps().some((op) => op.kind === "wallet" && op.label === "Save 2 pieces to My Drive" && op.detail === "Save changes — 2 pieces (gas ~0.01 FIL)")).toBe(true);
     release("0x1");
     await pending;
     expect(loadOps().some((op) => op.kind === "wallet")).toBe(false);
+  });
+});
+
+describe("transaction log purpose labels", () => {
+  it("names the purpose, never 'Send transaction' or gas", async () => {
+    const { purposeText, cleanOpLabel, INTENTS } = await import("../src/wallet-prompts.js");
+    expect(purposeText(INTENTS.adopt(3))).toBe("Add 3 Filecoin Drive files");
+    expect(purposeText({ title: "Send transaction", cost: "gas" })).toBe("Confirm a wallet request");
+    expect(cleanOpLabel("Send transaction (gas)")).toBe("Confirm a wallet request");
+    expect(cleanOpLabel("Authorize session key — lets FiFolders save for 7 days (~0.05 FIL)")).toBe("Authorize this browser to save");
+    for (const label of [purposeText(INTENTS.save(2)), cleanOpLabel("Create dataset (reserve $0.50 USDFC)")]) expect(label).not.toMatch(/gas|Send transaction|\(/);
   });
 });

@@ -58,7 +58,10 @@ test("an expired session key renews with one signature and retries the upload", 
     buffer: Buffer.from("renew me"),
   });
   const banner = page.getByTestId("session-renew");
-  await expect(banner).toContainText("Session expired — Renew (1 signature)");
+  await expect(banner).toContainText("Reconnect wallet session");
+  await expect(page.getByTestId("txlog-spinner")).toBeVisible();
+  await expect(page.locator(".setup-backdrop")).toHaveCount(0);
+  if (process.env.SHOT_TXLOG) await page.screenshot({ path: process.env.SHOT_TXLOG });
   await expect(page.getByText("does not have the required permissions")).toHaveCount(0);
   await page.getByTestId("session-renew-button").click();
   await expect(page.getByTestId("entry").filter({ hasText: "renew.txt" })).toBeVisible();
@@ -122,7 +125,9 @@ test("the public drive renders read-only before the session key is authorized", 
   await expect(page.getByText("early.txt").first()).toBeVisible();
 
   await step.click();
-  await expect(page.getByTestId("activity")).toContainText("Authorize session key — lets FiFolders save for 7 days");
+  if (!(await page.getByTestId("txlog").isVisible())) await page.getByTestId("txlog-toggle").click();
+  await expect(page.getByTestId("activity")).toContainText("Authorize this browser to save");
+  await expect(page.getByTestId("activity")).not.toContainText("Send transaction");
   await expect(page.getByTestId("setup-note")).toHaveCount(0, { timeout: 10_000 });
   await expect(page.getByTestId("wallet-signatures")).toHaveText("1");
   await expect(page.getByText("early.txt").first()).toBeVisible();

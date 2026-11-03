@@ -18,7 +18,7 @@ import { REGISTRY_NOT_DEPLOYED, registryReady, saveNetworkPreference } from "./n
 import { qrSvg } from "./qr.js";
 import { loadRemovals, piecesEligibleForRemoval, saveRemovals, schedulePieceRemovals, type RemovalAdapters } from "./removal.js";
 import { chainStepTitle, explorerHref, stepDetail, type ChainReport, type ChainStepView } from "./chain-step.js";
-import { INTENTS, intentText, onWalletPrompts, sessionIntent, withWalletIntent, type WalletPrompt, walletPrompts } from "./wallet-prompts.js";
+import { INTENTS, cleanOpLabel, intentText, purposeText, onWalletPrompts, sessionIntent, withWalletIntent, type WalletPrompt, walletPrompts } from "./wallet-prompts.js";
 import { ACTIVITY_DISMISS_MS, dismissActivity, loadDismissed } from "./activity.js";
 import { defaultFelTitle, felTarget, rememberFelTarget, remapFelTargets } from "./fel-names.js";
 import { adoptItems, directoryFile, loosePieces, rememberPiece, sniffMime, type LoosePiece } from "./loose.js";
@@ -552,6 +552,7 @@ export class DriveApp {
       if (import.meta.env.VITE_E2E === "1") await persistMemoryVolume(this.volume, this.owner, this.volumeName);
     } catch (error) {
       if (isSessionPermissionError(error)) {
+        if (!this.sessionPrompt) this.txlogOpen = true;
         this.sessionPrompt = "expired";
       } else if (error instanceof NotFoundError && this.cwd !== "/") {
         this.cwd = "/";
@@ -668,7 +669,7 @@ export class DriveApp {
   private async failRun(error: unknown): Promise<boolean> {
     this.cas.takeMerged();
     this.busy = false;
-    this.toast(isSessionPermissionError(error) ? "Session expired — Renew (1 signature)" : errorText(error));
+    this.toast(isSessionPermissionError(error) ? "Wallet session ended — reconnect from the Transaction log (1 signature)." : errorText(error));
     try {
       await this.refresh();
     } catch {
@@ -696,6 +697,7 @@ export class DriveApp {
 
   /** Resolves when Renew finishes and the on-chain key is past the safety margin. */
   waitForRenewal(): Promise<void> {
+    if (!this.sessionPrompt) this.txlogOpen = true;
     this.sessionPrompt = "expired";
     if (this.root) this.render();
     return new Promise((resolve) => {
@@ -706,6 +708,7 @@ export class DriveApp {
   private applySessionGate(gate: SessionGate): void {
     const next = gate === "ok" ? null : gate;
     if (next === this.sessionPrompt) return;
+    if (next === "expired" && !this.sessionPrompt) this.txlogOpen = true;
     this.sessionPrompt = next;
     if (this.root) this.render();
   }
@@ -742,7 +745,7 @@ export class DriveApp {
       const waiters = this.#renewWaiters.splice(0);
       for (const resolve of waiters) resolve();
     } catch (error) {
-      this.toast(isSessionPermissionError(error) ? "Session expired — Renew (1 signature)" : errorText(error));
+      this.toast(isSessionPermissionError(error) ? "Wallet session ended — reconnect from the Transaction log (1 signature)." : errorText(error));
       this.render();
     } finally {
       this.#renewing = false;
@@ -1232,7 +1235,7 @@ export class DriveApp {
         try {
           await this.onSetupAction?.(action);
         } catch (error) {
-          const message = isSessionPermissionError(error) ? "Session expired — Renew (1 signature)" : errorText(error);
+          const message = isSessionPermissionError(error) ? "Wallet session ended — reconnect from the Transaction log (1 signature)." : errorText(error);
           this.setupError = message;
           this.connectError = this.volume ? "" : message;
           if (isSessionPermissionError(error)) this.sessionPrompt = "expired";
@@ -1345,6 +1348,18 @@ export class DriveApp {
     }
     if (action === "nav") {
       const nav = (actionEl?.dataset.nav ?? "drive") as NavId;
+      // Switch views now; the listing fills in behind the queue.
+      if (nav !== this.nav) {
+        this.nav = nav;
+        this.selected = [];
+        this.query = "";
+        if (nav === "loose") {
+          this.looseRows = [];
+          this.looseProgress = "";
+        }
+        this.loadState = "loading";
+        this.render();
+      }
       void this.enqueue(() => this.setNav(nav));
       return;
     }
@@ -1864,7 +1879,7 @@ export class DriveApp {
     const live = new Set(prompts.map((prompt) => prompt.id));
     for (const prompt of prompts) {
       if (prompt.intent.logged || this.#promptOps.has(prompt.id)) continue;
-      this.#promptOps.set(prompt.id, this.beginOp({ kind: "wallet", label: intentText(prompt.intent), stage: "signing" }));
+      this.#promptOps.set(prompt.id, this.beginOp({ kind: "wallet", label: purposeText(prompt.intent), detail: intentText(prompt.intent), stage: "signing" }));
     }
     for (const [id, op] of this.#promptOps) {
       if (live.has(id)) continue;
@@ -1881,13 +1896,19 @@ export class DriveApp {
     this.chainSteps = index >= 0 ? this.chainSteps.map((item, i) => (i === index ? step : item)) : [...this.chainSteps, step];
     const id = `chain:${report.flow}`;
     if (report.phase === "signing") {
-      this.beginOp({ id, kind: report.flow === "session" ? "session" : "deposit", label: report.label ?? (report.flow === "session" ? "Authorize session key" : "Approve storage payments"), stage: "signing" });
+      this.beginOp({
+        id,
+        kind: report.flow === "session" ? "session" : "deposit",
+        label: report.flow === "session" ? "Authorize this browser to save" : "Allow storage payments",
+        ...(report.label ? { detail: report.label } : {}),
+        stage: "signing",
+      });
     } else if (report.phase === "done") this.finishOp(id);
     else patchOp(id, { stage: report.phase, txHash: report.hash });
     if (this.root && !this.volume) this.render();
   }
 
-  beginOp(partial: { id?: string; kind: OpKind; label: string; stage?: string; path?: string; name?: string; size?: number; mime?: string; volume?: string; owner?: string }): string {
+  beginOp(partial: { id?: string; kind: OpKind; label: string; detail?: string; stage?: string; path?: string; name?: string; size?: number; mime?: string; volume?: string; owner?: string }): string {
     const id = partial.id ?? `op-${Date.now()}-${++this.#opSeq}`;
     upsertOp(newOp({ ...partial, id }));
     return id;
@@ -1906,8 +1927,8 @@ export class DriveApp {
   }
 
   private rememberDone(op: FifoldersOp): void {
-    const label = op.kind === "fel-save" ? `${op.name ?? op.label} saved` : op.label;
-    const row: ActivityRow = { id: op.id, label, status: "done" };
+    const label = op.kind === "fel-save" ? `Saved “${op.name ?? op.label}” to My Drive` : cleanOpLabel(op.label);
+    const row: ActivityRow = { id: op.id, label, status: "done", ...(op.detail ? { detail: op.detail } : {}) };
     this.recentDone = [row, ...this.recentDone.filter((item) => item.id !== op.id)].slice(0, 8);
     this.#doneAt.set(op.id, Date.now());
     setTimeout(() => this.dismissRow(op.id), ACTIVITY_DISMISS_MS);
@@ -2145,22 +2166,30 @@ export class DriveApp {
     } catch (error) {
       this.toast(`Could not list dataset pieces: ${errorText(error)}`);
     }
-    const blobs: { pieceCid: string; bytes: Uint8Array }[] = [];
-    for (const pieceCid of cids) {
-      if (referenced.has(pieceCid) || !inner?.get) continue;
-      try {
-        blobs.push({ pieceCid, bytes: await inner.get(pieceCid) });
-      } catch {
-        // Unreachable piece: still list it so the count reconciles.
-        blobs.push({ pieceCid, bytes: new Uint8Array() });
-      }
-    }
     let details = new Map<string, PieceDetail>();
     try {
       details = new Map((await readPieceDetails()).map((detail) => [detail.pieceCid, detail]));
     } catch (error) {
       console.warn("FiFolders piece metadata", error);
     }
+    // Rows appear as each piece resolves; the click never waits on the whole dataset.
+    const todo = inner?.get ? cids.filter((cid) => !referenced.has(cid)) : [];
+    const blobs: { pieceCid: string; bytes: Uint8Array }[] = [];
+    for (const [index, pieceCid] of todo.entries()) {
+      if (this.nav !== "loose") break;
+      this.looseProgress = `Reading pieces ${index + 1} of ${todo.length}…`;
+      try {
+        blobs.push({ pieceCid, bytes: await inner!.get!(pieceCid) });
+      } catch {
+        // Unreachable piece: still list it so the count reconciles.
+        blobs.push({ pieceCid, bytes: new Uint8Array() });
+      }
+      if (this.nav === "loose" && this.root) {
+        this.looseRows = loosePieces(blobs, referenced, details);
+        this.render();
+      }
+    }
+    this.looseProgress = "";
     const rows = loosePieces(blobs, referenced, details);
     const fromDrive = rows.filter((row) => row.origin === "drive").length;
     const inFolders = cids.filter((cid) => referenced.has(cid)).length;
@@ -2169,6 +2198,7 @@ export class DriveApp {
   }
 
   looseSummary = "";
+  looseProgress = "";
 
   private openAdopt(cids: string[]): void {
     const rows = this.looseRows.filter((row) => cids.includes(row.pieceCid));
@@ -2286,7 +2316,8 @@ export class DriveApp {
     const activity: ActivityRow[] = [
       ...pending.filter((op) => !(op.status === "error" && dismissed.has(`${op.id}@${op.updated}`))).map((op): ActivityRow => ({
         id: op.id,
-        label: op.error ? `${op.label}: ${op.error}` : op.label,
+        label: op.kind === "fel-save" ? `Save “${op.name ?? op.label}” to My Drive` : cleanOpLabel(op.label),
+        ...(op.error || op.detail ? { detail: [op.error, op.detail].filter(Boolean).join(" · ") } : {}),
         status: op.status === "error" ? "error" : "pending",
       })),
       ...this.recentDone.map((row) => ({ ...row, elapsedMs: Date.now() - (this.#doneAt.get(row.id) ?? Date.now()) })),
@@ -2342,6 +2373,7 @@ export class DriveApp {
       activityPending: pending.some((op) => op.status === "pending") || this.busy,
       runway,
       looseSummary: this.looseSummary,
+      looseProgress: this.looseProgress,
       walletPrompts: walletPrompts().map(({ id, what, state, intent }) => ({
         id,
         what,
