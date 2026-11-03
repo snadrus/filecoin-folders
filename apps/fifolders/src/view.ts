@@ -1,3 +1,4 @@
+import { cachedIdentity } from "fil-folders";
 import type { HistoryEntry, Stat } from "fil-folders";
 import type { ChainStepView } from "./chain-step.js";
 import { felanumioSvg, felarumiSvg, logoSvg } from "./icons.js";
@@ -139,8 +140,6 @@ export interface ViewModel {
   preview: PreviewState | null;
   uploads: UploadRow[];
   toasts: ToastRow[];
-  /** Left-sidebar dataset switcher open. */
-  datasetMenu?: boolean;
   walletPrompts: WalletPromptView[];
   /** Shown while the drive is browsable but wallet setup still runs. */
   setupNote: string;
@@ -197,7 +196,7 @@ function renderScreen(model: ViewModel): string {
     <main class="workspace">
       ${model.setupNote ? `<div class="setup-note" data-testid="setup-note" role="status"><span class="spinner" aria-hidden="true"></span>${escapeHtml(model.setupNote)}${
         model.setupStep
-          ? ` <button type="button" class="text-button" data-action="${model.setupStep.action}" data-testid="setup-step">${escapeHtml(model.setupStep.label)}</button>`
+          ? ` <button type="button" class="text-button" data-action="account" data-testid="setup-open-wallet">Wallet &amp; setup</button>`
           : ""
       }</div>` : ""}
       ${renderSessionBanner(model)}
@@ -400,7 +399,6 @@ function renderNav(model: ViewModel): string {
     <button class="new" data-testid="new-button" data-action="new-toggle" type="button" ${model.mainnetBlocked ? "disabled" : ""}>
       <span class="material-symbols-outlined" aria-hidden="true">add</span> New
     </button>
-    ${renderDatasetSwitcher(model)}
     <nav class="places">
       ${navItem("drive", "folder", "My Drive", model.nav)}
       ${navItem("recent", "schedule", "Recent", model.nav)}
@@ -420,8 +418,8 @@ function renderNav(model: ViewModel): string {
   </aside>`;
 }
 
-/** Sidebar dataset picker: every dataset the wallet owns, current one checked, newest marked. */
-function renderDatasetSwitcher(model: ViewModel): string {
+/** Wallet-menu dataset picker: every dataset the wallet owns, current one checked, newest marked. */
+function renderDatasetSection(model: ViewModel): string {
   const panel = model.panel;
   if (!panel || !panel.datasets.length) return "";
   const current = panel.selectedDatasetId;
@@ -447,21 +445,10 @@ function renderDatasetSwitcher(model: ViewModel): string {
       </button>`;
     })
     .join("");
-  const menu = model.datasetMenu
-    ? `<div class="menu dataset-menu" role="menu" data-menu="datasets" data-testid="dataset-menu">
-        <p class="dataset-menu-title">Your datasets (${panel.datasets.length})</p>
-        ${items}
-      </div>`
-    : "";
-  const shown = current ? (/^\d+$/.test(current) ? `#${current}` : "Pending") : "None";
-  return `<div class="dataset-switch">
-    <button type="button" class="dataset-toggle" data-action="dataset-toggle" data-testid="dataset-switcher" aria-haspopup="menu" aria-expanded="${Boolean(model.datasetMenu)}" title="Switch dataset">
-      <span class="material-symbols-outlined" aria-hidden="true">database</span>
-      <span class="dataset-toggle-text">Dataset ${escapeHtml(shown)}</span>
-      <span class="material-symbols-outlined" aria-hidden="true">expand_more</span>
-    </button>
-    ${menu}
-  </div>`;
+  return `<section class="account-section dataset-section" id="wallet-datasets" data-testid="dataset-menu" role="menu" aria-label="Datasets">
+    <p class="section-title">Datasets (${panel.datasets.length})</p>
+    ${items}
+  </section>`;
 }
 
 function runwayHtml(text: string, datasetLabel: string): string {
@@ -715,32 +702,37 @@ function renderPreview(preview: PreviewState): string {
 
 function renderAccount(model: ViewModel): string {
   const panel = model.panel;
-  const datasets = panel
-    ? `<label class="field">Dataset
-        <select data-testid="dataset-select">${panel.datasets
-          .map(
-            (dataset) =>
-              `<option value="${escapeHtml(dataset.id)}" ${dataset.id === panel.selectedDatasetId ? "selected" : ""}>${escapeHtml(datasetLabel(dataset))}</option>`,
-          )
-          .join("")}</select>
-      </label>
+  const step = model.setupStep;
+  const setup = panel
+    ? `<section class="account-section" data-testid="wallet-setup">
+      <p class="section-title">Wallet &amp; setup</p>
+      <p class="account-line">${escapeHtml(panel.fil)} FIL · ${escapeHtml(panel.usdfc)} USDFC</p>
+      ${panel.paymentsReady
+        ? `<p class="account-line status ok" data-testid="payment-status">Storage payment approved</p>`
+        : `<button type="button" class="primary slim" data-action="fix-payments" data-testid="fix-payments">${escapeHtml(step?.action === "fix-payments" ? step.label : "Enable storage payment")}</button>
+           <p class="note">${escapeHtml(model.costs.depositNote)}</p>`}
+      <p class="account-line" data-testid="session-status">${panel.sessionReady ? `Session key until ${escapeHtml(panel.sessionExpiry || "soon")}` : "Session key missing"}</p>
+      ${panel.sessionReady
+        ? `<button type="button" data-action="refresh-session" data-testid="session-refresh">Refresh session key</button>`
+        : `<button type="button" class="primary slim" data-action="authorize" data-testid="authorize-session">${escapeHtml(step?.action === "authorize" ? step.label : "Authorize session key")}</button>`}
+      ${step && step.action !== "fix-payments" && step.action !== "authorize" ? `<button type="button" class="primary slim" data-action="${step.action}" data-testid="setup-step">${escapeHtml(step.label)}</button>` : ""}
       <button type="button" data-action="create-dataset" data-testid="create-dataset">Create new dataset</button>
       <p class="note">${escapeHtml(model.costs.datasetNote)}</p>
-      <p class="account-line" data-testid="session-status">${panel.sessionReady ? `Session key until ${escapeHtml(panel.sessionExpiry || "soon")}` : "Session key missing"}</p>
-      <p class="account-line">${escapeHtml(panel.fil)} FIL · ${escapeHtml(panel.usdfc)} USDFC${panel.paymentsReady ? "" : " · payment needed"}</p>
-      <button type="button" data-action="refresh-session" data-testid="session-refresh">Refresh session key</button>`
-    : "";
+      <div class="chain-toggle" role="group" aria-label="Network">
+        ${chainButton("calibration", "Calibration", model.chain)}
+        ${chainButton("mainnet", "Mainnet", model.chain)}
+      </div>
+      <p class="account-line">Volume ${escapeHtml(model.volumeName)} · encryption ${model.encrypted ? "on" : "off"}</p>
+    </section>`
+    : `<div class="chain-toggle" role="group" aria-label="Network">
+        ${chainButton("calibration", "Calibration", model.chain)}
+        ${chainButton("mainnet", "Mainnet", model.chain)}
+      </div>`;
   return `<div class="menu account-menu" data-menu="account" data-testid="account-menu">
     <p class="account-line">${escapeHtml(panel?.ens || model.owner)}</p>
-    <label class="field">Display name
-      <input data-testid="display-name" maxlength="60" placeholder="Shown in FiPen and FiGrid" value="${escapeHtml(storedDisplayName())}" />
-    </label>
-    <p class="account-line">Volume ${escapeHtml(model.volumeName)} · encryption ${model.encrypted ? "on" : "off"}</p>
-    <div class="chain-toggle" role="group" aria-label="Network">
-      ${chainButton("calibration", "Calibration", model.chain)}
-      ${chainButton("mainnet", "Mainnet", model.chain)}
-    </div>
-    ${datasets}
+    ${renderIdentity(model.owner)}
+    ${renderDatasetSection(model)}
+    ${setup}
     <label class="check"><input data-testid="autosave-uploads" type="checkbox" ${model.autoSaveUploads ? "checked" : ""}/> Auto-save uploads</label>
     <button type="button" data-action="show-costs" data-testid="show-costs">What it costs</button>
     <details class="advanced" data-testid="advanced-editors">
@@ -756,12 +748,18 @@ function renderAccount(model: ViewModel): string {
   </div>`;
 }
 
-function storedDisplayName(): string {
-  try {
-    return globalThis.localStorage?.getItem("fifolders:display-name") || "";
-  } catch {
-    return "";
-  }
+/** Identity lives on its own page (/identity/); the drive shows it and links there. */
+function renderIdentity(owner: string): string {
+  if (!/^0x[0-9a-fA-F]{40}$/.test(owner)) return "";
+  const who = cachedIdentity(owner);
+  const back = typeof location === "undefined" ? "" : `?return=${encodeURIComponent(location.href)}`;
+  const glyph = who.avatar?.emoji || (who.displayName[0] || "?").toUpperCase();
+  return `<div class="identity-line" data-testid="identity-summary">
+      <span class="identity-avatar" style="background:${escapeHtml(who.avatar?.color || "#e8eaed")};color:${who.avatar?.color ? "#fff" : "#202124"}">${escapeHtml(glyph)}</span>
+      <span><strong data-testid="identity-name">${escapeHtml(who.displayName)}</strong>${who.identity ? "" : `<small> · guest name</small>`}</span>
+      <a href="./identity/${back}" data-testid="identity-edit">${who.identity ? "Edit identity" : "Set up identity"}</a>
+    </div>
+    <p class="note">Your name in FiPen and FiGrid.</p>`;
 }
 
 function renderTxlog(model: ViewModel): string {

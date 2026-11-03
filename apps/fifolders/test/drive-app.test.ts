@@ -1,3 +1,4 @@
+import { buildIdentity, guestName, writeIdentityCache } from "fil-folders";
 import { MemoryRegistry, MemoryStorage, openVolume, type Registry } from "fil-folders";
 import { AUTOSAVE_UPLOADS_KEY } from "../src/staged.js";
 import { afterEach, describe, expect, it } from "vitest";
@@ -35,14 +36,21 @@ describe("DriveApp", () => {
     localStorage.clear();
   });
 
-  it("stores the account menu display name for FiPen and FiGrid", async () => {
-    const { root } = await mountMock();
+  it("shows the wallet identity in the account menu and links to /identity/", async () => {
+    const { app, root } = await mountMock();
     root.querySelector<HTMLButtonElement>("[data-testid=account]")!.click();
-    const input = root.querySelector<HTMLInputElement>("[data-testid=display-name]")!;
-    expect(input).toBeTruthy();
-    input.value = "Andy J";
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-    expect(localStorage.getItem("fifolders:display-name")).toBe("Andy J");
+    const summary = root.querySelector("[data-testid=identity-summary]")!;
+    expect(summary).toBeTruthy();
+    expect(root.querySelector("[data-testid=display-name]")).toBeNull();
+    const link = root.querySelector<HTMLAnchorElement>("[data-testid=identity-edit]")!;
+    expect(link.getAttribute("href")).toMatch(/^\.\/identity\/\?return=/);
+    expect(link.textContent).toBe("Set up identity");
+    expect(summary.textContent).toContain(guestName(app.owner));
+    writeIdentityCache(app.owner, { identity: buildIdentity(app.owner, { displayName: "Andy J" }), pieceCid: "p" });
+    root.querySelector<HTMLButtonElement>("[data-testid=account]")!.click();
+    root.querySelector<HTMLButtonElement>("[data-testid=account]")!.click();
+    expect(root.querySelector("[data-testid=identity-name]")!.textContent).toBe("Andy J");
+    expect(root.querySelector("[data-testid=identity-edit]")!.textContent).toBe("Edit identity");
   });
 
   it("creates a folder, uploads two files in one commit, renames, trashes, and restores", async () => {

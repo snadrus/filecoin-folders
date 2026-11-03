@@ -28,7 +28,8 @@ test("missing payment and dataset take one fix and no extra signature to create"
   await expect(page.getByTestId("wallet-signatures")).toHaveText("3");
 
   await page.getByTestId("account").click();
-  await expect(page.getByTestId("dataset-select")).toBeVisible();
+  await expect(page.getByTestId("account-menu").getByTestId("dataset-menu")).toBeVisible();
+  await expect(page.getByTestId("account-menu").getByTestId("wallet-setup")).toBeVisible();
   await expect(page.getByTestId("session-refresh")).toBeVisible();
 
   await page.reload();
@@ -111,7 +112,9 @@ test("the public drive renders read-only before the session key is authorized", 
   await expect(page.getByTestId("nav-drive")).toBeVisible();
   await expect(page.getByTestId("setup-note")).toContainText("Finishing wallet setup… you can browse meanwhile");
   await expect(page.getByTestId("wallet-signatures")).toHaveText("0");
-  const step = page.getByTestId("setup-step");
+  await expect(page.getByTestId("setup-step")).toHaveCount(0);
+  await page.getByTestId("setup-open-wallet").click();
+  const step = page.getByTestId("account-menu").getByTestId("authorize-session");
   await expect(step).toHaveText("Authorize session key — lets FiFolders save for 7 days without asking each time (~0.05 FIL)");
 
   // An edit while read-only is staged, not lost.
