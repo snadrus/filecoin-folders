@@ -123,3 +123,10 @@ test("not-deployed banner, create club, members/admins, direct remove, 2-sig rem
   await expect(page.getByTestId("ficlub-import-problems")).toContainText("nonce moved");
   await page.screenshot({ path: "screenshots/ficlub.png", fullPage: true });
 });
+
+test("FiClub background fills the whole viewport (no grey band under the card)", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/ficlub/");
+  const bg = await page.evaluate(() => getComputedStyle(document.documentElement).backgroundColor);
+  expect(bg).toBe("rgb(241, 244, 249)");
+});

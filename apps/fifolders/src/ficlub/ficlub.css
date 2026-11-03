@@ -28,7 +28,7 @@ h1 { font-weight: 500; font-size: 26px; margin: 16px 0 8px; }
 .spinner { width: 14px; height: 14px; border: 2px solid #8ab4f8; border-top-color: transparent; border-radius: 50%; animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 /* FiClub: light blues / light grey */
-body { background: #f1f4f9; }
+:root, body { background: #f1f4f9; }
 .wrap { max-width: 720px; }
 h1 { color: #174ea6; }
 h2 { font-weight: 500; font-size: 20px; margin: 0; color: #174ea6; }
