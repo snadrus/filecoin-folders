@@ -66,7 +66,7 @@ The empty templates the editors start from are:
 pnpm --filter fifolders build
 ```
 
-Serve `apps/fifolders/dist`. `base` is `./`. Pushes to `main` publish that directory to GitHub Pages for `fifolders.scionhub.ai` (`.github/workflows/pages.yml`). The workflow also checks out `snadrus/collab-edit` at the `p2p` ref (`workflow_dispatch` input `collab_ref`, or `repository_dispatch` client payload `ref`), applies `scripts/collab-edit-p2p.patch` when that branch does not already contain it, and copies the static editors to `dist/fipen/` and `dist/figrid/`. `dist/felarumi/` and `dist/felanumio/` are redirects. This token cannot push that patch to `collab-edit`; the Pages build applies it locally.
+Serve `apps/fifolders/dist`. `base` is `./`. Pushes to `main` publish that directory to GitHub Pages for `fifolders.scionbase.ai` (`.github/workflows/pages.yml`). The workflow also checks out `snadrus/collab-edit` at the `p2p` ref (`workflow_dispatch` input `collab_ref`, or `repository_dispatch` client payload `ref`), applies `scripts/collab-edit-p2p.patch` when that branch does not already contain it, and copies the static editors to `dist/fipen/` and `dist/figrid/`. `dist/felarumi/` and `dist/felanumio/` are redirects. This token cannot push that patch to `collab-edit`; the Pages build applies it locally.
 
 Small pieces are padded to at least 127 bytes before PDP upload and restored on read. The left bar shows the dataset total and how long the Filecoin Pay balance covers the current per-epoch rate. In-flight uploads, saves, deposits, and registry commits stay in `localStorage` under `fifolders:ops` so a refresh can show them again and drop them once the chain has the piece.
 
