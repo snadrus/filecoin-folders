@@ -723,6 +723,13 @@ function renderContext(context: ContextState): string {
   const trashItems = context.trash
     ? `${item("restore", "restore_from_trash", "Restore")}${item("delete-forever", "delete_forever", "Delete forever")}`
     : `${item("trash", "delete", "Move to trash")}`;
+  if (context.trash) {
+    // Like Drive's Trash: only restore, delete forever, or look at it.
+    return `<div class="menu floating" data-menu="context" data-testid="context-menu" style="left:${context.x}px;top:${context.y}px">
+    ${trashItems}
+    ${item("details", "info", "Details")}
+  </div>`;
+  }
   return `<div class="menu floating" data-menu="context" data-testid="context-menu" style="left:${context.x}px;top:${context.y}px">
     ${item("open", "open_in_new", "Open")}
     ${item("download", "download", "Download", context.directory)}

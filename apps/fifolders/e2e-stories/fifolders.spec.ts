@@ -303,7 +303,7 @@ test.describe("S64 phone: menus and dialogs sit above the Uploads panel", () => 
   });
 });
 
-test("S63b mouse on focusable rows: Shift-click extends, move + trash run with no page errors", async ({ page }) => {
+test("S63b mouse on focusable rows: Shift-click extends, move + trash + restore run (Trash menu is Restore/Delete forever/Details) with no page errors", async ({ page }) => {
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(String(e)));
   await connect(page);
@@ -328,5 +328,10 @@ test("S63b mouse on focusable rows: Shift-click extends, move + trash run with n
   await rows.filter({ hasText: "notes.md" }).click();
   await page.keyboard.press("Delete");
   await expect(rows).toHaveCount(1);
+  await page.getByTestId("nav-trash").click();
+  await rows.filter({ hasText: "notes.md" }).click({ button: "right" });
+  await expect(page.getByTestId("context-menu").locator("button")).toHaveText([/Restore/, /Delete forever/, /Details/]);
+  await page.getByRole("button", { name: "Restore" }).click();
+  await expect(rows).toHaveCount(0);
   expect(errors).toEqual([]);
 });
