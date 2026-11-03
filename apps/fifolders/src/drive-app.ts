@@ -183,6 +183,7 @@ export class DriveApp {
   preview: PreviewModel | null = null;
   uploads: UploadRow[] = [];
   uploadsOpen: boolean | null = null;
+  offline = false;
   toasts: { id: string; text: string; action?: string; actionLabel?: string }[] = [];
   /** Addresses already told which dataset was auto-picked this page load. */
   #autoPickToasted = new Set<string>();
@@ -438,6 +439,17 @@ export class DriveApp {
 
   mount(root: HTMLElement): void {
     this.root = root;
+    // Drive-style "You're offline" notice.
+    const win = root.ownerDocument.defaultView;
+    const syncOnline = () => {
+      const offline = win?.navigator.onLine === false;
+      if (offline === this.offline) return;
+      this.offline = offline;
+      if (this.root === root) this.render();
+    };
+    win?.addEventListener("online", syncOnline);
+    win?.addEventListener("offline", syncOnline);
+    this.offline = win?.navigator.onLine === false;
     root.addEventListener("click", (event) => this.onClick(event));
     root.addEventListener("dblclick", (event) => this.onDblClick(event));
     root.addEventListener("contextmenu", (event) => this.onContextMenu(event));
@@ -2548,6 +2560,7 @@ export class DriveApp {
       preview: this.preview,
       uploads: this.uploads,
       uploadsOpen: this.uploadsOpen,
+      offline: this.offline,
       toasts: this.toasts,
       dropPath: this.dropPath,
       dragging: this.dragging,

@@ -156,6 +156,7 @@ export interface ViewModel {
   uploads: UploadRow[];
   /** null = automatic (open while uploading or on errors, collapsed once all are done, like Drive). */
   uploadsOpen?: boolean | null;
+  offline?: boolean;
   toasts: ToastRow[];
   walletPrompts: WalletPromptView[];
   /** Copies participants saved while the owner was away; the owner can bring each into their drive. */
@@ -230,6 +231,7 @@ function renderScreen(model: ViewModel): string {
     ${model.preview ? renderPreview(model.preview) : ""}
     ${renderToasts(model.toasts)}
     ${renderUploads(model.uploads, model.uploadsOpen ?? null)}
+    ${model.offline ? `<div class="offline-chip" data-testid="offline-chip" role="status">You're offline. You can browse what's loaded; reconnect to upload or save changes.</div>` : ""}
     ${renderDownloads(model)}
   </div>`;
 }

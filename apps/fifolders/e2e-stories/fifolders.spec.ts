@@ -366,3 +366,13 @@ test("S66 Uploads panel collapses to 'N uploads complete' when done (Drive), and
   await page.getByTestId("toggle-uploads").click();
   await expect(panel.locator(".upload-row")).toHaveCount(0);
 });
+
+test("S67 offline: the drive says so (Drive parity) and the notice clears on reconnect", async ({ page, context }) => {
+  await connect(page);
+  const chip = page.getByTestId("offline-chip");
+  await expect(chip).toHaveCount(0);
+  await context.setOffline(true);
+  await expect(chip).toContainText("You're offline");
+  await context.setOffline(false);
+  await expect(chip).toHaveCount(0);
+});
