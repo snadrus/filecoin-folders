@@ -229,3 +229,26 @@ test("S50b Loose pieces empty state explains what shows up there", async ({ page
   await page.getByTestId("nav-loose").click();
   await expect(page.locator(".empty-state")).toContainText("Add to drive");
 });
+
+test("S60 keyboard like Drive: ↑/↓ move the selection, Shift+↓ extends, F2 renames, Enter opens", async ({ page }) => {
+  await connect(page);
+  await page.getByTestId("file-input").setInputFiles([
+    { name: "k1.txt", mimeType: "text/plain", buffer: Buffer.from("one") },
+    { name: "k2.txt", mimeType: "text/plain", buffer: Buffer.from("two") },
+  ]);
+  const rows = page.getByTestId("entry");
+  await expect(rows).toHaveCount(2);
+  await rows.first().click();
+  await page.keyboard.press("ArrowDown");
+  await expect(rows.nth(1)).toHaveAttribute("data-selected", "true");
+  await expect(rows.nth(0)).toHaveAttribute("data-selected", "false");
+  await page.keyboard.press("ArrowUp");
+  await page.keyboard.press("Shift+ArrowDown");
+  await expect(page.locator("[data-testid=entry][data-selected=true]")).toHaveCount(2);
+  await page.keyboard.press("ArrowUp");
+  await page.keyboard.press("F2");
+  await expect(page.getByTestId("dialog-input")).toHaveValue("k1.txt");
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Enter");
+  await expect(page.getByTestId("preview-text")).toContainText("one");
+});
