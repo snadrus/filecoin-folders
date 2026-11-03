@@ -88,3 +88,6 @@ Suites: **mock** = local build with the mock chain (`VITE_E2E=1`) + staged edito
 
 ### S61 Screen-reader names
 As a screen-reader user, every button, link and field in FiFolders, Identity, FiClub and FiDeploy announces a name (no bare "button" or icon ligature text such as "more_vert").
+
+### S62 Large uploads
+As a user uploading a file of tens of MB, it appears in the drive right away and saves; if it is too big to back up across a tab close I'm told plainly to Save first (no raw "quota exceeded" error, no lost upload).

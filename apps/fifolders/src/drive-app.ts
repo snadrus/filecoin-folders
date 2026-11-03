@@ -70,6 +70,7 @@ import {
   restoreLabel,
   saveLabel,
   saveStaged,
+  STAGED_TOO_BIG,
   type StagedOp,
 } from "./staged.js";
 import { loadSavedView, persistMemoryVolume, saveView } from "./volume-persist.js";
@@ -2552,12 +2553,18 @@ export class DriveApp {
     await replayStaged(this.#draft, this.staged);
   }
 
+  #warnedTooBig = false;
   private persistStaged(): void {
-    saveStaged(this.owner, this.volumeName, {
+    const kept = saveStaged(this.owner, this.volumeName, {
       ops: this.staged,
       origins: this.#baseline?.origins ?? this.origins,
       stars: this.#baseline?.stars ?? [...this.stars],
     });
+    if (kept) this.#warnedTooBig = false;
+    else if (!this.#warnedTooBig && !(this.autoSaveUploads)) {
+      this.#warnedTooBig = true;
+      this.toast(STAGED_TOO_BIG);
+    }
   }
 
   private async stage(ops: StagedOp[], opts?: { autosave?: boolean }): Promise<void> {

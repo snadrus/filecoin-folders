@@ -252,3 +252,13 @@ test("S60 keyboard like Drive: ↑/↓ move the selection, Shift+↓ extends, F2
   await page.keyboard.press("Enter");
   await expect(page.getByTestId("preview-text")).toContainText("one");
 });
+
+test("S62 a large upload (bigger than localStorage) still shows up and saves, with no raw quota error", async ({ page }) => {
+  test.setTimeout(120_000);
+  await connect(page);
+  await page.getByTestId("file-input").setInputFiles([{ name: "big.bin", mimeType: "application/octet-stream", buffer: Buffer.alloc(12 * 1024 * 1024, 7) }]);
+  await expect(page.getByTestId("entry")).toHaveCount(1, { timeout: 60_000 });
+  await expect(page.locator("body")).not.toContainText("exceeded the quota");
+  await expect(page.getByRole("button", { name: /^Save \d+ change/ })).toHaveCount(0, { timeout: 30_000 });
+  await expect(page.getByTestId("storage-runway")).toContainText("12 MB");
+});
