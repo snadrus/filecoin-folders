@@ -261,3 +261,19 @@ export function markDrives<T extends { id: string }>(datasets: T[], pieces: Map<
     return name ? { ...dataset, drive: true, driveName: name } : { ...dataset, drive: true };
   });
 }
+
+/**
+ * True only when the registry answers with a different commit permission (a pre-session-key deployment).
+ * A failed read is retried, then treated as current: guessing "legacy" would send every save through the
+ * root wallet and pop an unexpected wallet prompt (e.g. from a FiPen save) instead of using the session key.
+ */
+export async function isLegacyRegistry(read: () => Promise<string>, expected: string, attempts = 3): Promise<boolean> {
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return (await read()).toLowerCase() !== expected.toLowerCase();
+    } catch {
+      if (i < attempts - 1) await new Promise((resolve) => setTimeout(resolve, 300 * (i + 1)));
+    }
+  }
+  return false;
+}

@@ -1,5 +1,6 @@
 import { INTENTS, intentText, sessionIntent, watchWalletPrompts, withWalletIntent, labelMigration } from "./wallet-prompts.js";
 import { calibration, mainnet, type Chain } from "@filoz/synapse-core/chains";
+import { isLegacyRegistry } from "./onboarding-logic.js";
 import {
   AddPiecesPermission,
   CreateDataSetPermission,
@@ -148,17 +149,11 @@ export function createLiveOnboarding(): OnboardingIO {
   }
 
   async function legacyRegistry(choice: ChainChoice, client: PublicClient): Promise<boolean> {
-    try {
-      const config = registryConfig(choice);
-      const permission = await client.readContract({
-        address: config.address,
-        abi: folderRegistryAbi,
-        functionName: "PERMISSION_COMMIT",
-      });
-      return permission !== folderCommitPermission();
-    } catch {
-      return true;
-    }
+    const config = registryConfig(choice);
+    return isLegacyRegistry(
+      async () => String(await client.readContract({ address: config.address, abi: folderRegistryAbi, functionName: "PERMISSION_COMMIT" })),
+      folderCommitPermission(),
+    );
   }
 
   function rememberWallet(choice: ChainChoice, rdns: string): void {
