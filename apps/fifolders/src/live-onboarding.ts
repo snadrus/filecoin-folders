@@ -205,12 +205,58 @@ export function createLiveOnboarding(): OnboardingIO {
     }
   }
 
+  let providerUrls: Promise<string[]> | null = null;
+  /**
+   * The SDK only retrieves from providers it can tie to the piece on chain. When that fails
+   * (piece added under another dataset, or an upload whose receipt was never recorded),
+   * ask every active PDP provider directly so a readable head never looks like an empty drive.
+   */
+  function withProviderFallback<T extends { get(pieceCid: string): Promise<Uint8Array> }>(storage: T, choice: ChainChoice): T {
+    const sdkGet = storage.get.bind(storage);
+    storage.get = async (pieceCid: string) => {
+      try {
+        return await sdkGet(pieceCid);
+      } catch (error) {
+        providerUrls ??= import("@filoz/synapse-core/sp-registry")
+          .then(({ getPDPProviders }) => getPDPProviders(publicClient(choice) as never, { onlyActive: true, limit: 200n } as never))
+          .then((out) => out.providers.map((provider) => provider.pdp?.serviceURL ?? (provider as unknown as { serviceURL?: string }).serviceURL ?? "").filter(Boolean))
+          .catch(() => [] as string[]);
+        const { calculate } = await import("@filoz/synapse-core/piece");
+        const tryOne = async (base: string): Promise<Uint8Array> => {
+          const response = await fetch(new URL(`/piece/${encodeURIComponent(pieceCid)}`, base), { signal: AbortSignal.timeout(20_000) });
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          const bytes = new Uint8Array(await response.arrayBuffer());
+          // Some hosts answer 200 with an HTML page: only accept bytes that hash to this piece.
+          if (calculate(bytes).toString() !== pieceCid) throw new Error("piece mismatch");
+          return bytes;
+        };
+        const urls = await providerUrls;
+        if (urls.length) {
+          try {
+            return await Promise.any(urls.map(tryOne));
+          } catch {
+            // Fall through to the SDK error.
+          }
+        }
+        throw error;
+      }
+    };
+    return storage;
+  }
+
+  /** Synapse wants a custom transport; back it with the public RPC so reads never touch the wallet. */
+  function publicTransport(choice: ChainChoice) {
+    const client = publicClient(choice);
+    return custom({ request: (args: { method: string; params?: unknown }) => client.request(args as never) });
+  }
+
   async function listDatasets(choice: ChainChoice): Promise<DatasetRecord[]> {
     const { Synapse } = await import("@filoz/synapse-sdk");
     const synapse = Synapse.create({
       account: requireRoot(),
       chain: chainOf(choice),
-      transport: custom(requireProvider()),
+      // Reads go to public RPC, never through the wallet.
+      transport: publicTransport(choice),
       source: "fifolders",
     });
     const found = await synapse.storage.findDataSets({ address: requireRoot() });
@@ -444,7 +490,7 @@ export function createLiveOnboarding(): OnboardingIO {
         : datasetId
           ? { dataSetId: BigInt(datasetId) }
           : {};
-      const storage = createSynapseStorage(synapse, {
+      const storage = withProviderFallback(createSynapseStorage(synapse, {
         ...storageOptions,
         copies: 2,
         onReplication: (notice) => {
@@ -458,7 +504,7 @@ export function createLiveOnboarding(): OnboardingIO {
           };
           saveCheckpoint(`${address.toLowerCase()}:${input.volumeName}`, checkpoint);
         },
-      });
+      }), input.chain);
       const registryWallet = legacy
         ? await walletClient(input.chain)
         : createWalletClient({
@@ -515,14 +561,20 @@ export function createLiveOnboarding(): OnboardingIO {
       if (!owner) return null;
       const address = getAddress(owner);
       const chain = chainOf(input.chain);
-      const datasetId = selectedDataset || loadLastDataset(chain.id, address) || "";
-      if (!datasetId || datasetId.startsWith("provider:")) return null;
       const config = registryConfig(input.chain);
       const client = publicClient(input.chain);
       const { Synapse } = await import("@filoz/synapse-sdk");
       // Public reads only: no wallet transport, so nothing here can prompt or sign.
-      const synapse = Synapse.create({ account: address, chain, transport: http(rpcOf(input.chain)), source: "fifolders" });
-      const storage = createSynapseStorage(synapse, { dataSetId: BigInt(datasetId), copies: 2 });
+      const synapse = Synapse.create({ account: address, chain, transport: publicTransport(input.chain), source: "fifolders" });
+      let datasetId = selectedDataset || loadLastDataset(chain.id, address) || "";
+      if (!datasetId || datasetId.startsWith("provider:")) {
+        // New origin or cleared storage: find the owner's datasets on chain instead of showing nothing.
+        const found = await synapse.storage.findDataSets({ address });
+        const live = found.filter((dataset) => dataset.isLive !== false).map((dataset) => toDataset(input.chain, dataset));
+        datasetId = chooseDataset(live, null).selectedId ?? "";
+      }
+      if (!datasetId || datasetId.startsWith("provider:")) return null;
+      const storage = withProviderFallback(createSynapseStorage(synapse, { dataSetId: BigInt(datasetId), copies: 2 }), input.chain);
       const observed = observeRegistry(
         createViemRegistry({
           address: config.address,
