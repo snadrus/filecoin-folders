@@ -1,3 +1,5 @@
+import { reportLoadStep } from "./load-steps.js";
+import { PieceUnavailableError } from "./piece-fallback.js";
 import { MemoryRegistry, MemoryStorage, openVolume } from "fil-folders";
 import type { Address } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
@@ -42,6 +44,15 @@ interface RegistryBook {
  * (permit + deposit). Dataset creation signs with the session key: zero
  * wallet signatures. State that must survive reload lives in localStorage.
  */
+/** E2E: localStorage "fifolders:mock-piecefail" = "1" makes file reads fail as if no provider had the piece. */
+function failReadsWhenFlagged(volume: { get(path: string): Promise<Uint8Array> }): void {
+  const get = volume.get.bind(volume);
+  volume.get = async (path: string) => {
+    if (localStorage.getItem("fifolders:mock-piecefail") === "1") throw new PieceUnavailableError(path);
+    return get(path);
+  };
+}
+
 export function createMockOnboarding(params: URLSearchParams): OnboardingIO {
   let signatures = 0;
   let connectPrompts = 0;
@@ -79,6 +90,15 @@ export function createMockOnboarding(params: URLSearchParams): OnboardingIO {
   if (params.get("fcdrive") === "1") seedFilecoinDrive(storage);
   // E2E: slow piece reads so the Loose pieces loading state is observable.
   const pieceDelay = Number(params.get("piecedelay") ?? "0");
+  // E2E: every provider is down (opening a file shows "unavailable" + Retry).
+  // Toggled by localStorage "fifolders:mock-piecefail" = "1" so a test can fail reads after the folders load.
+  {
+    const get = storage.get.bind(storage);
+    storage.get = async (cid: string) => {
+      if (localStorage.getItem("fifolders:mock-piecefail") === "1") throw new PieceUnavailableError(cid);
+      return get(cid);
+    };
+  }
   if (pieceDelay > 0) {
     const get = storage.get.bind(storage);
     storage.get = async (cid: string) => {
@@ -247,6 +267,14 @@ export function createMockOnboarding(params: URLSearchParams): OnboardingIO {
       saveLastDataset(MOCK_CHAIN_ID, MOCK_ADDRESS, id);
     },
     async enter(input) {
+      reportLoadStep("Finding your folders…");
+      // E2E: a slow session open so the step text and the slow-load Retry are observable.
+      const enterDelay = Number(params.get("enterdelay") ?? "0");
+      if (enterDelay > 0) {
+        await new Promise((r) => setTimeout(r, enterDelay / 2));
+        reportLoadStep("Fetching from storage provider…");
+        await new Promise((r) => setTimeout(r, enterDelay / 2));
+      }
       const current = panel();
       if (!current.paymentsReady || !current.selectedDatasetId) throw new Error("Pick a dataset with storage payment ready.");
       if (!current.legacyRegistry && !current.sessionReady) throw new Error("Authorize the session key first.");
@@ -264,6 +292,7 @@ export function createMockOnboarding(params: URLSearchParams): OnboardingIO {
         owner: MOCK_ADDRESS,
         name: input.volumeName,
       });
+      failReadsWhenFlagged(volume);
       const session: Session = {
         volume,
         owner: MOCK_ADDRESS,
@@ -275,11 +304,19 @@ export function createMockOnboarding(params: URLSearchParams): OnboardingIO {
       return session;
     },
     async peek(input) {
+      reportLoadStep("Finding your folders…");
+      const peekDelay = Number(params.get("enterdelay") ?? "0");
+      if (peekDelay > 0) {
+        await new Promise((r) => setTimeout(r, peekDelay / 2));
+        reportLoadStep("Fetching from storage provider…");
+        await new Promise((r) => setTimeout(r, peekDelay / 2));
+      }
       if (params.get("peek") === "0") return null;
       const stored = localStorage.getItem(walletStorageKey());
       if (!stored || !chooseDataset(datasets(), loadLastDataset(MOCK_CHAIN_ID, MOCK_ADDRESS)).selectedId) return null;
       const observed = observeRegistry(registry);
       const volume = await openVolume({ storage, registry: observed.registry, owner: MOCK_ADDRESS, name: input.volumeName });
+      failReadsWhenFlagged(volume);
       return { volume, owner: MOCK_ADDRESS, chain: "calibration", encrypted: false, volumeName: input.volumeName, cas: observed.cas };
     },
     async reopen() {

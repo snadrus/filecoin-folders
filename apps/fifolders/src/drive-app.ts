@@ -1,5 +1,7 @@
 import { withTransientRetry } from "fil-folders";
 import { friendlyError } from "./friendly-error.js";
+import { onLoadStep } from "./load-steps.js";
+import { PieceUnavailableError } from "./piece-fallback.js";
 import { askUploadConflict } from "./upload-conflict.js";
 import { showVersions } from "./versions-dialog.js";
 import { felFileName } from "./blank.js";
@@ -119,6 +121,8 @@ interface PreviewModel {
   kind: PreviewKind;
   url?: string;
   text?: string;
+  /** No source had the bytes right now: show "unavailable" with Retry for this path. */
+  unavailable?: string;
 }
 
 interface ContextModel {
@@ -131,6 +135,12 @@ interface ContextModel {
 /** Snackbar lifetimes (plain / with an action button). */
 export const TOAST_MS = 8_000;
 export const TOAST_ACTION_MS = 10_000;
+
+/** After this long without the folders, show "taking longer than usual" with Retry. */
+const LOAD_SLOW_MS =
+  import.meta.env.VITE_E2E === "1" && typeof location !== "undefined" && new URLSearchParams(location.search).get("loadslow")
+    ? Number(new URLSearchParams(location.search).get("loadslow"))
+    : 30_000;
 
 export class DriveApp {
   volume: Volume | null;
@@ -257,7 +267,23 @@ export class DriveApp {
   #renewing = false;
   #renewWaiters: Array<() => void> = [];
 
+  /** Latest load step ("Finding your folders…") and when the current load started (for the slow-load Retry). */
+  loadStep = "";
+  #loadSince = 0;
+  #loadSlowShown = false;
+
   constructor(options: DriveAppOptions) {
+    onLoadStep((text) => {
+      this.loadStep = text;
+      if (this.isLoading()) this.render();
+    });
+    setInterval(() => {
+      const slow = this.isLoading() && this.#loadSince > 0 && Date.now() - this.#loadSince > LOAD_SLOW_MS;
+      if (slow !== this.#loadSlowShown) {
+        this.#loadSlowShown = slow;
+        this.render();
+      }
+    }, 2_000);
     this.volume = options.volume;
     this.owner = options.owner;
     this.chain = options.chain;
@@ -303,6 +329,13 @@ export class DriveApp {
   loadError = "";
   /** Re-runs the public chain read when no volume is open yet. */
   onRetryLoad: (() => Promise<void>) | null = null;
+
+  private isLoading(): boolean {
+    const loading = (!this.volume && !!this.panel && this.loadState === "idle") || this.loadState === "loading";
+    if (loading && !this.#loadSince) this.#loadSince = Date.now();
+    if (!loading) this.#loadSince = 0;
+    return loading;
+  }
 
   /** Public tree read failed before any volume opened: show an error with Retry, never an empty drive. */
   notePublicReadError(message: string): void {
@@ -1255,7 +1288,16 @@ export class DriveApp {
       this.openFel(stat);
       return;
     }
-    const bytes = await volume.get(path);
+    let bytes: Uint8Array;
+    try {
+      bytes = await volume.get(path);
+    } catch (error) {
+      if (!(error instanceof PieceUnavailableError) && !/HTTP 5\d\d|Failed to fetch|NetworkError|unavailable|not available|timed? ?out|abort/i.test(errorText(error))) throw error;
+      this.revokePreview();
+      this.preview = { name: stat.name, kind: "none", unavailable: path };
+      this.render();
+      return;
+    }
     const mime = guessMime(stat.name, stat.mime);
     const kindPreview = previewKind(mime, bytes);
     this.revokePreview();
@@ -1499,6 +1541,9 @@ export class DriveApp {
       return;
     }
     if (action === "retry-load") {
+      this.#loadSince = Date.now();
+      this.#loadSlowShown = false;
+      this.loadStep = "";
       this.loadState = "loading";
       this.loadError = "";
       this.render();
@@ -1601,6 +1646,14 @@ export class DriveApp {
     if (action === "close-dialog") {
       this.dialog = null;
       this.render();
+      return;
+    }
+    if (action === "retry-open") {
+      const path = actionEl?.dataset.path ?? "";
+      this.revokePreview();
+      this.preview = null;
+      this.render();
+      if (path) void this.enqueue(() => this.openPath(path));
       return;
     }
     if (action === "close-preview") {
@@ -2692,6 +2745,8 @@ export class DriveApp {
         : "",
       loadState: !this.volume && this.panel && this.loadState === "idle" ? "loading" : this.loadState,
       loadError: this.loadError,
+      loadStep: this.loadStep,
+      loadSlow: this.isLoading() && this.#loadSince > 0 && Date.now() - this.#loadSince > LOAD_SLOW_MS,
       setupStep: this.readOnly ? this.readOnlyStep() : null,
       txlogOpen: this.txlogOpen,
       loose: this.looseRows.map((piece) => ({

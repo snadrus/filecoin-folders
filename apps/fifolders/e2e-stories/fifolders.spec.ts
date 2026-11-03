@@ -569,3 +569,33 @@ test("S76 a 2nd upload dropped while the 1st is still saving both land, even whe
   await expect(page.getByTestId("staged-changes")).toHaveCount(0, { timeout: 30_000 });
   expect(errors.filter((e) => /future epoch/i.test(e))).toEqual([]);
 });
+
+test("S77 opening the folders never waits silently: step text, then 'taking longer' with Retry", async ({ page }) => {
+  await connect(page);
+  await page.getByTestId("file-input").setInputFiles([{ name: "a.txt", mimeType: "text/plain", buffer: Buffer.from("x") }]);
+  await expect(page.getByTestId("staged-changes")).toHaveCount(0, { timeout: 30_000 });
+  await page.goto(`${ready}&enterdelay=8000&loadslow=2000`);
+  if (await page.getByTestId("connect-wallet").count()) await page.getByTestId("connect-wallet").click();
+  const step = page.getByTestId("load-step");
+  await expect(step).toHaveText(/Finding your folders…|Fetching from storage provider…|Opening /);
+  await expect(page.getByTestId("load-slow")).toContainText("taking longer than usual");
+  await expect(page.getByTestId("load-slow").getByTestId("retry-load")).toBeVisible();
+  await page.screenshot({ path: "screenshots/load-progress.png" });
+  await expect(page.locator("body")).not.toContainText(/\bdrive\b/i);
+});
+
+test("S78 a file no provider can serve right now says 'unavailable' with Retry, and Retry opens it once providers are back", async ({ page }) => {
+  await connect(page);
+  await page.getByTestId("file-input").setInputFiles([{ name: "song.opus", mimeType: "", buffer: Buffer.from("OggS fake opus") }]);
+  const row = page.getByTestId("entry").filter({ hasText: "song.opus" });
+  await expect(row).toHaveCount(1);
+  await expect(page.getByTestId("staged-changes")).toHaveCount(0, { timeout: 30_000 });
+  await page.evaluate(() => localStorage.setItem("fifolders:mock-piecefail", "1"));
+  await page.getByTestId("entry").filter({ hasText: "song.opus" }).dblclick();
+  const box = page.getByTestId("preview-unavailable");
+  await expect(box).toContainText("This file is unavailable right now.");
+  await page.screenshot({ path: "screenshots/file-unavailable.png" });
+  await page.evaluate(() => localStorage.setItem("fifolders:mock-piecefail", "0"));
+  await page.getByTestId("retry-open").click();
+  await expect(page.getByTestId("preview-audio")).toBeVisible();
+});

@@ -41,6 +41,8 @@ export interface PreviewState {
   kind: PreviewKind;
   url?: string;
   text?: string;
+  /** No source had the bytes right now: show "unavailable" with Retry for this path. */
+  unavailable?: string;
 }
 
 export interface DialogState {
@@ -165,6 +167,8 @@ export interface ViewModel {
   /** Shown while the drive is browsable but wallet setup still runs. */
   setupNote: string;
   loadState?: "idle" | "loading" | "ok" | "error";
+  loadStep?: string;
+  loadSlow?: boolean;
   loadError?: string;
   setupStep: { action: string; label: string } | null;
   dropPath: string | null;
@@ -280,7 +284,11 @@ function renderSetupShell(model: ViewModel): string {
     ${renderTop(model)}
     ${renderNav(model)}
     <main class="workspace">
-      <div class="empty" data-testid="drive-pending">${picked ? `Opening ${escapeHtml(datasetLabel(picked))}…` : "Pick a dataset to open your folders."}</div>
+      ${!picked
+        ? `<div class="empty" data-testid="drive-pending">Pick a dataset to open your folders.</div>`
+        : model.loadState === "error"
+          ? `<div class="empty" data-testid="load-error" role="alert">Could not open your folders. Your files are safe on chain.${model.loadError ? ` <small>${escapeHtml(model.loadError)}</small>` : ""} <button type="button" data-action="retry-load" data-testid="retry-load">Retry</button></div>`
+          : `<div class="empty" data-testid="drive-pending" role="status"><span class="spinner" aria-hidden="true"></span> <span data-testid="load-step">${escapeHtml(model.loadStep || `Opening ${datasetLabel(picked)}…`)}</span>${model.loadSlow ? `<p class="load-slow" data-testid="load-slow">This is taking longer than usual. Your files are safe on chain. <button type="button" data-action="retry-load" data-testid="retry-load">Retry</button></p>` : ""}</div>`}
     </main>
     ${needsUser ? `<div class="costs-backdrop setup-backdrop">${renderSetup(model)}</div>` : ""}
     ${model.costsOpen ? renderCosts() : ""}
@@ -532,7 +540,7 @@ function renderBrowser(model: ViewModel): string {
       : model.loadState === "loading" && !filled && model.nav === "loose"
         ? `<div class="empty loose-skeleton" data-testid="drive-loading" role="status"><p data-testid="loose-loading"><span class="spinner" aria-hidden="true"></span> ${escapeHtml(model.looseProgress || "Finding loose pieces…")}</p>${'<span class="skeleton-bar"></span>'.repeat(4)}</div>`
       : model.loadState === "loading" && !filled
-        ? `<div class="empty" data-testid="drive-loading" role="status"><span class="spinner" aria-hidden="true"></span> Loading your folders from Filecoin…</div>`
+        ? `<div class="empty" data-testid="drive-loading" role="status"><span class="spinner" aria-hidden="true"></span> <span data-testid="load-step">${escapeHtml(model.loadStep || "Loading your folders from Filecoin…")}</span>${model.loadSlow ? `<p class="load-slow" data-testid="load-slow">This is taking longer than usual. Your files are safe on chain. <button type="button" data-action="retry-load" data-testid="retry-load">Retry</button></p>` : ""}</div>`
         : filled
           ? ""
           : renderEmpty(model);
@@ -836,6 +844,7 @@ export function volumeLabel(name: string): string {
 
 function renderPreview(preview: PreviewState): string {
   let body = `<p>No preview for this file.</p>`;
+  if (preview.unavailable) body = `<div class="unavailable" data-testid="preview-unavailable" role="alert"><p><strong>This file is unavailable right now.</strong> Its storage providers didn't answer. Your file is still recorded on chain.</p><button type="button" class="primary" data-action="retry-open" data-path="${escapeHtml(preview.unavailable)}" data-testid="retry-open">Retry</button></div>`;
   if (preview.kind === "image" && preview.url) body = `<img alt="${escapeHtml(preview.name)}" src="${preview.url}" />`;
   else if (preview.kind === "pdf" && preview.url) body = `<iframe title="${escapeHtml(preview.name)}" src="${preview.url}"></iframe>`;
   else if (preview.kind === "video" && preview.url) body = `<video controls preload="metadata" data-testid="preview-video" src="${preview.url}"></video>`;
