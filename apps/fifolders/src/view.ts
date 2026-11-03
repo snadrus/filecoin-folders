@@ -1,4 +1,5 @@
 import { LEGACY_NAME_KEY, SESSION_NAME_KEYS, avatarHtml, cachedIdentity, pickDisplayName, type ResolvedIdentity } from "fiperson/view";
+import { friendlyError } from "./friendly-error.js";
 import type { HistoryEntry, Stat } from "fil-folders";
 import type { ChainStepView } from "./chain-step.js";
 import { felanumioSvg, felarumiSvg, logoSvg } from "./icons.js";
@@ -248,7 +249,7 @@ function renderConnect(model: ViewModel): string {
       <label class="check"><input data-testid="encrypt" name="encrypt" type="checkbox" ${model.encrypt ? "checked" : ""}/> Encrypt this volume</label>
       <button class="primary" data-testid="connect-wallet" type="submit">Connect wallet</button>
       <p class="note" data-testid="mainnet-note" ${model.mainnetBlocked ? "" : "hidden"}>Registry not deployed</p>
-      ${model.connectError ? `<p class="error" data-testid="connect-error">${escapeHtml(model.connectError)}</p>` : ""}
+      ${model.connectError ? `<p class="error" data-testid="connect-error">${escapeHtml(friendlyError(model.connectError))}</p>` : ""}
     </form>
   </div>`;
 }
@@ -334,7 +335,7 @@ function renderSetup(model: ViewModel): string {
       </div>
       ${open}
       <p class="note" data-testid="wallet-signatures">Wallet signatures ${panel.signatures}. Connect prompts ${panel.connectPrompts}.</p>
-      ${model.setupError ? `<p class="error" data-testid="setup-error">${escapeHtml(model.setupError)}</p>` : ""}
+      ${model.setupError ? `<p class="error" data-testid="setup-error">${escapeHtml(friendlyError(model.setupError))}</p>` : ""}
     </div>
   </div>`;
 }
