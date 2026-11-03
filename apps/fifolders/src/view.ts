@@ -137,6 +137,7 @@ export interface ViewModel {
   preview: PreviewState | null;
   uploads: UploadRow[];
   toasts: ToastRow[];
+  walletPrompts: WalletPromptView[];
   dropPath: string | null;
   dragging: boolean;
   felarumiUrl: string;
@@ -154,6 +155,30 @@ export interface ViewModel {
 }
 
 export function renderApp(model: ViewModel): string {
+  return renderScreen(model) + renderWalletPrompts(model.walletPrompts);
+}
+
+/** Wallet-waiting toasts on every screen, so a hidden MetaMask pop-up is never a mystery. */
+function renderWalletPrompts(prompts: WalletPromptView[]): string {
+  if (!prompts.length) return "";
+  return `<div class="wallet-prompts" data-testid="wallet-prompts" aria-live="assertive">${prompts
+    .map((prompt) =>
+      prompt.state === "waiting"
+        ? `<div class="toast wallet-toast" data-testid="wallet-prompt" data-state="waiting"><span class="spinner" aria-hidden="true"></span>Check your wallet — approve ${escapeHtml(prompt.what)} to continue</div>`
+        : `<div class="toast wallet-toast" data-testid="wallet-prompt" data-state="rejected">Signature rejected
+            <button type="button" data-action="wallet-retry" data-id="${prompt.id}" data-testid="wallet-retry">Retry</button>
+            <button type="button" data-action="wallet-cancel" data-id="${prompt.id}" data-testid="wallet-cancel" aria-label="Cancel">×</button></div>`,
+    )
+    .join("")}</div>`;
+}
+
+export interface WalletPromptView {
+  id: number;
+  what: string;
+  state: "waiting" | "rejected";
+}
+
+function renderScreen(model: ViewModel): string {
   if (!model.connected) return model.panel ? renderSetupShell(model) : renderConnect(model);
   return `<div class="shell">
     ${renderTop(model)}
