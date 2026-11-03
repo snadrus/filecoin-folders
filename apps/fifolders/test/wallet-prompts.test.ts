@@ -117,3 +117,15 @@ describe("transaction log purpose labels", () => {
     for (const label of [purposeText(INTENTS.save(2)), cleanOpLabel("Create dataset (reserve $0.50 USDFC)")]) expect(label).not.toMatch(/gas|Send transaction|\(/);
   });
 });
+
+describe("S51 registry v2 migration prompt label", () => {
+  it("labels the drive and identity pointer moves (one-time, gas shown)", async () => {
+    const { labelMigration, currentIntent } = await import("../src/wallet-prompts.js");
+    const drive = await labelMigration({ ns: "0x" + "12".repeat(32) }, async () => currentIntent());
+    expect(drive?.title).toBe("Move drive pointer to new registry");
+    expect(drive?.cost).toMatch(/FIL/);
+    const id = await labelMigration({ ns: "0x4ba7e36ce925bbe5d8a219757e1186149701b3ee9649e24538dccda15e7c59e5" }, async () => currentIntent());
+    expect(id?.title).toBe("Move identity pointer to new registry");
+    expect(currentIntent()).toBeNull();
+  });
+});
