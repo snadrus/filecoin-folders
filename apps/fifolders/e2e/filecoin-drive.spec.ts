@@ -46,3 +46,18 @@ test("Add to drive references Filecoin Drive pieces in the manifest and reads th
   await report.dblclick();
   await expect(page.getByTestId("preview-text")).toContainText("Q3 numbers: 42");
 });
+
+test("Loose pieces opens at once and fills in as pieces resolve", async ({ page }) => {
+  await page.goto("/?onboard=1&pay=ready&datasets=1&fcdrive=1&piecedelay=400");
+  await page.getByTestId("connect-wallet").click();
+  await expect(page.getByTestId("nav-drive")).toBeVisible();
+  await page.getByTestId("nav-loose").click();
+  await expect(page.getByTestId("nav-loose")).toHaveClass(/on|active/, { timeout: 300 });
+  await expect(page.getByTestId("loose-loading").first()).toBeVisible({ timeout: 300 });
+  if (process.env.SHOT_LOOSE) {
+    await page.locator("[data-testid=loose-row]").first().waitFor({ timeout: 10_000 }).catch(() => undefined);
+    await page.screenshot({ path: process.env.SHOT_LOOSE });
+  }
+  await expect(page.locator("[data-testid=loose-row][data-origin=drive]")).toHaveCount(3, { timeout: 15_000 });
+  await expect(page.getByTestId("loose-loading")).toHaveCount(0);
+});

@@ -13,6 +13,38 @@ export interface WalletIntent {
   logged?: boolean;
 }
 
+/** Plain purpose for the Transaction log: what it is for, never "transaction" or gas wording. */
+export function purposeText(intent: WalletIntent): string {
+  switch (intent.title) {
+    case "Authorize session key":
+      return "Authorize this browser to save";
+    case "Approve storage payments":
+      return "Allow storage payments";
+    case "Save changes":
+      return `Save ${intent.purpose ?? "changes"} to My Drive`;
+    case "Add to drive": {
+      const n = /reference (\d+)/.exec(intent.purpose ?? "")?.[1] ?? "";
+      return `Add ${n ? `${n} ` : ""}Filecoin Drive ${n === "1" ? "file" : "files"}`;
+    }
+    case "Create dataset":
+      return "Create a storage dataset";
+    case "Send transaction":
+      return "Confirm a wallet request";
+    case "Sign message":
+      return "Sign with your wallet";
+    default:
+      return intent.title;
+  }
+}
+
+/** Legacy stored labels like "Send transaction (gas)" or "X — purpose (~0.05 FIL)": keep the purpose only. */
+export function cleanOpLabel(label: string): string {
+  if (/^Send transaction\b/.test(label)) return "Confirm a wallet request";
+  if (/^Authorize session key\b/.test(label)) return "Authorize this browser to save";
+  if (/^Approve storage payments\b/.test(label)) return "Allow storage payments";
+  return label.replace(/\s*\([^()]*\)\s*$/, "").replace(/\s+—\s+.*$/, "");
+}
+
 export function intentText(intent: WalletIntent): string {
   return `${intent.title}${intent.purpose ? ` — ${intent.purpose}` : ""} (${intent.cost})`;
 }

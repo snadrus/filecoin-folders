@@ -58,7 +58,9 @@ describe("activity rows auto-dismiss", () => {
     upsertOp(newOp({ id: "bad", kind: "upload", label: "broken.bin", path: "/broken.bin", name: "broken.bin", stage: "pending", status: "error", error: "boom" } as never));
     const op = app.beginOp({ kind: "dataset", label: "Create dataset", stage: "pending" });
     app.finishOp(op);
+    (app as unknown as { txlogOpen: boolean }).txlogOpen = true;
     (app as unknown as { render: () => void }).render();
+    expect(root.querySelector("[data-testid=txlog-toggle]")?.textContent).toContain("Transaction log");
     expect(root.querySelector("[data-testid=activity-progress]")).toBeTruthy();
     expect(root.textContent).toContain("Create dataset");
     vi.advanceTimersByTime(10_001);

@@ -284,6 +284,7 @@ describe("DriveApp", () => {
     await app2.settled;
     expect(session.registry.commits).toBe(before + 1);
     expect(root2.querySelector("[data-testid=save-changes]")).toBeNull();
+    root2.querySelector<HTMLButtonElement>("[data-testid=txlog-toggle]")!.click();
     expect(root2.querySelector("[data-testid=activity]")?.textContent).toContain("Save 1 change");
     expect((await session.volume.ls("/")).map((item) => item.name)).toContain("Photos");
     expect(localStorage.getItem(`fifolders:staged:${session.owner.toLowerCase()}:${session.volumeName}`)).toBeNull();
@@ -311,6 +312,7 @@ describe("DriveApp", () => {
     expect(session.registry.commits).toBe(before + 1);
     expect(new TextDecoder().decode(await session.volume.get("/one.txt"))).toBe("one");
     expect(new TextDecoder().decode(await session.volume.get("/two.txt"))).toBe("two");
+    root.querySelector<HTMLButtonElement>("[data-testid=txlog-toggle]")!.click();
     expect([...root.querySelectorAll("[data-testid=activity-item]")].filter((node) => node.textContent?.includes("Save 2 changes"))).toHaveLength(1);
   });
 });

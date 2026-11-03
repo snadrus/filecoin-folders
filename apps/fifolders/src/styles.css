@@ -360,3 +360,16 @@ button:disabled { cursor: default; opacity: 0.45; }
 .loose-adopt-all { display: flex; justify-content: flex-end; margin: 0 0 8px; }
 .loose-folder .text-button { margin-left: auto; font-size: 12px; }
 .fcdrive-badge { background: var(--restore); color: var(--accent-dark); }
+
+/* Transaction log: one sidebar entry, purpose-first rows. */
+.txlog-toggle .spinner.small, .activity-item .spinner.small { width: 12px; height: 12px; flex: none; border-color: rgba(128,128,128,0.3); border-top-color: #1a73e8; }
+.txlog-toggle .badge { margin-left: auto; background: #1a73e8; color: #fff; }
+.txlog-toggle .badge.error { background: #d93025; }
+.txlog .activity { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
+.activity-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.activity-text .note { font-size: 12px; margin: 0; }
+.txlog-details summary { cursor: pointer; font-size: 12px; color: var(--muted); }
+.loose-pending { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }
+.skeleton-row td { height: 20px; }
+.skeleton-bar { display: block; height: 10px; border-radius: 5px; background: linear-gradient(90deg, rgba(128,128,128,0.15), rgba(128,128,128,0.3), rgba(128,128,128,0.15)); background-size: 200% 100%; animation: skeleton 1.2s linear infinite; }
+@keyframes skeleton { from { background-position: 200% 0; } to { background-position: -200% 0; } }
