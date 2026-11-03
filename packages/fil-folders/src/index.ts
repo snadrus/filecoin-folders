@@ -42,30 +42,3 @@ export type {
 } from "./types.js";
 export { DEFAULT_DIR_THRESHOLD, Volume, openVolume } from "./volume.js";
 export type { OpenVolumeOptions } from "./volume.js";
-export { ADJECTIVES, ANIMALS, guestName } from "./guest-name.js";
-export {
-  BIO_MAX,
-  DISPLAY_NAME_MAX,
-  IDENTITY_CACHE_PREFIX,
-  IDENTITY_CONTACTS_KEY,
-  IDENTITY_NAMESPACE,
-  IDENTITY_PROFILE_KEY,
-  IDENTITY_SCHEMA,
-  IDENTITY_VERSION,
-  IdentityError,
-  buildIdentity,
-  cachedIdentity,
-  decodeIdentity,
-  encodeIdentity,
-  fetchPieceFromProviders,
-  identityCacheKey,
-  identityContactsKey,
-  identityNamespace,
-  identityPointerBytes,
-  identityProfileKey,
-  parseIdentity,
-  readIdentityCache,
-  resolveIdentity,
-  writeIdentityCache,
-} from "./identity.js";
-export type { Identity, IdentityAvatar, IdentityDraft, IdentityResolverOptions, IdentityV1, ResolvedIdentity } from "./identity.js";

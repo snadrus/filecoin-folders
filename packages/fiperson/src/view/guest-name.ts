@@ -1,4 +1,4 @@
-/** Friendly default names: "<Adjective> <Animal>", picked by xoshiro128++ seeded from a wallet address or browser id. Same lists and algorithm as FiPen's guest names. */
+/** Friendly default names: "<Adjective> <Animal>", picked by xoshiro128++ (splitmix32-seeded from FNV-1a of the lowercased text) with unbiased rejection sampling. Outputs are golden-tested; never change the lists or algorithm. */
 
 export const ADJECTIVES = [
   "Able", "Agile", "Amber", "Amiable", "Ample", "Upbeat", "Ardent", "Artful", "Awesome", "Balanced",
@@ -74,8 +74,16 @@ function seedOf(text: string): number {
   return hash >>> 0;
 }
 
+/** Seeded stream with the name already drawn: name first, then anything else (pixel avatar) continues the same stream. */
+export function personStream(seedText: string): { name: string; next: () => number } {
+  const next = xoshiro128pp(seedOf(seedText));
+  const name = `${ADJECTIVES[pickIndex(next, ADJECTIVES.length)]} ${ANIMALS[pickIndex(next, ANIMALS.length)]}`;
+  return { name, next };
+}
+
 /** Same wallet address (or browser id) gives the same name everywhere. */
 export function guestName(seedText: string): string {
-  const next = xoshiro128pp(seedOf(seedText));
-  return `${ADJECTIVES[pickIndex(next, ADJECTIVES.length)]} ${ANIMALS[pickIndex(next, ANIMALS.length)]}`;
+  return personStream(seedText).name;
 }
+
+export { pickIndex };

@@ -1,9 +1,9 @@
-import { DISPLAY_NAME_MAX, BIO_MAX, IdentityError, buildIdentity, guestName, writeIdentityCache, type ResolvedIdentity } from "fil-folders";
+import { AVATAR_COLORS, BIO_MAX, DISPLAY_NAME_MAX, IdentityError, LEGACY_NAME_KEY, avatarHtml, buildIdentity, escapeHtml as esc, guestName, writeIdentityCache, type ResolvedIdentity } from "fiperson/edit";
 import { onWalletPrompts, isUserRejection, type WalletPrompt } from "../wallet-prompts.js";
 import { IdentityBlocked, type IdentityIO } from "./io.js";
 
-export const LEGACY_NAME_KEY = "fifolders:display-name";
-export const COLORS = ["#1a73e8", "#188038", "#d93025", "#e37400", "#9334e6", "#007b83", "#c5221f", "#5f6368"];
+export { LEGACY_NAME_KEY };
+export const COLORS = AVATAR_COLORS;
 
 /** Only same-origin return targets (FiPen/FiGrid/FiFolders pages). */
 export function safeReturn(value: string | null, origin = location.origin): string | null {
@@ -14,10 +14,6 @@ export function safeReturn(value: string | null, origin = location.origin): stri
   } catch {
     return null;
   }
-}
-
-function esc(text: string): string {
-  return text.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 }
 
 interface State {
@@ -163,8 +159,8 @@ export class IdentityPage {
   private preview(): string {
     const d = this.state.draft;
     const name = d.displayName.trim() || "Your name";
-    const glyph = d.emoji.trim() || (name[0] || "?").toUpperCase();
-    return `<div class="preview" data-testid="identity-preview"><span class="avatar" style="background:${esc(d.color || "#e8eaed")};color:${d.color ? "#fff" : "#202124"}">${esc(glyph)}</span><span><strong>${esc(name)}</strong><small>${esc(this.state.address ?? "")}</small></span></div>`;
+    const person = { address: this.state.address ?? undefined, displayName: name, avatar: { emoji: d.emoji.trim(), color: d.color } };
+    return `<div class="preview" data-testid="identity-preview">${avatarHtml(person, 44)}<span><strong>${esc(name)}</strong><small>${esc(this.state.address ?? "")}</small></span></div>`;
   }
 
   private renderToasts(): void {

@@ -6,8 +6,8 @@
     "node": ">=22"
   },
   "scripts": {
-    "build": "pnpm --filter fil-folders build",
-    "test": "forge test --root contracts -vv && pnpm --filter fil-folders test && pnpm --filter fil-folders build && tsc -p tsconfig.example.json && pnpm --filter fifolders test",
+    "build": "pnpm --filter fil-folders --filter fiperson build",
+    "test": "forge test --root contracts -vv && pnpm --filter fil-folders test && pnpm --filter fiperson build && pnpm --filter fiperson test && pnpm --filter fil-folders build && tsc -p tsconfig.example.json && pnpm --filter fifolders test",
     "test:contracts": "forge test --root contracts -vv",
     "example": "tsx examples/cli.ts",
     "deploy:calibration": "cd contracts && forge create src/FolderRegistry.sol:FolderRegistry --rpc-url calibration --broadcast --private-key \"$PRIVATE_KEY\" --constructor-args $(cast wallet address --private-key \"$PRIVATE_KEY\") 0x518411c2062E119Aaf7A8B12A2eDf9a939347655",

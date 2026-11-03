@@ -1,23 +1,13 @@
 import { calibration, mainnet } from "@filoz/synapse-core/chains";
-import {
-  createSynapseStorage,
-  createViemRegistry,
-  decodeIdentity,
-  encodeIdentity,
-  fetchPieceFromProviders,
-  identityNamespace,
-  identityPointerBytes,
-  identityProfileKey,
-  resolveIdentity,
-  bytesToPieceCid,
-  type IdentityV1,
-} from "fil-folders";
+import { createSynapseStorage, createViemRegistry } from "fil-folders";
+import { assertStorageReady, saveIdentity, type IdentityV1 } from "fiperson/edit";
 import { createPublicClient, createWalletClient, custom, getAddress, http, type Address, type Chain, type PublicClient } from "viem";
 import { discoverWallets } from "../eip6963.js";
 import { readNetworkPreference } from "../network.js";
 import { CALIBRATION_FROM_BLOCK, CALIBRATION_REGISTRY, CALIBRATION_RPC, MAINNET_RPC, ensureChain, type ChainChoice } from "../session.js";
 import { INTENTS, watchWalletPrompts, withWalletIntent } from "../wallet-prompts.js";
-import { IDENTITY_INTENTS, IdentityBlocked, type IdentityIO } from "./io.js";
+import { IdentityBlocked, type IdentityIO } from "./io.js";
+import { resolvePerson } from "../person.js";
 
 type Provider = { request(args: { method: string; params?: unknown }): Promise<unknown> };
 
@@ -51,30 +41,6 @@ export function createLiveIdentityIO(choice: ChainChoice = readNetworkPreference
     return provider;
   }
 
-  let providerUrls: Promise<string[]> | null = null;
-  async function fetchPiece(pieceCid: string): Promise<Uint8Array> {
-    const { Synapse } = await import("@filoz/synapse-sdk");
-    try {
-      const synapse = Synapse.create({ account: "0x0000000000000000000000000000000000000001", chain, transport: publicTransport, source: "fifolders" } as never);
-      return await createSynapseStorage(synapse as never).get(pieceCid);
-    } catch {
-      providerUrls ??= import("@filoz/synapse-core/sp-registry")
-        .then(({ getPDPProviders }) => getPDPProviders(client as never, { onlyActive: true, limit: 200n } as never))
-        .then((out) => out.providers.map((p) => p.pdp?.serviceURL ?? (p as unknown as { serviceURL?: string }).serviceURL ?? "").filter(Boolean))
-        .catch(() => [] as string[]);
-      return fetchPieceFromProviders(pieceCid, await providerUrls, (bytes) => decodeIdentity(bytes) !== null);
-    }
-  }
-
-  function readRegistry(address: Address) {
-    return createViemRegistry({
-      ...registryOf(choice),
-      publicClient: client,
-      walletClient: createWalletClient({ account: address, chain, transport: http(rpc) }),
-      scanCache: null,
-    });
-  }
-
   return {
     async peek() {
       try {
@@ -91,10 +57,7 @@ export function createLiveIdentityIO(choice: ChainChoice = readNetworkPreference
       if (!address) throw new Error("The wallet returned no account.");
       return address;
     },
-    async load(address) {
-      const registry = readRegistry(address as Address);
-      return resolveIdentity(address, { head: (o, n, k) => registry.head(o, n, k), fetchPiece, force: true });
-    },
+    load: (address) => resolvePerson(address, choice, true),
     async save(address, identity: IdentityV1, onStep) {
       const owner = getAddress(address);
       const p = await getProvider();
@@ -105,25 +68,14 @@ export function createLiveIdentityIO(choice: ChainChoice = readNetworkPreference
       const info = (await reader.payments.accountInfo()) as { funds?: bigint; availableFunds?: bigint };
       const approval = (await reader.payments.serviceApproval()) as unknown;
       const approved = Array.isArray(approval) ? Boolean(approval[0]) : Boolean((approval as { isApproved?: boolean } | null)?.isApproved);
-      if (!((info.availableFunds ?? info.funds ?? 0n) > 0n) || !approved) {
-        // Never approve or deposit from here: that is FiFolders' job, with its own cost screen.
-        throw new IdentityBlocked("Storage payments are not set up for this wallet. Finish setup in FiFolders (it shows the cost first), then save again.");
-      }
       const found = await reader.storage.findDataSets({ address: owner });
       const live = found.filter((d: { isLive?: boolean }) => d.isLive !== false);
       const last = localStorage.getItem(`fifolders:dataset:${chain.id}:${owner.toLowerCase()}`);
       const dataset = live.find((d: { dataSetId: bigint }) => d.dataSetId.toString() === last) ?? live[live.length - 1];
-      if (!dataset) {
-        // Creating a dataset reserves USDFC: leave it to FiFolders.
-        throw new IdentityBlocked("This wallet has no storage dataset yet. Create one in FiFolders (it shows the cost first), then save again.");
-      }
-
-      onStep("Storing your identity piece…");
+      // Never approves, deposits or creates a dataset: those are FiFolders' cost-labeled steps.
+      assertStorageReady({ funds: info.availableFunds ?? info.funds ?? 0n, approved, datasetId: dataset ? BigInt(dataset.dataSetId) : null });
       const synapse = Synapse.create({ account: owner, chain, transport: custom(p), source: "fifolders" } as never);
-      const storage = createSynapseStorage(synapse as never, { dataSetId: BigInt(dataset.dataSetId) });
-      const { pieceCid } = await withWalletIntent(IDENTITY_INTENTS.upload, () => storage.put(encodeIdentity(identity)));
-
-      onStep("Linking it to your wallet…");
+      const storage = createSynapseStorage(synapse as never, { dataSetId: BigInt(dataset!.dataSetId) });
       const registry = createViemRegistry({
         ...registryOf(choice),
         publicClient: client,
@@ -131,13 +83,7 @@ export function createLiveIdentityIO(choice: ChainChoice = readNetworkPreference
         signer: "auto",
         scanCache: null,
       });
-      const ns = identityNamespace();
-      const key = identityProfileKey();
-      const head = await registry.head(owner, ns, key);
-      const record = await withWalletIntent(IDENTITY_INTENTS.pointer, () =>
-        registry.commit({ owner, ns, key, pieceCid: identityPointerBytes(pieceCid), prevPieceCid: head.pieceCid }),
-      );
-      return { pieceCid: bytesToPieceCid(record.pieceCid), version: record.version.toString(), txHash: record.txHash };
+      return saveIdentity(identity as IdentityV1, { storage, registry, onStep, withIntent: (intent, fn) => withWalletIntent(intent, fn) });
     },
   };
 }
