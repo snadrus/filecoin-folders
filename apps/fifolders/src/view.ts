@@ -455,8 +455,8 @@ function renderNav(model: ViewModel): string {
       ${runway.detail ? `<p class="runway-detail" data-testid="runway-detail">${runwayHtml(runway.detail, runway.datasetLabel)}</p>` : ""}
       ${runway.showAdd ? `<button type="button" class="primary slim" data-action="add-funds" data-testid="add-funds">Add funds</button>` : ""}
     </div>
-    <input data-testid="file-input" class="sr-only" type="file" multiple />
-    <input data-testid="folder-input" class="sr-only" type="file" multiple webkitdirectory />
+    <input data-testid="file-input" class="sr-only" type="file" multiple aria-label="Upload files" tabindex="-1" />
+    <input data-testid="folder-input" class="sr-only" type="file" multiple webkitdirectory aria-label="Upload folder" tabindex="-1" />
   </aside>`;
 }
 
