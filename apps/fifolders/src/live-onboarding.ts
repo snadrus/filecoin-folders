@@ -1,3 +1,4 @@
+import { walletWithPublicReads } from "./split-transport.js";
 import { withTransientRetry } from "fil-folders";
 import { INTENTS, intentText, sessionIntent, watchWalletPrompts, withWalletIntent, labelMigration } from "./wallet-prompts.js";
 import { calibration, mainnet, type Chain } from "@filoz/synapse-core/chains";
@@ -125,7 +126,7 @@ export function createLiveOnboarding(): OnboardingIO {
     return createWalletClient({
       account: requireRoot(),
       chain: chainOf(choice),
-      transport: custom(requireProvider()),
+      transport: walletWithPublicReads(requireProvider(), rpcOf(choice)),
     });
   }
 
@@ -603,7 +604,7 @@ export function createLiveOnboarding(): OnboardingIO {
       const synapse = Synapse.create({
         account: address,
         chain: chainOf(input.chain),
-        transport: custom(requireProvider()),
+        transport: walletWithPublicReads(requireProvider(), rpcOf(input.chain)),
         source: "fifolders",
         sessionKey: session,
       });
@@ -641,7 +642,7 @@ export function createLiveOnboarding(): OnboardingIO {
       const synapse = Synapse.create({
         account: address,
         chain,
-        transport: custom(requireProvider()),
+        transport: walletWithPublicReads(requireProvider(), rpcOf(input.chain)),
         source: "fifolders",
         sessionKey: session,
       });
@@ -838,7 +839,7 @@ export function createLiveOnboarding(): OnboardingIO {
       client: createWalletClient({
         account: address,
         chain: chainOf(choice),
-        transport: custom(requireProvider()),
+        transport: walletWithPublicReads(requireProvider(), rpcOf(choice)),
       }) as never,
       source: "fifolders",
     });
