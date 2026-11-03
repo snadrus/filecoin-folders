@@ -8,6 +8,7 @@ import { CALIBRATION_FROM_BLOCK, CALIBRATION_REGISTRY, CALIBRATION_RPC, MAINNET_
 import { INTENTS, watchWalletPrompts, withWalletIntent, labelMigration } from "../wallet-prompts.js";
 import { IdentityBlocked, type IdentityIO } from "./io.js";
 import { resolvePerson } from "../person.js";
+import { CALIBRATION_FICLUB, findMyClubs, rpcEthCall } from "fiperson/clubs";
 
 type Provider = { request(args: { method: string; params?: unknown }): Promise<unknown> };
 
@@ -58,6 +59,13 @@ export function createLiveIdentityIO(choice: ChainChoice = readNetworkPreference
       return address;
     },
     load: (address) => resolvePerson(address, choice, true),
+    async findClubs(address) {
+      if (choice === "mainnet") throw new IdentityBlocked("FiClub is on Calibration only for now. Switch FiFolders to Calibration.");
+      const found = await findMyClubs(address, { call: rpcEthCall(CALIBRATION_RPC), contract: import.meta.env.VITE_FICLUB_ADDRESS_CALIBRATION || CALIBRATION_FICLUB });
+      // Warm the identity cache so @-mentions show club-mates' names and avatars.
+      await Promise.all(found.coworkers.map((a) => resolvePerson(a, choice).catch(() => null)));
+      return found;
+    },
     async save(address, identity: IdentityV1, onStep) {
       const owner = getAddress(address);
       const p = await getProvider();

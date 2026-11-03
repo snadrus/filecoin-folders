@@ -1,0 +1,21 @@
+# Slack app for FiPerson notifications (FiPen @-mentions → "Notify <name>?").
+# Create at https://api.slack.com/apps → Create New App → From a manifest → paste this.
+# User-token only (no bot), PKCE public client: no client secret is ever used or shipped.
+display_information:
+  name: FiFolders
+  description: Lets FiPen send a Slack DM, as you, when you @-mention someone in a document.
+  background_color: "#1a73e8"
+oauth_config:
+  redirect_urls:
+    - https://fifolders.scionbase.ai/slack/callback/
+    - http://localhost:4173/slack/callback/
+    - http://127.0.0.1:8791/slack/callback/
+  scopes:
+    user:
+      - chat:write
+      - im:write
+  pkce_enabled: true
+settings:
+  org_deploy_enabled: false
+  socket_mode_enabled: false
+  token_rotation_enabled: false

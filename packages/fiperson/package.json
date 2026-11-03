@@ -1,14 +1,39 @@
 {
   "name": "fiperson",
   "version": "0.1.0",
-  "description": "Wallet person/identity for FiFolders, FiPen and FiGrid: view (read, guest names, resolver, UI) and edit (save profile piece + pointer).",
+  "description": "Wallet person/identity for FiFolders, FiPen and FiGrid: view (read, guest names, resolver, UI), edit (save profile piece + pointer), clubs (find my FiClubs, coworkers) and notify (Slack DMs).",
   "license": "MIT",
   "type": "module",
   "sideEffects": false,
-  "files": ["dist", "src"],
+  "files": [
+    "dist",
+    "src"
+  ],
   "exports": {
-    "./view": { "types": "./dist/view/index.d.ts", "import": "./dist/view/index.js" },
-    "./edit": { "types": "./dist/edit/index.d.ts", "import": "./dist/edit/index.js" }
+    "./view": {
+      "types": "./dist/view/index.d.ts",
+      "import": "./dist/view/index.js"
+    },
+    "./edit": {
+      "types": "./dist/edit/index.d.ts",
+      "import": "./dist/edit/index.js"
+    },
+    "./clubs": {
+      "types": "./dist/clubs/index.d.ts",
+      "import": "./dist/clubs/index.js"
+    },
+    "./notify": {
+      "types": "./dist/notify/index.d.ts",
+      "import": "./dist/notify/index.js"
+    },
+    "./notify/mock": {
+      "types": "./dist/notify/mock-slack.d.ts",
+      "import": "./dist/notify/mock-slack.js"
+    },
+    "./people": {
+      "types": "./dist/people/index.d.ts",
+      "import": "./dist/people/index.js"
+    }
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
