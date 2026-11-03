@@ -72,6 +72,7 @@ import {
   type StagedOp,
 } from "./staged.js";
 import { loadSavedView, persistMemoryVolume, saveView } from "./volume-persist.js";
+import { COPIES_KEY, copyTarget, dropCopy, loadCopies } from "./participant-copies.js";
 import { renderApp, type ActivityRow, type DialogState, type UploadRow, type ViewModel } from "./view.js";
 
 export interface DriveAppOptions {
@@ -1209,6 +1210,21 @@ export class DriveApp {
     if (!target) return;
     const actionEl = target.closest<HTMLElement>("[data-action]");
     const action = actionEl?.getAttribute("data-action") ?? "";
+    if (action === "copy-take" || action === "copy-dismiss") {
+      const id = actionEl?.getAttribute("data-copy-id") ?? "";
+      const copy = loadCopies().find((item) => item.id === id);
+      if (copy && action === "copy-take") {
+        const target = copyTarget(copy);
+        const name = target.path.slice(target.path.lastIndexOf("/") + 1);
+        // No title: the path is the name (a version keeps the original's name; a side-by-side copy says whose it is).
+        upsertOp(newOp({ id: "take:" + copy.id, kind: "fel-save", label: name, path: target.path, name, content: copy.content, stage: "saving" }));
+        this.toast(target.mode === "version" ? `Saving ${copy.from}'s copy as the new version of “${name}”` : `Saving ${copy.from}'s copy as “${name}”`);
+      }
+      dropCopy(id);
+      void this.enqueue(() => this.refresh());
+      this.render();
+      return;
+    }
     if (action === "renew-session") {
       void this.renewFromBanner();
       return;
@@ -1954,6 +1970,7 @@ export class DriveApp {
     });
     window.addEventListener("storage", (event) => {
       if (event.key === OPS_KEY) void this.enqueue(() => this.refresh());
+      if (event.key === COPIES_KEY) this.render();
     });
     document.addEventListener("pointerdown", (event) => {
       const target = event.target as HTMLElement | null;
@@ -2374,6 +2391,7 @@ export class DriveApp {
       runway,
       looseSummary: this.looseSummary,
       looseProgress: this.looseProgress,
+      participantCopies: loadCopies().map((copy) => ({ id: copy.id, title: copy.title, from: copy.from, mode: copyTarget(copy).mode })),
       walletPrompts: walletPrompts().map(({ id, what, state, intent }) => ({
         id,
         what,
