@@ -28,6 +28,8 @@ export interface TestWallet {
   /** Per-method behavior; key "*" is the default for signing methods. */
   modes: Record<string, Mode>;
   locked: boolean;
+  /** Address reported by eth_accounts/eth_requestAccounts instead of the signer's (simulates an account switch). */
+  accountOverride?: string;
   /** Chain the wallet reports; emit("chainChanged") and wallet_switchEthereumChain update it. */
   chainId: string;
   allowTx: (tx: { to?: string; data?: string; value?: string }) => boolean;
@@ -71,9 +73,9 @@ export async function installWallet(page: Page, opts: { allowTx?: TestWallet["al
       switch (method) {
         case "eth_requestAccounts":
           if (w.locked) return fail(4100, "Wallet is locked.");
-          return { result: [account.address] };
+          return { result: [w.accountOverride ?? account.address] };
         case "eth_accounts":
-          return { result: w.locked ? [] : [account.address] };
+          return { result: w.locked ? [] : [w.accountOverride ?? account.address] };
         case "eth_chainId":
           return { result: w.chainId };
         case "net_version":

@@ -748,6 +748,29 @@ export class DriveApp {
     }
   }
 
+  /** Wallet events (account/chain switch) restart the session in place: no reload, no prompt. */
+  walletSwitched(change: { account?: string; chainId?: string }, resume: () => Promise<unknown>): void {
+    if (change.chainId !== undefined) {
+      const want = this.chain === "mainnet" ? 314 : 314159;
+      if (Number(change.chainId) !== want) {
+        this.toast(`Your wallet switched network. FiFolders stays on ${this.chain === "mainnet" ? "Filecoin Mainnet" : "Calibration"}; saving will ask to switch back.`);
+        this.render();
+      }
+      return;
+    }
+    // Different account: drop the old signer and drive, then resume silently as the new account.
+    this.volume = null;
+    this.owner = "";
+    this.encrypted = false;
+    this.details = null;
+    this.render();
+    if (!change.account) return;
+    this.toast("Wallet account changed.");
+    void resume()
+      .catch((error: unknown) => this.toast(errorText(error)))
+      .finally(() => this.render());
+  }
+
   private toast(text: string): void {
     const id = `t${++this.#toastSeq}`;
     this.toasts = [...this.toasts, { id, text }].slice(-4);

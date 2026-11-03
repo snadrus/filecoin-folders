@@ -83,6 +83,7 @@ async function boot(): Promise<void> {
     ? (await import("./mock-onboarding.js")).createMockOnboarding(new URLSearchParams(location.search))
     : (await import("./live-onboarding.js")).createLiveOnboarding();
   await prepareOnboarding(app, io);
+  io.onWalletChange?.((change) => app.walletSwitched(change, () => resumeOnboarding(app, io)));
   try {
     await resumeOnboarding(app, io);
   } catch (error) {
