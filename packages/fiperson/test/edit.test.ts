@@ -43,3 +43,47 @@ describe("edit", () => {
     expect(() => assertStorageReady({ funds: 1n, approved: true, datasetId: 1n })).not.toThrow();
   });
 });
+
+describe("identity pointer commit: stale version", () => {
+  it("re-reads the head and retries once on a CAS conflict", async () => {
+    const registry = memRegistry();
+    let stale = true;
+    const realHead = registry.head.bind(registry);
+    registry.head = async (o, n, k) => (stale ? { pieceCid: new Uint8Array(), version: 0n } : realHead(o, n, k));
+    // The first head read is stale (lagging RPC) and an overlapping save lands first.
+    const realCommit = registry.commit.bind(registry);
+    let commits = 0;
+    registry.commit = async (input) => {
+      commits++;
+      if (commits === 1) {
+        stale = false;
+        await realCommit({ ...input, pieceCid: new TextEncoder().encode("other") }); // overlapping save lands first
+        throw Object.assign(new Error("registry compare-and-swap conflict at version 1"), { name: "RegistryCasConflict" });
+      }
+      return realCommit(input);
+    };
+    const storage = { put: async () => ({ pieceCid: "mine" }) };
+    const steps: string[] = [];
+    const saved = await saveIdentity(buildIdentity(A, { displayName: "Andy" }), { storage, registry, retryDelayMs: 0, onStep: (s) => steps.push(s) });
+    expect(saved).toMatchObject({ pieceCid: "mine", version: "2" });
+    expect(commits).toBe(2);
+    expect(steps.some((s) => /latest version/.test(s))).toBe(true);
+  });
+  it("does not retry other errors, and retries only once", async () => {
+    const registry = memRegistry();
+    let n = 0;
+    registry.commit = async () => {
+      n++;
+      throw new Error("CasConflict(0x, 3)");
+    };
+    await expect(saveIdentity(buildIdentity(A, { displayName: "A" }), { storage: { put: async () => ({ pieceCid: "p" }) }, registry, retryDelayMs: 0 })).rejects.toThrow(/CasConflict/);
+    expect(n).toBe(2);
+    registry.commit = async () => {
+      n++;
+      throw new Error("user rejected");
+    };
+    n = 0;
+    await expect(saveIdentity(buildIdentity(A, { displayName: "A" }), { storage: { put: async () => ({ pieceCid: "p" }) }, registry, retryDelayMs: 0 })).rejects.toThrow(/rejected/);
+    expect(n).toBe(1);
+  });
+});

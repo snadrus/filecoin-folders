@@ -50,12 +50,20 @@ export interface SaveIdentityOptions {
   onStep?: (step: string) => void;
   /** Registry key; default profile. Contacts use {@link IDENTITY_CONTACTS_KEY_ID}. */
   key?: Hex;
+  /** Pause before the single CAS-conflict retry (default 1.5 s). */
+  retryDelayMs?: number;
 }
 
 export interface IdentitySaved {
   pieceCid: string;
   version: string;
   txHash?: string;
+}
+
+/** fil-folders' RegistryCasConflict (matched by name/message so fiperson stays dependency-free) or the contract's CasConflict revert. */
+export function isCasConflict(error: unknown): boolean {
+  const e = error as { name?: string; message?: string; shortMessage?: string } | null;
+  return !!e && (e.name === "RegistryCasConflict" || /CasConflict|compare-and-swap conflict/i.test(`${e.message ?? ""} ${e.shortMessage ?? ""}`));
 }
 
 /** Store `bytes` as a piece and CAS-commit the pointer `(owner, fil-identity, key)` to it. */
@@ -65,10 +73,23 @@ export async function savePointedPiece(owner: Address, bytes: Uint8Array, opts: 
   const { pieceCid } = await run(IDENTITY_INTENTS.upload, () => opts.storage.put(bytes));
   opts.onStep?.("Linking it to your wallet…");
   const key = opts.key ?? IDENTITY_PROFILE_KEY_ID;
-  const head = await opts.registry.head(owner, IDENTITY_NS, key);
-  const record = await run(IDENTITY_INTENTS.pointer, () =>
-    opts.registry.commit({ owner, ns: IDENTITY_NS, key, pieceCid: new TextEncoder().encode(pieceCid), prevPieceCid: head.pieceCid }),
-  );
+  // Re-read the head right before committing; a lagging RPC or an overlapping save can still hand back a
+  // stale version, so on a CAS conflict re-read once more (after a short pause) and retry a single time.
+  const commitOnce = async () => {
+    const head = await opts.registry.head(owner, IDENTITY_NS, key);
+    return run(IDENTITY_INTENTS.pointer, () =>
+      opts.registry.commit({ owner, ns: IDENTITY_NS, key, pieceCid: new TextEncoder().encode(pieceCid), prevPieceCid: head.pieceCid }),
+    );
+  };
+  let record: Awaited<ReturnType<typeof commitOnce>>;
+  try {
+    record = await commitOnce();
+  } catch (error) {
+    if (!isCasConflict(error)) throw error;
+    opts.onStep?.("Your identity changed meanwhile — linking to the latest version…");
+    await new Promise((resolve) => setTimeout(resolve, opts.retryDelayMs ?? 1500));
+    record = await commitOnce();
+  }
   return { pieceCid: new TextDecoder().decode(record.pieceCid), version: record.version.toString(), txHash: record.txHash };
 }
 
