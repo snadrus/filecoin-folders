@@ -168,3 +168,35 @@ test("S10b fresh browser, same wallet: the drive tree is recovered from chain", 
   await expect(page.getByText(/^s45-\d+\.txt$/).first()).toBeVisible({ timeout: 240_000 });
   expect(w.calls.filter((c) => c.outcome.startsWith("tx ")).length).toBe(0);
 });
+
+test("S48 identity save with a picture on live /identity/ (Calibration spend)", async ({ page }) => {
+  test.skip(!process.env.STORIES_SPEND, "spends test FIL on Calibration; set STORIES_SPEND=1");
+  test.setTimeout(600_000);
+  const w = await installWallet(page, { allowTx: () => w.chainId === CHAIN_ID });
+  await page.goto("/identity/");
+  const connect = page.getByTestId("identity-connect");
+  await expect(connect.or(page.getByTestId("identity-name")).first()).toBeVisible({ timeout: 90_000 });
+  if (await connect.isVisible()) await connect.click({ timeout: 5_000 }).catch(() => {});
+  await expect(page.getByTestId("identity-name")).toBeVisible({ timeout: 90_000 });
+  const png = await page.evaluate(() => {
+    const c = document.createElement("canvas");
+    c.width = 240;
+    c.height = 180;
+    const g = c.getContext("2d")!;
+    g.fillStyle = "#188038";
+    g.fillRect(0, 0, 240, 180);
+    g.fillStyle = "#fff";
+    g.fillRect(90, 60, 60, 60);
+    return c.toDataURL("image/png").split(",")[1];
+  });
+  await page.getByTestId("identity-image-file").setInputFiles({ name: "me.png", mimeType: "image/png", buffer: Buffer.from(png, "base64") });
+  await expect(page.locator("[data-testid=identity-preview] [data-kind=image] img")).toBeVisible();
+  await page.getByTestId("identity-save").click();
+  await expect(page.getByTestId("identity-saved").or(page.getByTestId("identity-error")).or(page.getByTestId("identity-blocked")).first()).toBeVisible({ timeout: 480_000 });
+  await expect(page.getByTestId("identity-saved")).toBeVisible();
+  // Fresh read from chain + piece.
+  await page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith("fil-identity:")).forEach((k) => localStorage.removeItem(k)));
+  await page.reload();
+  await expect(page.getByTestId("identity-status")).toContainText("Saved on chain", { timeout: 120_000 });
+  await expect(page.locator("[data-testid=identity-preview] [data-kind=image] img")).toBeVisible();
+});
