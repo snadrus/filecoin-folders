@@ -21,7 +21,8 @@ import { chainStepTitle, explorerHref, stepDetail, type ChainReport, type ChainS
 import { INTENTS, intentText, onWalletPrompts, sessionIntent, withWalletIntent, type WalletPrompt, walletPrompts } from "./wallet-prompts.js";
 import { ACTIVITY_DISMISS_MS, dismissActivity, loadDismissed } from "./activity.js";
 import { defaultFelTitle, felTarget, rememberFelTarget, remapFelTargets } from "./fel-names.js";
-import { loosePieces, rememberPiece, type LoosePiece } from "./loose.js";
+import { directoryFile, loosePieces, rememberPiece, sniffMime, type LoosePiece } from "./loose.js";
+import { readPieceDetails, type PieceDetail } from "./drive-pieces.js";
 import {
   TRASH_PATH,
   applySelection,
@@ -394,7 +395,7 @@ export class DriveApp {
     if (panel.autoPicked && panel.datasets.length > 1 && panel.selectedDatasetId && !this.pickedDataset && !this.#autoPickToasted.has(autoKey)) {
       this.#autoPickToasted.add(autoKey);
       this.toastAction(
-        `Using your latest dataset (#${panel.selectedDatasetId}). You can switch datasets from the sidebar.`,
+        `Using your latest dataset (#${panel.selectedDatasetId}). You can switch datasets from the wallet menu.`,
         "open-datasets",
         "Change",
       );
@@ -1387,6 +1388,27 @@ export class DriveApp {
       this.render();
       return;
     }
+    if (action === "loose-expand") {
+      const cid = actionEl?.dataset.cid ?? "";
+      if (this.looseExpanded.has(cid)) this.looseExpanded.delete(cid);
+      else this.looseExpanded.add(cid);
+      this.render();
+      return;
+    }
+    if (action === "loose-entry-download") {
+      const piece = this.looseRows.find((item) => item.pieceCid === actionEl?.dataset.cid);
+      const path = actionEl?.dataset.path ?? "";
+      if (!piece) return;
+      try {
+        const bytes = directoryFile(piece, path);
+        const name = path.split("/").pop() || "file";
+        this.downloadBytes(bytes, name, sniffMime(name, bytes));
+      } catch (error) {
+        this.toast(errorText(error));
+        this.render();
+      }
+      return;
+    }
     if (action === "dismiss-toast") {
       const id = actionEl?.dataset.id;
       this.toasts = this.toasts.filter((toast) => toast.id !== id);
@@ -2089,13 +2111,33 @@ export class DriveApp {
         blobs.push({ pieceCid, bytes: new Uint8Array() });
       }
     }
-    const rows = loosePieces(blobs, referenced);
+    let details = new Map<string, PieceDetail>();
+    try {
+      details = new Map((await readPieceDetails()).map((detail) => [detail.pieceCid, detail]));
+    } catch (error) {
+      console.warn("FiFolders piece metadata", error);
+    }
+    const rows = loosePieces(blobs, referenced, details);
+    const fromDrive = rows.filter((row) => row.origin === "drive").length;
     const inFolders = cids.filter((cid) => referenced.has(cid)).length;
-    this.looseSummary = `${cids.length} pieces: ${inFolders} in folders, ${blobs.length - rows.length} manifests, ${rows.length} loose`;
+    this.looseSummary = `${cids.length} pieces: ${inFolders} in folders, ${blobs.length - rows.length} manifests, ${rows.length} loose${fromDrive ? ` (${fromDrive} from Filecoin Drive)` : ""}`;
     return rows;
   }
 
   looseSummary = "";
+  /** Filecoin Drive directory pieces expanded in the Loose pieces view. */
+  looseExpanded = new Set<string>();
+
+  private downloadBytes(bytes: Uint8Array, name: string, mime: string): void {
+    const url = URL.createObjectURL(toBlob(bytes, mime));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = name;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  }
   txlogOpen = false;
 
   private openFel(stat: Pick<Stat, "name" | "path" | "pieceCid">): void {
@@ -2112,6 +2154,11 @@ export class DriveApp {
   private async downloadLoose(cid: string): Promise<void> {
     const piece = this.looseRows.find((item) => item.pieceCid === cid);
     if (!piece) return;
+    if (piece.unixfs === "directory" || piece.unixfs === "car") {
+      const base = piece.name.replace(/\.car$/i, "");
+      this.downloadBytes(piece.bytes, `${base || cid}.car`, "application/vnd.ipld.car");
+      return;
+    }
     const blob = toBlob(piece.bytes, piece.mime);
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -2225,6 +2272,9 @@ export class DriveApp {
         size: piece.size,
         uploaded: piece.uploaded,
         mime: piece.mime,
+        ...(piece.origin ? { origin: piece.origin, folder: piece.folder ?? "", unixfs: piece.unixfs, expanded: this.looseExpanded.has(piece.pieceCid) } : {}),
+        ...(piece.ipfsRoot ? { ipfsRoot: piece.ipfsRoot } : {}),
+        ...(piece.children ? { children: piece.children } : {}),
       })),
       badges,
       chain: this.chain,

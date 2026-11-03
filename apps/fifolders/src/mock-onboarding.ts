@@ -20,6 +20,8 @@ import {
 } from "./onboarding-logic.js";
 import type { ChainReporter, OnboardingIO } from "./onboarding-io.js";
 import { observeRegistry, type Session } from "./session.js";
+import { setPieceDetailSource, type PieceDetail } from "./drive-pieces.js";
+import { buildFixtureCar } from "./unixfs.js";
 import { INTENTS, intentText, sessionIntent } from "./wallet-prompts.js";
 
 export const MOCK_CHAIN_ID = 314159;
@@ -64,6 +66,8 @@ export function createMockOnboarding(params: URLSearchParams): OnboardingIO {
     localStorage.setItem(DATASETS_KEY, JSON.stringify(seed));
   }
 
+  if (params.get("fcdrive") === "1") seedFilecoinDrive(storage);
+
   function book(): RegistryBook {
     try {
       return JSON.parse(localStorage.getItem(REGISTRY_KEY) || "{}") as RegistryBook;
@@ -99,7 +103,10 @@ export function createMockOnboarding(params: URLSearchParams): OnboardingIO {
     const gate = stored ? sessionGateFromExpiries(permissionExpiries(stored.sessionAddress), now) : "expired";
     const sessionReady = Boolean(stored && gate !== "expired");
     const driveIds = new Set((params.get("drives") ?? "").split(",").filter(Boolean));
-    const list = datasets().map((dataset) => (driveIds.has(dataset.id) ? { ...dataset, drive: true, driveName: "My Drive" } : dataset));
+    const fc: DatasetRecord[] = params.get("fcdrive") === "1"
+      ? [{ id: "77", provider: "0x7777…cccc", providerId: "7", pieceCount: "3", size: "1 KB", created: "2026-11-01", source: "filecoin-drive" }]
+      : [];
+    const list = [...datasets(), ...fc].map((dataset) => (driveIds.has(dataset.id) ? { ...dataset, drive: true, driveName: "My Drive" } : dataset));
     const remembered = loadLastDataset(MOCK_CHAIN_ID, MOCK_ADDRESS);
     const chosen = chooseDataset(list, remembered);
     const deposited = localStorage.getItem(PAYMENTS_KEY) === "1";
@@ -284,4 +291,25 @@ function sampleDataset(index: number): DatasetRecord {
     size: index === 0 ? "48 MB" : "2 MB",
     created: index === 0 ? "2026-10-02" : "2026-10-18",
   };
+}
+
+/** E2E fixture modeled on filecoin-pin-website PR #250: one piece per file, label/path metadata. */
+export function filecoinDriveFixture(): { pieceCid: string; bytes: Uint8Array; detail: PieceDetail }[] {
+  const text = (value: string) => new TextEncoder().encode(value);
+  const day = Date.UTC(2026, 9, 30);
+  return [
+    { pieceCid: "bafkzcibfixturehello", bytes: buildFixtureCar({ "hello.txt": text("Hello from Filecoin Drive\n") }), detail: { pieceCid: "bafkzcibfixturehello", pieceId: "0", metadata: { label: "hello.txt", path: "/" }, addedAt: day } },
+    { pieceCid: "bafkzcibfixturereport", bytes: buildFixtureCar(text("Q3 numbers: 42\n")), detail: { pieceCid: "bafkzcibfixturereport", pieceId: "1", metadata: { label: "report.txt", path: "docs/reports" }, addedAt: day + 3600_000 } },
+    {
+      pieceCid: "bafkzcibfixturesite",
+      bytes: buildFixtureCar({ "index.html": text("<h1>site</h1>"), css: { "main.css": text("h1{color:blue}") } }),
+      detail: { pieceCid: "bafkzcibfixturesite", pieceId: "2", metadata: { label: "site", path: "projects" }, addedAt: day + 7200_000 },
+    },
+  ];
+}
+
+function seedFilecoinDrive(storage: MemoryStorage): void {
+  const fixture = filecoinDriveFixture();
+  for (const piece of fixture) storage.pieces.set(piece.pieceCid, piece.bytes);
+  setPieceDetailSource(async () => fixture.map((piece) => piece.detail));
 }

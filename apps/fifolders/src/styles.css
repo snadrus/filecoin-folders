@@ -345,3 +345,15 @@ button:disabled { cursor: default; opacity: 0.45; }
 .account-section { display: flex; flex-direction: column; gap: 6px; padding: 8px 0; border-top: 1px solid var(--line); }
 .account-section .section-title { margin: 0 0 2px; font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
 .dataset-section .dataset-item { width: 100%; }
+
+/* Filecoin Drive pieces in Loose pieces */
+.loose-group { margin-bottom: 8px; }
+.loose-folder { display: flex; align-items: center; gap: 6px; padding: 8px 12px; font-weight: 500; color: var(--accent-dark); background: var(--soft); border-radius: 8px; }
+.loose-folder .material-symbols-outlined { font-size: 18px; }
+.loose-folder .badge { margin-left: 6px; padding: 1px 8px; border-radius: 999px; background: var(--restore); font-size: 11px; }
+.loose-drive .name-stack { display: inline-flex; flex-direction: column; min-width: 0; }
+.loose-drive .cid, .unixfs-entry .cid { font-size: 11px; color: var(--muted); font-family: ui-monospace, monospace; }
+.loose-drive .expander { background: transparent; padding: 0; color: var(--muted); }
+.loose-actions a { color: var(--accent-dark); font-size: 13px; margin-left: 6px; }
+.unixfs-entry { background: #fbfcfe; }
+.dataset-drive.fcdrive { color: #3b6fb6; }

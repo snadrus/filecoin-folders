@@ -1,4 +1,6 @@
 import { isCar, unpadPiece } from "fil-folders";
+import { driveInfo, type PieceDetail } from "./drive-pieces.js";
+import { entryKind, listDirectory, looksLikeCar, parseCar, readFile, type UnixfsEntry } from "./unixfs.js";
 
 export interface PieceBlob {
   pieceCid: string;
@@ -15,6 +17,17 @@ export interface LoosePiece {
   uploaded: number;
   mime: string;
   bytes: Uint8Array;
+  /** Filecoin Drive folder path ("" = root). Set only for Filecoin Drive pieces. */
+  folder?: string;
+  /** IPFS root CID from piece metadata or the CAR header. */
+  ipfsRoot?: string;
+  /** "drive" = Filecoin Pin Filecoin Drive piece. */
+  origin?: "drive";
+  /** UnixFS shape of the piece's root. Imported CARs stay raw. */
+  unixfs?: "file" | "directory" | "car";
+  /** Directory listing (recursive) for UnixFS directory pieces. */
+  children?: UnixfsEntry[];
+  pieceId?: string;
 }
 
 const CATALOG_KEY = "fifolders:piece-catalog";
@@ -63,11 +76,17 @@ export function sniffMime(name: string, bytes: Uint8Array): string {
 }
 
 /** Pieces present in the dataset that no folder manifest entry points at. */
-export function loosePieces(pieces: readonly PieceBlob[], referenced: ReadonlySet<string>): LoosePiece[] {
+export function loosePieces(pieces: readonly PieceBlob[], referenced: ReadonlySet<string>, details?: ReadonlyMap<string, PieceDetail>): LoosePiece[] {
   const catalog = new Map(loadCatalog().map((item) => [item.pieceCid, item]));
   const rows: LoosePiece[] = [];
   for (const piece of pieces) {
     if (referenced.has(piece.pieceCid)) continue;
+    const detail = details?.get(piece.pieceCid);
+    const drive = driveInfo(detail?.metadata);
+    if (drive) {
+      rows.push(driveRow({ ...piece, uploaded: piece.uploaded || detail?.addedAt || 0 }, drive, detail?.pieceId));
+      continue;
+    }
     const bytes = unpadPiece(piece.bytes);
     if (looksLikeManifest(bytes)) continue;
     const known = catalog.get(piece.pieceCid);
@@ -94,4 +113,61 @@ function looksLikeManifest(bytes: Uint8Array): boolean {
   } catch {
     return false;
   }
+}
+
+/** A Filecoin Drive piece: unwrap the UnixFS CAR for single files; list directories; keep imported CARs raw. */
+function driveRow(piece: PieceBlob, drive: NonNullable<ReturnType<typeof driveInfo>>, pieceId?: string): LoosePiece {
+  const raw = piece.bytes.byteLength && looksLikeCar(piece.bytes) ? piece.bytes : unpadPiece(piece.bytes);
+  const base: LoosePiece = {
+    pieceCid: piece.pieceCid,
+    name: drive.fileName || drive.ipfsRootCid || piece.pieceCid,
+    size: raw.byteLength,
+    uploaded: piece.uploaded || 0,
+    mime: "application/octet-stream",
+    bytes: raw,
+    folder: drive.folderPath,
+    ipfsRoot: drive.ipfsRootCid,
+    origin: "drive",
+    ...(pieceId ? { pieceId } : {}),
+  };
+  if (drive.importedCar) return { ...base, unixfs: "car", mime: "application/vnd.ipld.car" };
+  if (!raw.byteLength || !looksLikeCar(raw)) return base;
+  try {
+    const car = parseCar(raw);
+    const root = drive.ipfsRootCid && car.blocks.has(drive.ipfsRootCid) ? drive.ipfsRootCid : car.roots[0] ?? "";
+    if (!root) return base;
+    const withRoot = { ...base, ipfsRoot: drive.ipfsRootCid || root };
+    const kind = entryKind(car, root);
+    if (kind === "directory") {
+      const children = listDirectory(car, root);
+      // filecoin-pin may wrap a single file in a directory: unwrap when the only entry is that file.
+      const only = children.length === 1 ? children[0] : undefined;
+      if (only && only.kind !== "directory" && (!drive.fileName || only.name === drive.fileName)) {
+        const bytes = readFile(car, only.cid);
+        return { ...withRoot, unixfs: "file", bytes, size: bytes.byteLength, mime: sniffMime(withRoot.name, bytes) };
+      }
+      return { ...withRoot, unixfs: "directory", children, size: children.reduce((sum, child) => sum + sizeOf(child), 0), mime: "inode/directory" };
+    }
+    const bytes = readFile(car, root);
+    return { ...withRoot, unixfs: "file", bytes, size: bytes.byteLength, mime: sniffMime(withRoot.name, bytes) };
+  } catch {
+    return base;
+  }
+}
+
+function sizeOf(entry: UnixfsEntry): number {
+  return entry.children ? entry.children.reduce((sum, child) => sum + sizeOf(child), 0) : entry.size;
+}
+
+/** Bytes of one file inside a directory piece. */
+export function directoryFile(piece: LoosePiece, path: string): Uint8Array {
+  const car = parseCar(piece.bytes);
+  const root = piece.ipfsRoot && car.blocks.has(piece.ipfsRoot) ? piece.ipfsRoot : car.roots[0]!;
+  let cid = root;
+  for (const part of path.split("/").filter(Boolean)) {
+    const next = listDirectory(car, cid, 0).find((entry) => entry.name === part);
+    if (!next) throw new Error(`${path} is not in this piece`);
+    cid = next.cid;
+  }
+  return readFile(car, cid);
 }

@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-test("auto-picks the latest dataset, toasts, and switches from the sidebar menu", async ({ page }) => {
+test("auto-picks the latest dataset, toasts, and switches from the wallet menu menu", async ({ page }) => {
   await page.goto("/?onboard=1&pay=ready&datasets=3&drives=2");
   await page.getByTestId("connect-wallet").click();
   const toast = page.getByTestId("toast").filter({ hasText: "Using your latest dataset (#2)" });
