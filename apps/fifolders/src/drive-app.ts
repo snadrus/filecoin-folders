@@ -2503,7 +2503,9 @@ export class DriveApp {
   }
 
   private async answerOpen(channel: BroadcastChannel, pieceCid: string, path: string, nonce: string): Promise<void> {
-    const volume = this.volume;
+    // The folders as shown, unsaved renames and moves included: an item opened right after a rename lives at its new
+    // path only in the draft until the folders save.
+    const volume = this.viewVolume() ?? this.volume;
     if (!volume || !path) return;
     try {
       const stat = await volume.stat(path);
@@ -2643,9 +2645,12 @@ export class DriveApp {
   txlogOpen = false;
 
   private openFel(stat: Pick<Stat, "name" | "path" | "pieceCid">): void {
-    const kind = felKind(stat.name);
+    // The item's current name is its path: a rename still being committed can leave `stat.name` on the old name,
+    // and the editor would then open with (and save back) the old title.
+    const name = stat.path.split("/").pop() || stat.name;
+    const kind = felKind(name);
     if (!kind) return;
-    const url = appLink(kind, stat.pieceCid ?? "", stat.name, { felarumi: this.felarumiUrl, felanumio: this.felanumioUrl }, {
+    const url = appLink(kind, stat.pieceCid ?? "", name, { felarumi: this.felarumiUrl, felanumio: this.felanumioUrl }, {
       path: stat.path,
       volume: this.volumeName,
       owner: this.owner,
