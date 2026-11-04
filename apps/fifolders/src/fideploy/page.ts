@@ -1,7 +1,7 @@
 import { withTransientRetry } from "fil-folders";
 import { createPublicClient, custom, getAddress, http, type Address, type Hex, type PublicClient } from "viem";
 import { onWalletPrompts, watchWalletPrompts, withWalletIntent, INTENTS, type WalletPrompt } from "../wallet-prompts.js";
-import { discoverWallets } from "../eip6963.js";
+import { discoverWallets, safeOn } from "../eip6963.js";
 import { ARTIFACTS, chainInfo, codeStatus, deployData, deploymentsJson, formatCost, loadPrivate, savePrivate, type ChainInfo, type CodeStatus, type ContractName, type DeploymentRecord } from "./core.js";
 
 type Provider = { request(args: { method: string; params?: unknown }): Promise<unknown>; on?: (e: string, f: (...a: unknown[]) => void) => void };
@@ -69,11 +69,11 @@ export class DeployPage {
     if (!accounts?.[0]) throw new Error("The wallet returned no account.");
     this.me = getAddress(accounts[0]);
     this.chainId = Number(await this.provider.request({ method: "eth_chainId" }));
-    raw.on?.("chainChanged", (id) => {
+    safeOn(raw, "chainChanged", (id) => {
       this.chainId = Number(id);
       void this.refresh();
     });
-    raw.on?.("accountsChanged", (a) => {
+    safeOn(raw, "accountsChanged", (a) => {
       const list = a as string[];
       this.me = list?.[0] ? getAddress(list[0]) : null;
       void this.refresh();

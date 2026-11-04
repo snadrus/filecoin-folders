@@ -182,9 +182,32 @@ interface Requester {
 }
 
 /** Wrap an EIP-1193 provider so prompting calls show the wallet toast. Idempotent. */
+/**
+ * Read a provider member without throwing. A hostile injected Proxy can throw on a plain get (broken
+ * invariant); the own-property descriptor (walking the prototype chain) still holds the real value.
+ */
+export function readMember(obj: unknown, key: PropertyKey): unknown {
+  if (!obj || (typeof obj !== "object" && typeof obj !== "function")) return undefined;
+  try {
+    return Reflect.get(obj as object, key, obj);
+  } catch {
+    try {
+      for (let o: object | null = obj as object; o; o = Object.getPrototypeOf(o)) {
+        const d = Object.getOwnPropertyDescriptor(o, key);
+        if (d) return "value" in d ? d.value : undefined;
+      }
+    } catch {
+      /* fully hostile */
+    }
+    return undefined;
+  }
+}
+
 export function watchWalletPrompts<T extends Requester>(provider: T): T {
   if ((provider as { __fifoldersPrompts?: boolean }).__fifoldersPrompts) return provider;
-  const original = provider.request.bind(provider);
+  const requestFn = readMember(provider, "request");
+  if (typeof requestFn !== "function") throw new Error("This wallet provider has no request method.");
+  const original = (args: { method: string; params?: unknown }) => (requestFn as (a: typeof args) => Promise<unknown>).call(provider, args);
   const request = (args: { method: string; params?: unknown }) => {
     const named = promptIntent(args.method);
     if (!named) return original(args);
@@ -228,13 +251,26 @@ export function watchWalletPrompts<T extends Requester>(provider: T): T {
       attempt();
     });
   };
-  // Proxy, not a prototype copy: wallet providers keep private fields that need the real `this`.
-  return new Proxy(provider, {
-    get(target, key) {
+  // A delegate over a fresh target, never a Proxy over the provider itself: wallet extensions inject frozen
+  // providers with non-configurable methods, and a Proxy over those that returns a bound copy throws
+  // "'get' on proxy: property 'on' is a read-only and non-configurable data property". Methods still run
+  // with the real provider as `this` (providers keep private fields). Reads never throw.
+  const bound = new Map<PropertyKey, unknown>();
+  return new Proxy(Object.create(null) as T, {
+    get(_target, key) {
       if (key === "request") return request;
       if (key === "__fifoldersPrompts") return true;
-      const value = Reflect.get(target, key, target) as unknown;
-      return typeof value === "function" ? (value as (...a: unknown[]) => unknown).bind(target) : value;
+      const value = readMember(provider, key);
+      if (typeof value !== "function") return value;
+      if (!bound.has(key)) bound.set(key, (value as (...a: unknown[]) => unknown).bind(provider));
+      return bound.get(key);
+    },
+    has(_target, key) {
+      try {
+        return key === "request" || key === "__fifoldersPrompts" || key in (provider as object);
+      } catch {
+        return false;
+      }
     },
   });
 }
