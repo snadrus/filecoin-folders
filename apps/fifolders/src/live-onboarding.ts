@@ -26,7 +26,7 @@ import {
   type WalletClient,
 } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
-import { discoverWallets, type AnnouncedWallet } from "./eip6963.js";
+import { discoverWallets, safeOn, type AnnouncedWallet } from "./eip6963.js";
 import { activeProviderUrls } from "./filecoin-api.js";
 import { FILECOIN_DRIVE_SOURCE, loadPieceDetails, setPieceDetailSource, type PieceDetail } from "./drive-pieces.js";
 import { REGISTRY_NOT_DEPLOYED, registryReady } from "./network.js";
@@ -185,16 +185,16 @@ export function createLiveOnboarding(): OnboardingIO {
   /** A different account or chain in the wallet: tell the controller, which restarts the session in place. */
   let walletChange: (change: { account?: string; chainId?: string }) => void = () => undefined;
   function followWallet(source: { on?: (event: string, fn: (value: unknown) => void) => void }): void {
-    if (followed.has(source) || typeof source.on !== "function") return;
+    if (followed.has(source)) return;
     followed.add(source);
-    source.on("accountsChanged", (value) => {
+    safeOn(source, "accountsChanged", (value) => {
       const next = Array.isArray(value) && typeof value[0] === "string" ? value[0] : "";
       if (!root || next.toLowerCase() === root.toLowerCase()) return;
       const stored = readStoredWallet();
       if (next && stored) localStorage.setItem(walletStorageKey(), JSON.stringify({ ...stored, address: getAddress(next) }));
       walletChange({ account: next });
     });
-    source.on("chainChanged", (value) => {
+    safeOn(source, "chainChanged", (value) => {
       if (root) walletChange({ chainId: String(value) });
     });
   }
