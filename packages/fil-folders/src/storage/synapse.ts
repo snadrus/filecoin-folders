@@ -31,6 +31,11 @@ export interface SynapseStorageOptions {
    * (identity profiles) use this so the pointer commit is not stuck behind slow receipts or null rounds.
    */
   resolveOnAdded?: boolean;
+  /**
+   * Data-set `source` for data sets this adapter creates. Default "fifolders". Filecoin Drive lists
+   * only data sets with source "filecoin-pin"; pass that (or a Drive `dataSetId`) to make files visible there.
+   */
+  dataSetSource?: string;
 }
 
 export interface ReplicationProvider {
@@ -83,7 +88,8 @@ export function createSynapseStorage(synapse: SynapseLike, options: SynapseStora
         ? { providerIds: [options.providerId] }
         : undefined;
   return {
-    async put(data) {
+    async put(data, putOptions) {
+      const pieceMetadata = putOptions?.metadata && Object.keys(putOptions.metadata).length ? { ...putOptions.metadata } : undefined;
       const bytes = data instanceof Uint8Array ? data : await readAll(data);
       const extended = synapse.storage as SynapseLike["storage"] & {
         prepare?: SynapseLike["storage"]["prepare"];
@@ -111,6 +117,7 @@ export function createSynapseStorage(synapse: SynapseLike, options: SynapseStora
       const uploadOptions = contexts.length
         ? {
             contexts,
+            ...(pieceMetadata ? { pieceMetadata } : {}),
             callbacks: {
               onStored: (_providerId: bigint | number | string, cid: unknown) => {
                 if (cid != null) storedCid ??= pieceCidString(cid as never);
@@ -150,7 +157,9 @@ export function createSynapseStorage(synapse: SynapseLike, options: SynapseStora
               },
             },
           }
-        : legacyOptions;
+        : legacyOptions || pieceMetadata
+          ? { ...(legacyOptions ?? {}), ...(pieceMetadata ? { pieceMetadata } : {}) }
+          : undefined;
       try {
         const uploading = synapse.storage.upload(contexts.length ? bytes : data, uploadOptions) as Promise<UploadReturn>;
         if (options.resolveOnAdded && contexts.length) {
@@ -244,7 +253,7 @@ async function resolveContexts(
       withCDN: false,
       copies: Math.max(1, want - selected.length),
       excludeProviderIds: selected.map(providerIdOf).filter((id) => id !== ""),
-      metadata: { source: "fifolders" },
+      metadata: { source: options.dataSetSource ?? "fifolders" },
     });
     if (!more.length && !selected.length) throw new Error("No reachable storage providers available");
     for (const ctx of more) selected.push(ctx as ContextLike);

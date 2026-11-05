@@ -47,10 +47,10 @@ export function withPiecePadding(inner: Storage): Storage & { inner: Storage } {
   return {
     inner,
     ...(inner.list ? { list: () => inner.list!() } : {}),
-    async put(data) {
+    async put(data, options) {
       if (!isByteStream(data)) {
         const original = data.byteLength;
-        const stored = await inner.put(padPiece(data));
+        const stored = await inner.put(padPiece(data), options);
         return { pieceCid: stored.pieceCid, size: original };
       }
       const reader = data.getReader();
@@ -71,7 +71,7 @@ export function withPiecePadding(inner: Storage): Storage & { inner: Storage } {
       }
       if (total < MIN_PIECE_BYTES) {
         const buf = concat(chunks, total);
-        const stored = await inner.put(padPiece(buf));
+        const stored = await inner.put(padPiece(buf), options);
         return { pieceCid: stored.pieceCid, size: buf.byteLength };
       }
       const head = concat(chunks, total);
@@ -91,7 +91,7 @@ export function withPiecePadding(inner: Storage): Storage & { inner: Storage } {
           return reader.cancel(reason);
         },
       });
-      const stored = await inner.put(stream);
+      const stored = await inner.put(stream, options);
       return { pieceCid: stored.pieceCid, size: stored.size };
     },
     async get(pieceCid) {

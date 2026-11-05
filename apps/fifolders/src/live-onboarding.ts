@@ -28,7 +28,7 @@ import {
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { discoverWallets, safeOn, type AnnouncedWallet } from "./eip6963.js";
 import { activeProviderUrls } from "./filecoin-api.js";
-import { FILECOIN_DRIVE_SOURCE, loadPieceDetails, setPieceDetailSource, type PieceDetail } from "./drive-pieces.js";
+import { FILECOIN_DRIVE_SOURCE, isDriveSource, loadPieceDetails, setPieceDetailSource, type PieceDetail } from "./drive-pieces.js";
 import { REGISTRY_NOT_DEPLOYED, registryReady } from "./network.js";
 import { WALLETCONNECT_RDNS, connectWalletConnect, walletChoices, walletConnectConfig, type WalletConnectLike } from "./wallets.js";
 import { saveCheckpoint, type UploadCheckpoint } from "./copies.js";
@@ -892,7 +892,7 @@ function toDataset(choice: ChainChoice, dataset: {
     pieceCount: (dataset.activePieceCount ?? 0n).toString(),
     size: meta?.size ?? "—",
     created: dataset.metadata?.created?.slice(0, 10) || meta?.created || "—",
-    ...(dataset.metadata?.source === FILECOIN_DRIVE_SOURCE ? { source: FILECOIN_DRIVE_SOURCE } : {}),
+    ...(isDriveSource(dataset.metadata?.source) ? { source: FILECOIN_DRIVE_SOURCE } : {}),
   };
 }
 

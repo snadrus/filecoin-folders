@@ -22,7 +22,7 @@ import { indexingLabel, localIndexStore, runIndexingCheck } from "./indexing.js"
 import { canPreviewName, fileShareLink } from "./links.js";
 import { REGISTRY_NOT_DEPLOYED, registryReady, saveNetworkPreference } from "./network.js";
 import { qrSvg } from "./qr.js";
-import { loadRemovals, piecesEligibleForRemoval, saveRemovals, schedulePieceRemovals, type RemovalAdapters } from "./removal.js";
+import { loadRemovals, versionsEligibleForRemoval, saveRemovals, schedulePieceRemovals, type RemovalAdapters } from "./removal.js";
 import { chainStepTitle, explorerHref, stepDetail, type ChainReport, type ChainStepView } from "./chain-step.js";
 import { INTENTS, cleanOpLabel, intentText, purposeText, onWalletPrompts, sessionIntent, withWalletIntent, type WalletPrompt, walletPrompts } from "./wallet-prompts.js";
 import { ACTIVITY_DISMISS_MS, dismissActivity, loadDismissed } from "./activity.js";
@@ -2939,6 +2939,8 @@ export class DriveApp {
     const label = saveLabel(ops.length);
     const id = this.beginOp({ kind: "commit", label, stage: "saving" });
     const ok = await this.run(async () => {
+      // Pieces the live tree used before a Delete forever: the ones it releases are removed now.
+      const before = ops.some((op) => op.op === "rm") ? new Set(await this.volume!.referencedPieces().catch(() => [] as string[])) : null;
       await withWalletIntent(INTENTS.save(ops.length), () =>
         this.volume!.tx(async (draft) => {
           await replayStaged(draft, ops);
@@ -2968,7 +2970,7 @@ export class DriveApp {
       this.restoreNote = "";
       this.persistStaged();
       await this.rememberCopies();
-      if (ops.some((op) => op.op === "rm")) await this.scheduleUnreferenced();
+      if (before) await this.scheduleUnreferenced(before);
     });
     for (const row of this.uploads) if (row.status === "waiting") {
       row.status = ok ? "done" : "error";
@@ -3008,14 +3010,17 @@ export class DriveApp {
     saveCopyCatalog(scope, catalog);
   }
 
-  private async scheduleUnreferenced(): Promise<void> {
+  /**
+   * After Delete forever: remove the pieces holding the deleted files' current bytes (released by
+   * this save), plus versions past the retention window (30 days / newest 100). Everything else stays
+   * browsable in Manage versions.
+   */
+  private async scheduleUnreferenced(before: ReadonlySet<string> = new Set()): Promise<void> {
     if (!this.volume) return;
     const live = new Set(await this.volume.referencedPieces());
     const history = await this.volume.history();
-    const eligible = piecesEligibleForRemoval(
-      history.map((entry) => entry.pieceCid),
-      live,
-    );
+    const released = [...before].filter((piece) => !live.has(piece));
+    const eligible = [...new Set([...released, ...versionsEligibleForRemoval(history, live)])];
     const scope = this.scopeKey();
     const catalog = loadCopyCatalog(scope);
     const records = loadRemovals(scope);

@@ -2,6 +2,7 @@ import { isAddress, type Address, type Hex } from "viem";
 import { contentCid, decodeCar, encodeCar, isCar } from "./car.js";
 import { bytesToPieceCid, decodeUtf8, isByteStream, pieceCidToBytes, readStream, utf8, bytesToBase64Url, base64UrlToBytes } from "./bytes.js";
 import { manifestBytes, parseManifest } from "./codec.js";
+import { commitMetadata } from "./drive-meta.js";
 import { deriveVolumeKey, decryptBytes, encryptBytes, FILE_AAD, NAME_AAD, signVolumeKey, volumeKeyInfo } from "./crypto.js";
 import { retryTransient } from "./rpc-retry.js";
 import { CasRetryError, IsADirectoryError, NotFoundError, RegistryCasConflict } from "./errors.js";
@@ -296,16 +297,24 @@ export class Volume {
     const newest: { pieceCid: string; prev?: string; t?: number; txHash?: Hex }[] = [];
     let cursor = bytesToPieceCid(head.pieceCid);
     const seen = new Set<string>();
+    let truncated = false;
     while (cursor && !seen.has(cursor) && newest.length < limit) {
       seen.add(cursor);
-      await this.#load(cursor);
+      try {
+        await this.#load(cursor);
+      } catch (error) {
+        // An older version whose piece was pruned by the retention policy ends the browsable history.
+        if (!newest.length) throw error;
+        truncated = true;
+        break;
+      }
       const meta = this.#rootMeta.get(cursor) ?? {};
       newest.push({ pieceCid: cursor, prev: meta.prev, t: meta.t });
       if (meta.prev === undefined) break;
       cursor = meta.prev;
     }
     const oldest = newest.at(-1);
-    if (oldest && oldest.prev === undefined && newest.length < limit) {
+    if (!truncated && oldest && oldest.prev === undefined && newest.length < limit) {
       // Pre-`prev` manifests: follow the v1 Committed events' prevPieceCid links.
       const records = await this.registry.committed({ owner: this.owner, ns: this.ns, key: this.key }).catch(() => []);
       const pick = (cid: string, below: bigint | null) =>
@@ -329,8 +338,10 @@ export class Volume {
         record = next;
       }
     }
+    // After pruning, number down from the registry head so version numbers stay stable.
+    const first = truncated && head.version >= BigInt(newest.length) ? head.version - BigInt(newest.length) + 1n : 1n;
     return newest.reverse().map((item, index) => {
-      const entry: HistoryEntry = { version: BigInt(index + 1), pieceCid: item.pieceCid, prevPieceCid: item.prev ?? "", timestamp: item.t ?? 0 };
+      const entry: HistoryEntry = { version: first + BigInt(index), pieceCid: item.pieceCid, prevPieceCid: item.prev ?? "", timestamp: item.t ?? 0 };
       if (item.txHash) entry.txHash = item.txHash;
       return entry;
     });
@@ -539,7 +550,15 @@ export class Volume {
     const stored = await this.#persistDir(dir, true, { prev, t });
     if (!stored.root) throw new Error("root manifest was not stored");
     const car = encodeCar(stored.root, stored.blocks);
-    const uploaded = await this.storage.put(car);
+    const metadata = commitMetadata({
+      tree: dir,
+      newBlocks: new Set(stored.blocks.keys()),
+      manifestRoot: stored.root,
+      volumeName: this.name,
+      version: this.#baseVersion + 1n,
+      encrypted: Boolean(this.#encryption),
+    });
+    const uploaded = await this.storage.put(car, { metadata });
     const decoded = decodeCar(car);
     this.#pieceBytes.set(uploaded.pieceCid, car);
     this.#ranges.set(uploaded.pieceCid, decoded.ranges);

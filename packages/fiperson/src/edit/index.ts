@@ -34,7 +34,16 @@ export class IdentityBlocked extends Error {
 
 /** Piece store (fil-folders `createSynapseStorage(...)` satisfies it). */
 export interface PieceWriter {
-  put(data: Uint8Array): Promise<{ pieceCid: string }>;
+  /** `metadata` is Synapse piece metadata (Filecoin Drive conventions: label, path, version). */
+  put(data: Uint8Array, options?: { metadata?: Record<string, string> }): Promise<{ pieceCid: string }>;
+}
+
+/** Folder Filecoin Drive / FiFolders show FiPerson pieces under. */
+export const IDENTITY_DRIVE_FOLDER = "FiPerson";
+
+/** Filecoin Drive-style piece metadata for one FiPerson record version (public: names no secrets). */
+export function identityPieceMetadata(fileName: string, version: bigint): Record<string, string> {
+  return { label: fileName, path: IDENTITY_DRIVE_FOLDER, version: version.toString() };
 }
 /** FolderRegistry client (fil-folders `createViemRegistry(...)` satisfies it). */
 export interface PointerRegistry {
@@ -50,6 +59,8 @@ export interface SaveIdentityOptions {
   onStep?: (step: string) => void;
   /** Registry key; default profile. Contacts use {@link IDENTITY_CONTACTS_KEY_ID}. */
   key?: Hex;
+  /** File name shown in Filecoin Drive / FiFolders. Default "profile.json" for the profile key. */
+  fileName?: string;
   /** Pause before the single CAS-conflict retry (default 1.5 s). */
   retryDelayMs?: number;
 }
@@ -70,7 +81,10 @@ export function isCasConflict(error: unknown): boolean {
 export async function savePointedPiece(owner: Address, bytes: Uint8Array, opts: SaveIdentityOptions): Promise<IdentitySaved> {
   const run = opts.withIntent ?? (<T>(_: IdentityIntent, fn: () => Promise<T>) => fn());
   opts.onStep?.("Storing your identity piece…");
-  const { pieceCid } = await run(IDENTITY_INTENTS.upload, () => opts.storage.put(bytes));
+  const key0 = opts.key ?? IDENTITY_PROFILE_KEY_ID;
+  const before = await opts.registry.head(owner, IDENTITY_NS, key0).catch(() => null);
+  const metadata = identityPieceMetadata(opts.fileName ?? (key0 === IDENTITY_PROFILE_KEY_ID ? "profile.json" : "record.json"), (before?.version ?? 0n) + 1n);
+  const { pieceCid } = await run(IDENTITY_INTENTS.upload, () => opts.storage.put(bytes, { metadata }));
   opts.onStep?.("Linking it to your wallet…");
   const key = opts.key ?? IDENTITY_PROFILE_KEY_ID;
   // Re-read the head right before committing; a lagging RPC or an overlapping save can still hand back a

@@ -1,8 +1,18 @@
 /**
  * Filecoin Pin "Filecoin Drive" pieces: one file (or directory/CAR) per piece, described by
- * per-piece metadata {label, path | carPath, ipfsRootCID}. Datasets carry source=filecoin-drive.
+ * per-piece metadata {label, path | carPath, ipfsRootCID}. Filecoin Drive creates (and lists) only
+ * data sets whose metadata has source="filecoin-pin" (filecoin-pin APPLICATION_SOURCE).
+ * FiFolders commit pieces add `version`; those are versions of a folder, not loose uploads.
  */
-export const FILECOIN_DRIVE_SOURCE = "filecoin-drive";
+import { readDriveMetadata } from "fil-folders";
+
+export const FILECOIN_DRIVE_SOURCE = "filecoin-pin";
+/** Earlier FiFolders builds and mocks used this label; still treated as Filecoin Drive. */
+const LEGACY_DRIVE_SOURCE = "filecoin-drive";
+
+export function isDriveSource(source: string | undefined | null): boolean {
+  return source === FILECOIN_DRIVE_SOURCE || source === LEGACY_DRIVE_SOURCE;
+}
 
 export interface PieceDetail {
   pieceCid: string;
@@ -18,6 +28,8 @@ export interface DriveInfo {
   folderPath: string;
   ipfsRootCid: string;
   importedCar: boolean;
+  /** Set on pieces FiFolders, FiPen or FiGrid wrote as one version of a folder. */
+  version?: bigint;
 }
 
 /** Reads per-piece metadata for the open dataset; set by the live/mock IO layer. */
@@ -39,17 +51,16 @@ export function normalizeFolder(path: string): string {
 
 /** Null when the piece carries no Filecoin Drive metadata. */
 export function driveInfo(metadata: Record<string, string> | undefined): DriveInfo | null {
-  if (!metadata) return null;
-  const label = (metadata.name || metadata.label || "").trim();
-  const path = metadata.path ?? metadata.carPath;
-  const root = metadata.ipfsRootCID || metadata.ipfsRootCid || "";
-  if (!label && path === undefined && !root) return null;
-  return {
-    fileName: label,
-    folderPath: typeof path === "string" ? normalizeFolder(path) : "",
-    ipfsRootCid: root,
-    importedCar: typeof metadata.carPath === "string",
+  const info = readDriveMetadata(metadata);
+  if (!info) return null;
+  const out: DriveInfo = {
+    fileName: info.fileName,
+    folderPath: normalizeFolder(info.folderPath),
+    ipfsRootCid: info.ipfsRootCID,
+    importedCar: info.importedCar,
   };
+  if (info.version !== undefined) out.version = info.version;
+  return out;
 }
 
 export function gatewayUrl(cid: string, path = ""): string {
