@@ -30,7 +30,7 @@ export { MIN_PIECE_BYTES, padPiece, unpadPiece, withPiecePadding } from "./pad.j
 export { MemoryStorage, createMemoryStorage } from "./storage/memory.js";
 export { createSynapseStorage, fundingShortfall } from "./storage/synapse.js";
 export type { ReplicationNotice, SynapseStorageOptions } from "./storage/synapse.js";
-export type { Storage } from "./storage/types.js";
+export type { PutPieceOptions, Storage } from "./storage/types.js";
 export type {
   AdoptRef,
   ContentEnc,
@@ -61,3 +61,18 @@ export {
 export type { CarBlocks, FixtureNode, UnixfsEntry } from "./unixfs.js";
 
 export { isTransientRpcError, retryTransient, withTransientRetry, type TransientRetryOptions } from "./rpc-retry.js";
+export {
+  DEFAULT_RETENTION,
+  DRIVE_METADATA_BYTES,
+  DRIVE_SOURCE,
+  FIFOLDERS_SOURCE,
+  SYSTEM_FOLDER,
+  VERSION_KEY,
+  commitMetadata,
+  driveMetadata,
+  fitBytes,
+  readDriveMetadata,
+  splitDrivePath,
+  versionsToPrune,
+} from "./drive-meta.js";
+export type { DriveMetadataInput, DrivePieceInfo, RetentionPolicy } from "./drive-meta.js";

@@ -143,7 +143,7 @@ export function createMockOnboarding(params: URLSearchParams): OnboardingIO {
     const sessionReady = Boolean(stored && gate !== "expired");
     const driveIds = new Set((params.get("drives") ?? "").split(",").filter(Boolean));
     const fc: DatasetRecord[] = params.get("fcdrive") === "1"
-      ? [{ id: "77", provider: "0x7777…cccc", providerId: "7", pieceCount: "3", size: "1 KB", created: "2026-11-01", source: "filecoin-drive" }]
+      ? [{ id: "77", provider: "0x7777…cccc", providerId: "7", pieceCount: "3", size: "1 KB", created: "2026-11-01", source: "filecoin-pin" }]
       : [];
     const list = [...datasets(), ...fc].map((dataset) => (driveIds.has(dataset.id) ? { ...dataset, drive: true, driveName: "My Drive" } : dataset));
     const remembered = loadLastDataset(MOCK_CHAIN_ID, MOCK_ADDRESS);

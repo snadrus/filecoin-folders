@@ -1,3 +1,4 @@
+import { isDriveSource } from "./drive-pieces.js";
 import { LEGACY_NAME_KEY, SESSION_NAME_KEYS, avatarHtml, cachedIdentity, pickDisplayName, type ResolvedIdentity } from "fiperson/view";
 import { friendlyError } from "./friendly-error.js";
 import type { HistoryEntry, Stat } from "fil-folders";
@@ -476,7 +477,7 @@ function renderDatasetSection(model: ViewModel): string {
   const current = panel.selectedDatasetId;
   const latest = latestDatasetId(panel.datasets);
   const ordered = [...panel.datasets].sort((a, b) => {
-    const rank = (d: typeof a) => (d.drive ? 0 : d.source === "filecoin-drive" ? 1 : 2);
+    const rank = (d: typeof a) => (d.drive ? 0 : isDriveSource(d.source) ? 1 : 2);
     if (rank(a) !== rank(b)) return rank(a) - rank(b);
     const na = /^\d+$/.test(a.id), nb = /^\d+$/.test(b.id);
     if (na && nb) return BigInt(b.id) > BigInt(a.id) ? 1 : BigInt(b.id) < BigInt(a.id) ? -1 : 0;
@@ -489,11 +490,11 @@ function renderDatasetSection(model: ViewModel): string {
       const bits = [`${dataset.pieceCount} pieces`];
       if (dataset.size && dataset.size !== "—") bits.push(dataset.size);
       if (dataset.created && dataset.created !== "—") bits.push(dataset.created);
-      return `<button type="button" role="menuitemradio" aria-checked="${on}" class="dataset-item ${on ? "on" : ""} ${dataset.drive || dataset.source === "filecoin-drive" ? "is-drive" : "not-drive"}" data-drive="${dataset.drive ? "1" : "0"}" data-action="switch-dataset" data-id="${escapeHtml(dataset.id)}" data-testid="dataset-item">
+      return `<button type="button" role="menuitemradio" aria-checked="${on}" class="dataset-item ${on ? "on" : ""} ${dataset.drive || isDriveSource(dataset.source) ? "is-drive" : "not-drive"}" data-drive="${dataset.drive ? "1" : "0"}" data-action="switch-dataset" data-id="${escapeHtml(dataset.id)}" data-testid="dataset-item">
         <span class="material-symbols-outlined dataset-check" aria-hidden="true">${on ? "check" : ""}</span>
         <span class="dataset-text"><span class="dataset-id">Dataset ${escapeHtml(label)}${dataset.id === latest ? ` <span class="dataset-tag" data-testid="dataset-latest">latest</span>` : ""}</span>
         ${dataset.drive ? `<span class="dataset-drive" data-testid="dataset-drive"><span class="material-symbols-outlined" aria-hidden="true">folder</span> FiFolders folders${dataset.driveName ? ` · ${escapeHtml(volumeLabel(dataset.driveName))}` : ""}</span>` : ""}
-        ${dataset.source === "filecoin-drive" ? `<span class="dataset-drive fcdrive" data-testid="dataset-filecoin-drive"><span class="material-symbols-outlined" aria-hidden="true">cloud</span> Filecoin Drive</span>` : ""}
+        ${isDriveSource(dataset.source) ? `<span class="dataset-drive fcdrive" data-testid="dataset-filecoin-drive"><span class="material-symbols-outlined" aria-hidden="true">cloud</span> Filecoin Drive</span>` : ""}
         <span class="dataset-meta">${escapeHtml(bits.join(" · "))}</span></span>
       </button>`;
     })

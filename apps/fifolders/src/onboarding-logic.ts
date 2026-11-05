@@ -89,7 +89,7 @@ export interface DatasetRecord {
   drive?: boolean;
   /** Volume name for that manifest, when known. */
   driveName?: string;
-  /** Dataset metadata source, e.g. "filecoin-drive" for Filecoin Pin's Filecoin Drive. */
+  /** Dataset metadata source, e.g. "filecoin-pin" for Filecoin Pin's Filecoin Drive. */
   source?: string;
 }
 
@@ -175,7 +175,7 @@ export function chooseDataset(datasets: { id: string; drive?: boolean }[], lastU
   }
   const drives = datasets.filter((dataset) => dataset.drive && /^\d+$/.test(dataset.id));
   const numeric = datasets.filter((dataset) => /^\d+$/.test(dataset.id));
-  const own = numeric.filter((dataset) => (dataset as { source?: string }).source !== "filecoin-drive");
+  const own = numeric.filter((dataset) => (dataset as { source?: string }).source !== "filecoin-pin" && (dataset as { source?: string }).source !== "filecoin-drive");
   const settled = drives.length ? drives : own.length ? own : numeric;
   const newest = settled.length
     ? settled.reduce((best, dataset) => (BigInt(dataset.id) > BigInt(best.id) ? dataset : best))

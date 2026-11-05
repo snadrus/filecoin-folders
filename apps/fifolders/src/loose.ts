@@ -85,6 +85,8 @@ export function loosePieces(pieces: readonly PieceBlob[], referenced: ReadonlySe
     if (referenced.has(piece.pieceCid)) continue;
     const detail = details?.get(piece.pieceCid);
     const drive = driveInfo(detail?.metadata);
+    // A FiFolders/FiPen/FiGrid version piece no longer in the live tree is an older version, not a loose upload.
+    if (drive?.version !== undefined) continue;
     if (drive) {
       rows.push(driveRow({ ...piece, uploaded: piece.uploaded || detail?.addedAt || 0 }, drive, detail?.pieceId));
       continue;

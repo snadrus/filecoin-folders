@@ -1,14 +1,17 @@
 import { asBuffer, isByteStream, readStream } from "../bytes.js";
-import type { Storage } from "./types.js";
+import type { PutPieceOptions, Storage } from "./types.js";
 
 /** Process-local piece store. Piece ids are `mem:` plus the hex SHA-256 of the bytes. */
 export class MemoryStorage implements Storage {
   readonly pieces = new Map<string, Uint8Array>();
+  /** Piece metadata as a Synapse upload would record it. */
+  readonly metadata = new Map<string, Record<string, string>>();
 
-  async put(data: Uint8Array | ReadableStream<Uint8Array>): Promise<{ pieceCid: string; size: number }> {
+  async put(data: Uint8Array | ReadableStream<Uint8Array>, options?: PutPieceOptions): Promise<{ pieceCid: string; size: number }> {
     const bytes = isByteStream(data) ? await readStream(data) : asBuffer(data);
     const pieceCid = await digestCid(bytes);
     this.pieces.set(pieceCid, bytes);
+    if (options?.metadata && Object.keys(options.metadata).length) this.metadata.set(pieceCid, { ...options.metadata });
     return { pieceCid, size: bytes.byteLength };
   }
 

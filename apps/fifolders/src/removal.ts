@@ -1,3 +1,4 @@
+import { versionsToPrune, type RetentionPolicy } from "fil-folders";
 /** Schedule piece removals across copies. A live manifest reference blocks the piece. */
 
 export const REMOVAL_BATCH = 35;
@@ -28,6 +29,19 @@ export function liveKeepsPiece(pieceCid: string, live: ReadonlySet<string>): boo
 
 export function piecesEligibleForRemoval(candidates: readonly string[], live: ReadonlySet<string>): string[] {
   return [...new Set(candidates)].filter((piece) => piece && !live.has(piece));
+}
+
+/**
+ * Version retention (Google Drive style): every version from the last 30 days and the newest 100
+ * versions stay browsable in Manage versions; only older ones that the live folder tree no longer
+ * uses are removed, oldest first. `history` is oldest first.
+ */
+export function versionsEligibleForRemoval(
+  history: readonly { pieceCid: string; timestamp: number }[],
+  live: ReadonlySet<string>,
+  opts: { now?: number; policy?: Partial<RetentionPolicy> } = {},
+): string[] {
+  return versionsToPrune(history, live, opts);
 }
 
 export interface RemovalAdapters {
