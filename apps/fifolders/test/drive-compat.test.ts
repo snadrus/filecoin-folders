@@ -1,6 +1,6 @@
 import { contentCid, encodeCar } from "fil-folders";
 import { describe, expect, it } from "vitest";
-import { driveInfo, isDriveSource } from "../src/drive-pieces.js";
+import { driveInfo, isDriveSource, type PieceDetail } from "../src/drive-pieces.js";
 import { loosePieces } from "../src/loose.js";
 import { versionsEligibleForRemoval } from "../src/removal.js";
 
@@ -23,7 +23,7 @@ describe("Filecoin Drive compatibility", () => {
     const bytes = new TextEncoder().encode("hello drive");
     const cid = await contentCid(bytes);
     const car = encodeCar(cid, new Map([[cid, bytes]]));
-    const details = new Map([
+    const details = new Map<string, PieceDetail>([
       ["drive", { pieceCid: "drive", pieceId: "1", metadata: { label: "hello.txt", path: "Docs", ipfsRootCID: cid } }],
       ["old", { pieceCid: "old", pieceId: "2", metadata: { label: "hello.txt", path: "Docs", ipfsRootCID: cid, version: "3" } }],
     ]);
