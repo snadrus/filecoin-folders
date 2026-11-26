@@ -272,11 +272,11 @@ describe("sponsor server (fake chain)", () => {
   it("refuses card payments the sponsor wallet could not honor", async () => {
     const { as, sponsorUsdfc, sponsor } = await start({ pool: 0 });
     const user = newUser();
-    sponsorUsdfc.value = 4n * 10n ** 18n; // 4 USDFC < $5 charge
+    sponsorUsdfc.value = 3n * 10n ** 18n; // 3 USDFC < $5 − $1.50 setup
     expect(await as(user.signed)("checkout", checkoutBody(5))).toMatchObject({ status: 503, json: { error: expect.stringMatching(/temporarily unavailable.*not been charged/) } });
     expect(Object.keys(sponsor.state.checkouts)).toHaveLength(0);
-    sponsorUsdfc.value = 5n * 10n ** 18n;
-    expect((await as(user.signed)("checkout", checkoutBody(4.5))).status).toBe(200); // a fresh request (no replay)
+    sponsorUsdfc.value = 35n * 10n ** 17n;
+    expect((await as(user.signed)("checkout", checkoutBody(4.99))).status).toBe(200); // a fresh request (no replay)
   });
 
   it("warm pool: first purchase hands over a ready account in one assign tx; top-up above the 1 USDFC seed", async () => {
@@ -345,6 +345,15 @@ describe("sponsor server (fake chain)", () => {
     expect(opened).toHaveLength(1);
     expect(sponsor.state.users[user.id]).toMatchObject({ via: "create", dataSetId: "1001" });
     expect(sponsor.state.credits[String(checkout.json.id)]).toMatchObject({ path: "create", depositUsdfc: (285n * E).toString() });
+  });
+
+  it("a first purchase from a ready pool account needs only the USDFC above its seed", async () => {
+    const { as, sponsor, sponsorUsdfc } = await start({ pool: 1 });
+    await sponsor.refillPool();
+    sponsorUsdfc.value = 25n * 10n ** 17n; // 2.5 USDFC: enough for $5 − $1.50 − 1 USDFC seed, not for $3.50 outright
+    expect((await as(newUser().signed)("checkout", checkoutBody(5))).status).toBe(200);
+    sponsorUsdfc.value = 2n * 10n ** 18n;
+    expect((await as(newUser().signed)("checkout", checkoutBody(5))).status).toBe(503);
   });
 
   it("paid while the sponsor ran dry: parked without sending, shown on /status, delivered by cron once funded", async () => {

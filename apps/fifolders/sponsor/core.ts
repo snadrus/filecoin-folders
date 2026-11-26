@@ -422,7 +422,7 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
         ...(identity.kind === "passkey" && identity.credentialId ? { credential: identity.credentialId } : {}),
       },
     };
-    await assertFunded(cents);
+    await assertFunded(cents, first);
     let session: CheckoutSession;
     if (config.stripe.secretKey) session = await createCheckoutSession(config.stripe.secretKey, input, deps.fetch);
     else if (config.stripe.fake) session = fakeCheckoutSession(input);
@@ -447,8 +447,12 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
    * Never take a card payment the sponsor cannot honor: it must hold USDFC for this charge (an upper bound on the
    * credit) plus every credit still owed, and FIL for gas. Fails closed if the RPC fails.
    */
-  async function assertFunded(cents: number): Promise<void> {
-    const need = parseUnits((cents / 100).toFixed(2), 18) + pendingUsdfc();
+  async function assertFunded(cents: number, first: boolean): Promise<void> {
+    // Upper bound on what this purchase can cost the sponsor in USDFC: the charge (less the setup fee on a first
+    // purchase) at the credit rate; a first purchase served from a ready pool account only needs what exceeds its seed.
+    const creditCeiling = (parseUnits(((cents - (first ? pricing.setupCents : 0)) / 100).toFixed(2), 18) * parseUnits(pricing.usdfcPerUsd, 18)) / 10n ** 18n;
+    const fromPool = first && Object.values(state.pool).some((entry) => entry.status === "ready");
+    const need = (fromPool ? poolTopUp(creditCeiling, seed) : creditCeiling) + pendingUsdfc();
     let funds: { fil: bigint; usdfc: bigint };
     try {
       funds = await sponsorFunds();
