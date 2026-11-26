@@ -29,10 +29,16 @@ import {
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import {
   addSessionKeyData,
+  buySponsoredCredits,
   createSponsoredDataset,
+  ensureSponsoredAccount,
   findSponsoredAccount,
-  fundSponsoredAccount,
   isSponsored,
+  sessionSponsorSigner,
+  sponsoredCreditUsd,
+  stripeModeNote,
+  walletSponsorSigner,
+  type SponsorSigner,
   liveRemovalAdapters,
   relayExecute,
   sponsoredTransport,
@@ -110,7 +116,12 @@ interface StoredWallet {
  */
 const FRESH_LOGIN_MS = 10 * 60 * 1000;
 
-export function createLiveOnboarding(): OnboardingIO {
+export interface LiveOnboardingOptions {
+  /** Gasless mode: open the Stripe Checkout page (default: navigate the tab there). */
+  openCheckout?: (url: string) => void | Promise<void>;
+}
+
+export function createLiveOnboarding(options: LiveOnboardingOptions = {}): OnboardingIO {
   const confirmedLogins = new Map<string, number>();
   let wallets: AnnouncedWallet[] = [];
   let provider: Eip1193Provider | null = null;
@@ -142,6 +153,25 @@ export function createLiveOnboarding(): OnboardingIO {
   async function resolvePayer(): Promise<Address | null> {
     if (!isSponsored()) return null;
     if (!payer) payer = await findSponsoredAccount(requireRoot());
+    return payer;
+  }
+
+  /** Sponsor request signer: the account's live session key (no prompt) if there is one, else the owner wallet. */
+  async function sponsorSigner(choice: ChainChoice, preferSession = true): Promise<SponsorSigner> {
+    const chain = chainOf(choice);
+    const stored = payer && preferSession ? loadSession(chain.id, payer) : null;
+    if (payer && stored && BigInt(stored.expiry) > BigInt(Math.floor(Date.now() / 1000) + 300)) return sessionSponsorSigner(payer, stored.privateKey as Hex);
+    const client = await walletClient(choice);
+    return walletSponsorSigner(requireRoot(), (typed) => withWalletIntent(INTENTS.sponsoredRequest, () => client.signTypedData({ account: requireRoot(), ...typed })));
+  }
+
+  /** Gasless: the caller's account, created by the sponsor on first use (one free signature). */
+  async function ensurePayer(choice: ChainChoice, report?: ChainReporter): Promise<Address> {
+    if (await resolvePayer()) return payer!;
+    report?.({ flow: "session", phase: "signing", label: intentText(INTENTS.sponsoredRequest) });
+    const made = await ensureSponsoredAccount(await sponsorSigner(choice, false), chainOf(choice).id);
+    payer = made.account;
+    if (made.hash) report?.({ flow: "session", phase: "done", hash: made.hash });
     return payer;
   }
 
@@ -527,7 +557,7 @@ export function createLiveOnboarding(): OnboardingIO {
       };
     },
     async authorize(choice, force = false, report?: ChainReporter) {
-      if (isSponsored()) await resolvePayer();
+      if (isSponsored()) await ensurePayer(choice, report);
       const address = owner();
       const chain = chainOf(choice);
       const now = BigInt(Math.floor(Date.now() / 1000));
@@ -617,10 +647,19 @@ export function createLiveOnboarding(): OnboardingIO {
     },
     async fixPayments(choice, report?: ChainReporter, force = false) {
       if (isSponsored()) {
-        report?.({ flow: "payment", phase: "signing", label: intentText(INTENTS.sponsoredCredits) });
-        const funded = await fundSponsoredAccount(requireRoot());
-        payer = funded.account;
-        for (const hash of funded.hashes) report?.({ flow: "payment", phase: "done", hash });
+        // Card payment: Stripe Checkout; the sponsor deposits USDFC after the signed webhook (FWSS is approved at init).
+        const account = await ensurePayer(choice, report);
+        const before = await readPayments(choice, account);
+        if (!force && paymentsReady(before.deposited, before.approved)) return;
+        stripeModeNote(choice);
+        report?.({ flow: "payment", phase: "signing", label: intentText(INTENTS.sponsoredCredits(sponsoredCreditUsd())) });
+        const here = typeof window !== "undefined" && window.location ? `${window.location.origin}${window.location.pathname ?? "/"}` : "http://localhost/";
+        const checkout = await buySponsoredCredits(await sponsorSigner(choice), chainOf(choice).id, {
+          usd: sponsoredCreditUsd(),
+          successUrl: `${here}?checkout=success&session_id={CHECKOUT_SESSION_ID}`,
+          cancelUrl: `${here}?checkout=cancel`,
+        });
+        await (options.openCheckout ?? ((url: string) => window.location.assign(url)))(checkout.url);
         return;
       }
       const address = requireRoot();
@@ -646,10 +685,9 @@ export function createLiveOnboarding(): OnboardingIO {
     },
     async createDataset(input) {
       if (isSponsored()) {
-        const account = (await resolvePayer()) ?? (await fundSponsoredAccount(requireRoot())).account;
-        payer = account;
+        const account = await ensurePayer(input.chain);
         const createdAt = new Date().toISOString();
-        const made = await createSponsoredDataset(requireRoot(), { app: "fifolders", volume: input.volumeName, created: createdAt });
+        const made = await createSponsoredDataset(await sponsorSigner(input.chain), chainOf(input.chain).id, { app: "fifolders", volume: input.volumeName, created: createdAt });
         saveLastDataset(chainOf(input.chain).id, account, made.dataSetId);
         selectedDataset = made.dataSetId;
         return;

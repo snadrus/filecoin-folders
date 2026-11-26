@@ -2,7 +2,7 @@
 // SponsorWalletRelayer is a self-hosted hot wallet. A Goldsky (or Gelato) backend would implement the same interface.
 import { createPublicClient, createWalletClient, http, type Address, type Hex, type PublicClient, type TransactionReceipt } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { calibration } from "@filoz/synapse-core/chains";
+import { calibration, mainnet } from "@filoz/synapse-core/chains";
 
 export interface RelayCall {
   to?: Address;
@@ -20,10 +20,12 @@ export interface Relayer {
   relay(call: RelayCall): Promise<TransactionReceipt>;
 }
 
-export const RPC = process.env.CALIBRATION_RPC ?? "https://api.calibration.node.glif.io/rpc/v1";
+export const NETWORK: "calibration" | "mainnet" = process.env.SPONSOR_NETWORK === "mainnet" ? "mainnet" : "calibration";
+export const CHAIN = NETWORK === "mainnet" ? mainnet : calibration;
+export const RPC = process.env.SPONSOR_RPC ?? process.env.CALIBRATION_RPC ?? (NETWORK === "mainnet" ? "https://api.node.glif.io/rpc/v1" : "https://api.calibration.node.glif.io/rpc/v1");
 
 export function publicClient(): PublicClient {
-  return createPublicClient({ chain: calibration as never, transport: http(RPC, { retryCount: 5 }) }) as unknown as PublicClient;
+  return createPublicClient({ chain: CHAIN as never, transport: http(RPC, { retryCount: 5 }) }) as unknown as PublicClient;
 }
 
 export class SponsorWalletRelayer implements Relayer {
@@ -39,7 +41,7 @@ export class SponsorWalletRelayer implements Relayer {
   constructor(privateKey: Hex) {
     const account = privateKeyToAccount(privateKey);
     this.address = account.address;
-    this.wallet = createWalletClient({ account, chain: calibration as never, transport: http(RPC, { retryCount: 5 }) });
+    this.wallet = createWalletClient({ account, chain: CHAIN as never, transport: http(RPC, { retryCount: 5 }) });
   }
 
   send(call: RelayCall): Promise<Hex> {

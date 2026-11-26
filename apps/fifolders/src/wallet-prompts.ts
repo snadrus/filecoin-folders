@@ -89,7 +89,12 @@ export const INTENTS = {
     cost: "free (signature only)",
     logged: true,
   },
-  sponsoredCredits: { title: "Set up storage credits", purpose: "your storage account is funded from your FiFolders credits", cost: "free" },
+  sponsoredCredits: (usd: number): WalletIntent => ({
+    title: "Buy storage credits",
+    purpose: "card payment through Stripe; credits can only pay for your storage",
+    cost: `$${usd} by card, no crypto needed`,
+  }),
+  sponsoredRequest: { title: "Confirm it's you", purpose: "proves this wallet owns your FiFolders storage account", cost: "free (signature only)" },
   unlock: { title: "Unlock encrypted folder", purpose: "your signature derives the folder key", cost: "free" },
   migrateDrive: { title: "Move folders pointer to new registry", purpose: "one-time move to FolderRegistry v2 (smaller chain data); history stays linked", cost: "gas ~0.01 FIL" },
   migrateIdentity: { title: "Move identity pointer to new registry", purpose: "one-time move to FolderRegistry v2", cost: "gas ~0.01 FIL" },

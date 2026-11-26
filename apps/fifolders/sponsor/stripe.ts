@@ -1,0 +1,87 @@
+// Stripe without the SDK: Checkout Session creation over REST and webhook signature checks
+// (https://docs.stripe.com/webhooks#verify-manually: HMAC-SHA256 of `${t}.${payload}`, header `t=…,v1=…`).
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+
+export type Network = "calibration" | "mainnet";
+
+/** Calibration takes test keys only; mainnet takes live keys only. */
+export function assertStripeMode(secretKey: string, network: Network): void {
+  const live = secretKey.startsWith("sk_live_") || secretKey.startsWith("rk_live_");
+  const test = secretKey.startsWith("sk_test_") || secretKey.startsWith("rk_test_");
+  if (network === "calibration" && !test) throw new Error("Calibration needs a Stripe test key (sk_test_…)");
+  if (network === "mainnet" && !live) throw new Error("Mainnet needs a Stripe live key (sk_live_…)");
+}
+
+export function stripeSignatureHeader(payload: string, secret: string, timestamp = Math.floor(Date.now() / 1000)): string {
+  const v1 = createHmac("sha256", secret).update(`${timestamp}.${payload}`).digest("hex");
+  return `t=${timestamp},v1=${v1}`;
+}
+
+/** Throws unless `header` carries a v1 signature of `payload` under `secret` within `toleranceSec`. */
+export function verifyStripeSignature(payload: string, header: string | undefined, secret: string, toleranceSec = 300, nowSec = Math.floor(Date.now() / 1000)): void {
+  if (!header) throw new Error("missing Stripe-Signature");
+  const parts = header.split(",").map((part) => part.trim().split("=") as [string, string]);
+  const t = Number(parts.find(([key]) => key === "t")?.[1]);
+  const signatures = parts.filter(([key]) => key === "v1").map(([, value]) => value);
+  if (!Number.isFinite(t) || !signatures.length) throw new Error("malformed Stripe-Signature");
+  if (Math.abs(nowSec - t) > toleranceSec) throw new Error("Stripe-Signature timestamp outside tolerance");
+  const expected = Buffer.from(createHmac("sha256", secret).update(`${t}.${payload}`).digest("hex"));
+  const ok = signatures.some((sig) => {
+    const got = Buffer.from(sig);
+    return got.length === expected.length && timingSafeEqual(got, expected);
+  });
+  if (!ok) throw new Error("Stripe signature mismatch");
+}
+
+export interface CheckoutInput {
+  cents: number;
+  successUrl: string;
+  cancelUrl: string;
+  metadata: Record<string, string>;
+  clientReferenceId: string;
+}
+
+export interface CheckoutSession {
+  id: string;
+  url: string;
+}
+
+function form(input: Record<string, string | number>): string {
+  return Object.entries(input)
+    .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`)
+    .join("&");
+}
+
+/** POST /v1/checkout/sessions (one-time card payment for storage credits). */
+export async function createCheckoutSession(secretKey: string, input: CheckoutInput, fetchImpl: typeof fetch = fetch): Promise<CheckoutSession> {
+  const body: Record<string, string | number> = {
+    mode: "payment",
+    success_url: input.successUrl,
+    cancel_url: input.cancelUrl,
+    client_reference_id: input.clientReferenceId,
+    "line_items[0][quantity]": 1,
+    "line_items[0][price_data][currency]": "usd",
+    "line_items[0][price_data][unit_amount]": input.cents,
+    "line_items[0][price_data][product_data][name]": "FiFolders storage credits",
+  };
+  for (const [key, value] of Object.entries(input.metadata)) {
+    body[`metadata[${key}]`] = value;
+    body[`payment_intent_data[metadata][${key}]`] = value;
+  }
+  const response = await fetchImpl("https://api.stripe.com/v1/checkout/sessions", {
+    method: "POST",
+    headers: { authorization: `Bearer ${secretKey}`, "content-type": "application/x-www-form-urlencoded" },
+    body: form(body),
+  });
+  const json = (await response.json()) as { id?: string; url?: string; error?: { message?: string } };
+  if (!response.ok || !json.id || !json.url) throw new Error(`Stripe: ${json.error?.message ?? response.status}`);
+  return { id: json.id, url: json.url };
+}
+
+/** Local stand-in when no Stripe key is configured (Calibration only): no card page, the webhook is simulated. */
+export function fakeCheckoutSession(input: CheckoutInput): CheckoutSession {
+  const id = `cs_test_local_${randomBytes(12).toString("hex")}`;
+  const url = new URL(input.successUrl);
+  url.searchParams.set("session_id", id);
+  return { id, url: url.toString() };
+}

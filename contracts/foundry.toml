@@ -11,7 +11,7 @@ optimizer_runs = 200
 bytecode_hash = "ipfs"
 ffi = false
 via_ir = false
-remappings = ["forge-std/=lib/forge-std/src/"]
+remappings = ["forge-std/=lib/forge-std/src/", "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/"]
 
 [profile.default.fuzz]
 runs = 256

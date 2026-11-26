@@ -1,11 +1,12 @@
 /**
- * Gasless mode (VITE_SPONSOR_URL). A sponsor backend ("money processor", apps/fifolders/sponsor) pays all gas and the
- * USDFC storage deposit. The payer is a per-user LockedSignerAccount; the connected wallet and the browser session key
- * only sign. The account's on-chain policy blocks every USDFC exit except the sponsor's sweep back to its treasury.
+ * Gasless mode (VITE_SPONSOR_URL). A sponsor backend ("money processor", apps/fifolders/sponsor) pays all gas; users buy
+ * storage credits by card (Stripe Checkout) and the sponsor deposits the matching USDFC. The payer is a per-user
+ * LockedSignerAccount; the connected wallet (or passkey) and the browser session key only sign. The account's fixed
+ * on-chain policy blocks every USDFC exit except the sponsor's sweep back to its treasury.
  */
-import { createPublicClient, custom, encodeFunctionData, getAddress, http, numberToHex, type Address, type Hex, type PublicClient } from "viem";
+import { createPublicClient, custom, encodeFunctionData, getAddress, hashTypedData, http, keccak256, numberToHex, stringToHex, type Address, type Hex, type PublicClient } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { EXECUTE_TYPES, executeDomain, lockedAccountAbi } from "./sponsored-abi.js";
+import { EXECUTE_TYPES, SPONSOR_REQUEST_TYPES, executeDomain, lockedAccountAbi, sponsorDomain, stableJson, type SponsorAuth } from "./sponsored-abi.js";
 import type { RemovalAdapters } from "./removal.js";
 
 export function sponsorUrl(): string {
@@ -16,7 +17,7 @@ export function isSponsored(): boolean {
   return sponsorUrl() !== "";
 }
 
-export const SPONSORED_DEPOSIT_NOTE = "Paid from your FiFolders credits. No FIL or USDFC needed.";
+export const SPONSORED_DEPOSIT_NOTE = "Pay by card. Credits are spent only on storage. No FIL or USDFC needed.";
 export const SPONSORED_DATASET_NOTE = "Created once for you and paid from your FiFolders credits.";
 
 async function call<T>(path: string, body?: unknown): Promise<T> {
@@ -36,15 +37,84 @@ export async function findSponsoredAccount(user: Address): Promise<Address | nul
   return out.account ? getAddress(out.account) : null;
 }
 
-/** Create the account (if needed) and top up its storage credits. Sponsor pays gas and USDFC. */
-export async function fundSponsoredAccount(user: Address): Promise<{ account: Address; hashes: Hex[] }> {
-  const out = await call<{ account: Address; hashes: Hex[] }>("/account", { user });
-  return { account: getAddress(out.account), hashes: out.hashes };
+export type SponsorTyped = { domain: ReturnType<typeof sponsorDomain>; types: typeof SPONSOR_REQUEST_TYPES; primaryType: "SponsorRequest"; message: { action: string; bodyHash: Hex; issuedAt: bigint } };
+
+/** Signs sponsor requests as the account owner, a session key of the account, or a passkey. */
+export interface SponsorSigner {
+  auth(chainId: number, action: string, body: Record<string, unknown>): Promise<SponsorAuth>;
+}
+
+export function sponsorRequestTyped(chainId: number, action: string, body: Record<string, unknown>, issuedAt = BigInt(Math.floor(Date.now() / 1000))): SponsorTyped {
+  return { domain: sponsorDomain(chainId), types: SPONSOR_REQUEST_TYPES, primaryType: "SponsorRequest", message: { action, bodyHash: keccak256(stringToHex(stableJson(body))), issuedAt } };
+}
+
+/** Owner wallet (EIP-712 prompt). */
+export function walletSponsorSigner(address: Address, sign: (typed: SponsorTyped) => Promise<Hex>): SponsorSigner {
+  return {
+    async auth(chainId, action, body) {
+      const typed = sponsorRequestTyped(chainId, action, body);
+      return { kind: "eoa", address, issuedAt: typed.message.issuedAt.toString(), signature: await sign(typed) };
+    },
+  };
+}
+
+/** Browser session key registered on the account (no prompt). */
+export function sessionSponsorSigner(account: Address, sessionKey: Hex): SponsorSigner {
+  const local = privateKeyToAccount(sessionKey);
+  return {
+    async auth(chainId, action, body) {
+      const typed = sponsorRequestTyped(chainId, action, body);
+      return { kind: "session", account, key: local.address, issuedAt: typed.message.issuedAt.toString(), signature: await local.signTypedData(typed) };
+    },
+  };
+}
+
+/** Passkey owner: the WebAuthn challenge is the SponsorRequest digest. */
+export function passkeySponsorSigner(key: { x: Hex; y: Hex }, assert: (challenge: Hex) => Promise<{ authenticatorData: Hex; clientDataJSON: string; signature: Hex }>): SponsorSigner {
+  return {
+    async auth(chainId, action, body) {
+      const typed = sponsorRequestTyped(chainId, action, body);
+      return { kind: "passkey", x: key.x, y: key.y, issuedAt: typed.message.issuedAt.toString(), ...(await assert(hashTypedData(typed))) };
+    },
+  };
+}
+
+async function signed<T>(path: string, signer: SponsorSigner, chainId: number, body: Record<string, unknown>): Promise<T> {
+  return call<T>(path, { ...body, auth: await signer.auth(chainId, path.slice(1), body) });
+}
+
+/** Create the caller's account (once). Sponsor pays gas; no credits until a card payment lands. */
+export async function ensureSponsoredAccount(signer: SponsorSigner, chainId: number): Promise<{ account: Address; hash?: Hex }> {
+  const out = await signed<{ account: Address; hash?: Hex }>("/account", signer, chainId, {});
+  return { account: getAddress(out.account), hash: out.hash };
+}
+
+/** Stripe Checkout for storage credits; returns the hosted payment page URL. */
+export async function buySponsoredCredits(signer: SponsorSigner, chainId: number, input: { usd: number; successUrl: string; cancelUrl: string }): Promise<{ id: string; url: string }> {
+  return signed("/checkout", signer, chainId, input);
+}
+
+export async function sponsoredCreditStatus(sessionId: string): Promise<{ status: string; account?: Address; usdfc?: string; hash?: Hex | null }> {
+  return call(`/credits?session=${encodeURIComponent(sessionId)}`);
 }
 
 /** One-time dataset creation by the sponsor (approved provider only). */
-export async function createSponsoredDataset(user: Address, metadata: Record<string, string>): Promise<{ dataSetId: string; providerId: string; hash: Hex }> {
-  return call("/dataset", { user, metadata });
+export async function createSponsoredDataset(signer: SponsorSigner, chainId: number, metadata: Record<string, string>): Promise<{ dataSetId: string; providerId: string; hash: Hex }> {
+  return signed("/dataset", signer, chainId, { metadata });
+}
+
+/** Default card purchase (whole USD). */
+export function sponsoredCreditUsd(): number {
+  return Number(import.meta.env?.VITE_SPONSOR_CREDIT_USD ?? 5) || 5;
+}
+
+/** Calibration must use Stripe test mode (pk_test_); mainnet live mode. Empty is allowed (sponsor decides). */
+export function stripeModeNote(chain: "calibration" | "mainnet"): string | null {
+  const key = String(import.meta.env?.VITE_STRIPE_PUBLISHABLE_KEY ?? "");
+  if (!key) return null;
+  if (chain === "calibration" && !key.startsWith("pk_test_")) throw new Error("Calibration needs a Stripe test publishable key (pk_test_…).");
+  if (chain === "mainnet" && !key.startsWith("pk_live_")) throw new Error("Mainnet needs a Stripe live publishable key (pk_live_…).");
+  return chain === "calibration" ? "Test mode: pay with card 4242 4242 4242 4242, any future date, any CVC." : null;
 }
 
 type TypedSigner = (typed: { domain: ReturnType<typeof executeDomain>; types: typeof EXECUTE_TYPES; primaryType: "Execute"; message: { target: Address; value: bigint; data: Hex; nonce: bigint; deadline: bigint } }) => Promise<Hex>;

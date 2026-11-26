@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-/// @dev Minimal EIP-1167 clone + signature recovery (no OpenZeppelin dependency in this repo).
+import {P256} from "@openzeppelin/contracts/utils/cryptography/P256.sol";
+import {Base64} from "@openzeppelin/contracts/utils/Base64.sol";
+
+/// @dev Minimal EIP-1167 clone + secp256k1 recovery.
 library LockedLib {
     error BadSignature();
 
@@ -32,10 +35,40 @@ library LockedLib {
     }
 }
 
+/// @dev WebAuthn (passkey) assertion check: P-256 over sha256(authenticatorData || sha256(clientDataJSON)), with the
+///      challenge bound into clientDataJSON. Filecoin has no RIP-7212 precompile (0x100), so P256.verify runs in Solidity.
+library LockedWebAuthn {
+    struct Assertion {
+        bytes authenticatorData;
+        string clientDataJSON;
+        uint256 challengeIndex;
+        uint256 typeIndex;
+        bytes32 r;
+        bytes32 s;
+    }
+
+    function verify(bytes32 challenge, Assertion memory a, bytes32 qx, bytes32 qy) internal view returns (bool) {
+        bytes memory json = bytes(a.clientDataJSON);
+        if (a.authenticatorData.length < 37 || (uint8(a.authenticatorData[32]) & 0x01) == 0) return false; // user present
+        if (!_at(json, a.typeIndex, bytes('"type":"webauthn.get"'))) return false;
+        bytes memory want = abi.encodePacked('"challenge":"', Base64.encodeURL(abi.encodePacked(challenge)), '"');
+        if (!_at(json, a.challengeIndex, want)) return false;
+        bytes32 h = sha256(abi.encodePacked(a.authenticatorData, sha256(json)));
+        return P256.verify(h, a.r, a.s, qx, qy);
+    }
+
+    function _at(bytes memory haystack, uint256 index, bytes memory needle) private pure returns (bool) {
+        if (index + needle.length > haystack.length) return false;
+        for (uint256 i; i < needle.length; i++) {
+            if (haystack[index + i] != needle[i]) return false;
+        }
+        return true;
+    }
+}
+
 interface IFilecoinPayL {
     function setOperatorApproval(address, address, bool, uint256, uint256, uint256) external;
     function withdrawTo(address token, address to, uint256 amount) external;
-    function settleRail(uint256 railId, uint256 untilEpoch) external;
 }
 
 interface ISessionKeyRegistryL {
@@ -60,19 +93,19 @@ interface ISPRegistryL {
 }
 
 /// @title LockedSignerAccount
-/// @notice Per-user Filecoin Pay / FWSS payer that a signature-only wallet drives, but cannot drain.
-///  - The user key may sign FWSS AddPieces / SchedulePieceRemovals / TerminateService (session key).
-///  - The user key may NOT sign CreateDataSet. The sponsor (factory admin, the "money processor") opens each
-///    data set once through `allowDataSet`, which pins the payee to an FWSS-approved provider and authorizes
-///    exactly one CreateDataSet message via a keyless "Nick's method" signer (same trick as FWSS
-///    ExampleSponsoredDataSet). This blocks paying a self-run SP.
-///  - The owner may add browser session keys (`addSessionKey`, owner-signed execute only). A session key gets the
-///    same FWSS scopes as the owner and may sign `execute` for the policy below, except calls to this account.
-///  - `execute` (user-signed, relayed) only reaches a fixed policy: FWSS terminateService, Filecoin Pay
-///    settleRail, SessionKeyRegistry revoke, add/removeSessionKey (owner only), and admin-allowlisted app contracts
-///    (e.g. FolderRegistry). Filecoin Pay withdraw/operator changes and any call to the payment token are
-///    hard-blocked and cannot be allowlisted. Calls may not carry value.
-///  - Unspent funds leave only via `sweep`, callable by the factory admin (treasury) to the treasury.
+/// @notice Per-user Filecoin Pay / FWSS payer that a signature-only wallet (secp256k1 EOA or WebAuthn passkey) drives,
+///         but cannot drain.
+///  - Owner-signed or session-key-signed `execute` reaches a FIXED policy, compiled in and not admin-extendable:
+///      * FWSS.terminateService(uint256)                 end storage (the only FWSS call a payer makes itself)
+///      * FolderRegistryV2.commit(bytes32,bytes32,bytes,uint64) at the factory's immutable REGISTRY (0 disables):
+///        a non-upgradeable pointer store with no token logic and no outbound calls
+///      * this.addSessionKey / this.removeSessionKey     owner signature only
+///    Everything else reverts: Filecoin Pay (withdraw, operator changes, settle), the payment token, SessionKeyRegistry
+///    (beyond what add/removeSessionKey do), PDPVerifier, any other contract. Calls may not carry value.
+///  - Piece adds and removals are never sent by the account: session keys sign FWSS AddPieces / SchedulePieceRemovals
+///    and the provider submits them.
+///  - Data sets are opened once by the sponsor (factory admin) via `allowDataSet`, pinned to an FWSS-approved provider.
+///  - Unspent funds leave only via `sweep`, admin-only, to the factory treasury.
 contract LockedSignerAccount {
     error AlreadyInitialized();
     error NotFactory();
@@ -81,6 +114,7 @@ contract LockedSignerAccount {
     error Expired(uint256 deadline);
     error BadNonce(uint256 expected, uint256 got);
     error BadSigner(address recovered);
+    error BadPasskeySignature();
     error CallNotAllowed(address target, bytes4 selector);
     error ValueNotAllowed();
     error ProviderNotApproved(uint256 providerId);
@@ -109,40 +143,45 @@ contract LockedSignerAccount {
     bytes32 public constant TERMINATE_SERVICE = keccak256("TerminateService(uint256 dataSetId)");
     bytes32 private constant METADATA_ENTRY_TYPEHASH = keccak256("MetadataEntry(string key,string value)");
 
-    // Fixed signature used for keyless CreateDataSet authorization (Nick's method): r = s = 1, v = 27.
     bytes32 public constant NICK_R = bytes32(uint256(1));
     bytes32 public constant NICK_S = bytes32(uint256(1));
     uint8 public constant NICK_V = 27;
 
-    bytes4 private constant TERMINATE_SERVICE_1 = bytes4(keccak256("terminateService(uint256)"));
-    bytes4 private constant TERMINATE_SERVICE_2 = bytes4(keccak256("terminateService(uint256,bytes)"));
+    bytes4 public constant TERMINATE_SERVICE_SELECTOR = bytes4(keccak256("terminateService(uint256)"));
+    bytes4 public constant REGISTRY_COMMIT_SELECTOR = bytes4(keccak256("commit(bytes32,bytes32,bytes,uint64)"));
 
     LockedSignerAccountFactory public immutable FACTORY;
 
+    /// @notice secp256k1 owner (zero when the owner is a passkey).
     address public owner;
+    /// @notice P-256 passkey owner public key (zero when the owner is an EOA).
+    bytes32 public passkeyX;
+    bytes32 public passkeyY;
     uint256 public nonce;
     uint256 public sessionExpiry;
     /// @notice Browser session keys allowed to sign `execute` (expiry, unix seconds).
     mapping(address => uint256) public sessionSigners;
+    bool private _initialized;
 
     constructor() {
         FACTORY = LockedSignerAccountFactory(msg.sender);
-        owner = address(0xdead);
+        _initialized = true;
     }
 
-    function initialize(address owner_, uint256 sessionExpiry_) external {
+    function initialize(address owner_, bytes32 qx, bytes32 qy, uint256 sessionExpiry_) external {
         if (msg.sender != address(FACTORY)) revert NotFactory();
-        if (owner != address(0)) revert AlreadyInitialized();
+        if (_initialized) revert AlreadyInitialized();
+        _initialized = true;
         owner = owner_;
+        passkeyX = qx;
+        passkeyY = qy;
         sessionExpiry = sessionExpiry_;
-        IFWSSL fwss = IFWSSL(FACTORY.FWSS());
         IFilecoinPayL(FACTORY.PAY()).setOperatorApproval(
-            FACTORY.TOKEN(), address(fwss), true, type(uint256).max, type(uint256).max, type(uint256).max
+            FACTORY.TOKEN(), FACTORY.FWSS(), true, type(uint256).max, type(uint256).max, type(uint256).max
         );
-        ISessionKeyRegistryL(FACTORY.SKR()).login(owner_, sessionExpiry_, _fwssScopes(), "fil-gasless-locked");
+        // An EOA owner may sign FWSS piece ops directly; a passkey cannot (FWSS verifies secp256k1 only).
+        if (owner_ != address(0)) ISessionKeyRegistryL(FACTORY.SKR()).login(owner_, sessionExpiry_, _fwssScopes(), "fifolders");
     }
-
-    // ---------------------------------------------------------------- user path (relayed)
 
     function domainSeparator() public view returns (bytes32) {
         return keccak256(
@@ -159,17 +198,16 @@ contract LockedSignerAccount {
         return keccak256(abi.encodePacked("\x19\x01", domainSeparator(), structHash));
     }
 
-    /// @notice True if a user-signed execute may call `target.selector`.
+    /// @notice True if a signed execute may call `target.selector`. Fixed at deploy; nobody can widen it.
     function isAllowed(address target, bytes4 selector) public view returns (bool) {
-        LockedSignerAccountFactory f = FACTORY;
         if (target == address(this)) return selector == this.addSessionKey.selector || selector == this.removeSessionKey.selector;
-        if (target == f.TOKEN()) return false; // no transfer / approve / permit / anything on the payment token
-        if (target == f.PAY()) return selector == IFilecoinPayL.settleRail.selector; // no withdraw, no operator changes
-        if (target == f.FWSS()) return selector == TERMINATE_SERVICE_1 || selector == TERMINATE_SERVICE_2;
-        if (target == f.SKR()) return selector == ISessionKeyRegistryL.revoke.selector; // no new keys / scopes
-        return f.appAllowed(target, selector);
+        if (target == FACTORY.FWSS()) return selector == TERMINATE_SERVICE_SELECTOR;
+        address registry = FACTORY.REGISTRY();
+        if (registry != address(0) && target == registry) return selector == REGISTRY_COMMIT_SELECTOR;
+        return false;
     }
 
+    /// @param signature 65-byte secp256k1 (owner or session key), or abi.encode(LockedWebAuthn.Assertion) (passkey owner).
     function execute(
         address target,
         uint256 value,
@@ -183,9 +221,15 @@ contract LockedSignerAccount {
         if (value != 0) revert ValueNotAllowed();
         bytes4 selector = bytes4(data);
         if (!isAllowed(target, selector)) revert CallNotAllowed(target, selector);
-        address signer = LockedLib.recover(executeDigest(target, value, data, nonce_, deadline), signature);
-        if (signer != owner && (target == address(this) || sessionSigners[signer] < block.timestamp)) {
-            revert BadSigner(signer);
+        bytes32 digest = executeDigest(target, value, data, nonce_, deadline);
+        if (signature.length == 65) {
+            address signer = LockedLib.recover(digest, signature);
+            bool isOwner = signer == owner && signer != address(0);
+            if (!isOwner && (target == address(this) || sessionSigners[signer] < block.timestamp)) revert BadSigner(signer);
+        } else {
+            if (passkeyX == bytes32(0)) revert BadPasskeySignature();
+            LockedWebAuthn.Assertion memory a = abi.decode(signature, (LockedWebAuthn.Assertion));
+            if (!LockedWebAuthn.verify(digest, a, passkeyX, passkeyY)) revert BadPasskeySignature();
         }
         nonce = nonce_ + 1;
         bool ok;
@@ -201,7 +245,7 @@ contract LockedSignerAccount {
         perms[2] = TERMINATE_SERVICE;
     }
 
-    /// @notice Owner-signed (via execute): let a browser key sign FWSS piece ops and allowlisted executes.
+    /// @notice Owner-signed (via execute): let a browser secp256k1 key sign FWSS piece ops and policy executes.
     function addSessionKey(address key, uint256 expiry) external {
         if (msg.sender != address(this)) revert NotSelf();
         if (expiry > sessionExpiry) expiry = sessionExpiry;
@@ -218,8 +262,8 @@ contract LockedSignerAccount {
     }
 
     /// @notice Authorize exactly one CreateDataSet(clientDataSetId, payee, metadata) with an FWSS-approved provider.
-    ///         Sponsor (factory admin) only: data set creation is a one-time backend step. The SP submits the creation with the fixed
-    ///         signature (r=s=1, v=27); no key exists for the derived signer, so nothing else can be signed.
+    ///         Sponsor (factory admin) only. The provider submits it with the fixed signature (r=s=1, v=27); no key
+    ///         exists for the derived signer, so nothing else can be signed with it.
     function allowDataSet(uint256 providerId, uint256 clientDataSetId, string[] calldata keys, string[] calldata values)
         external
         returns (address createSigner)
@@ -231,7 +275,7 @@ contract LockedSignerAccount {
         createSigner = createDataSetSigner(clientDataSetId, payee, keys, values);
         bytes32[] memory perms = new bytes32[](1);
         perms[0] = CREATE_DATA_SET;
-        ISessionKeyRegistryL(FACTORY.SKR()).login(createSigner, sessionExpiry, perms, "fil-gasless-locked");
+        ISessionKeyRegistryL(FACTORY.SKR()).login(createSigner, sessionExpiry, perms, "fifolders");
         emit DataSetAllowed(providerId, payee, clientDataSetId, createSigner);
     }
 
@@ -255,8 +299,6 @@ contract LockedSignerAccount {
         return ecrecover(keccak256(abi.encodePacked("\x19\x01", domain, structHash)), NICK_V, NICK_R, NICK_S);
     }
 
-    // ---------------------------------------------------------------- treasury path
-
     /// @notice Return unspent Filecoin Pay funds to the treasury. Admin only; destination is fixed.
     function sweep(uint256 amount) external {
         if (msg.sender != FACTORY.admin()) revert NotAdmin();
@@ -267,28 +309,31 @@ contract LockedSignerAccount {
 }
 
 /// @title LockedSignerAccountFactory
-/// @notice Permissionless CREATE2 deployment; admin (sponsor) manages the app allowlist and treasury sweeps.
+/// @notice Permissionless CREATE2 deployment and a registry of its accounts (`isAccount`). The admin (sponsor) opens
+///         data sets and sweeps to the treasury; it cannot change any account's call policy.
 contract LockedSignerAccountFactory {
     error NotAdmin();
-    error ProtectedTarget(address target);
+    error NoOwner();
 
-    event AccountCreated(address indexed account, address indexed owner, uint256 salt);
-    event AppAllowed(address indexed target, bytes4 indexed selector, bool allowed);
+    event AccountCreated(address indexed account, address indexed owner, bytes32 passkeyX, uint256 salt);
 
     LockedSignerAccount public immutable IMPLEMENTATION;
     address public immutable FWSS;
     address public immutable PAY;
     address public immutable SKR;
     address public immutable TOKEN;
+    /// @notice FolderRegistryV2 whose `commit` accounts may call (zero: none). Immutable.
+    address public immutable REGISTRY;
     address public admin;
     address public treasury;
-    mapping(address => mapping(bytes4 => bool)) public appAllowed;
+    mapping(address => bool) public isAccount;
 
-    constructor(address fwss, address admin_, address treasury_) {
+    constructor(address fwss, address registry, address admin_, address treasury_) {
         FWSS = fwss;
         PAY = IFWSSL(fwss).paymentsContractAddress();
         SKR = IFWSSL(fwss).sessionKeyRegistry();
         TOKEN = IFWSSL(fwss).usdfcTokenAddress();
+        REGISTRY = registry;
         admin = admin_;
         treasury = treasury_;
         IMPLEMENTATION = new LockedSignerAccount();
@@ -299,15 +344,6 @@ contract LockedSignerAccountFactory {
         _;
     }
 
-    /// @notice Allow app contracts (e.g. FolderRegistry.commitFor, FiClub writes). Core contracts cannot be added.
-    function setAppAllowed(address target, bytes4 selector, bool allowed) external onlyAdmin {
-        if (target == FWSS || target == PAY || target == SKR || target == TOKEN || target.code.length == 0) {
-            revert ProtectedTarget(target);
-        }
-        appAllowed[target][selector] = allowed;
-        emit AppAllowed(target, selector, allowed);
-    }
-
     function setAdmin(address next) external onlyAdmin {
         admin = next;
     }
@@ -316,19 +352,25 @@ contract LockedSignerAccountFactory {
         treasury = next;
     }
 
-    function _salt(address owner, uint256 salt, uint256 sessionExpiry) private pure returns (bytes32) {
-        return keccak256(abi.encode(owner, salt, sessionExpiry));
+    function _salt(address owner, bytes32 qx, bytes32 qy, uint256 salt, uint256 sessionExpiry) private pure returns (bytes32) {
+        return keccak256(abi.encode(owner, qx, qy, salt, sessionExpiry));
     }
 
-    function predict(address owner, uint256 salt, uint256 sessionExpiry) public view returns (address) {
-        return LockedLib.predict(address(IMPLEMENTATION), _salt(owner, salt, sessionExpiry), address(this));
+    function predict(address owner, bytes32 qx, bytes32 qy, uint256 salt, uint256 sessionExpiry) public view returns (address) {
+        return LockedLib.predict(address(IMPLEMENTATION), _salt(owner, qx, qy, salt, sessionExpiry), address(this));
     }
 
-    function create(address owner, uint256 salt, uint256 sessionExpiry) external returns (LockedSignerAccount account) {
-        address predicted = predict(owner, salt, sessionExpiry);
+    /// @param owner secp256k1 owner, or zero with (qx, qy) a P-256 passkey public key.
+    function create(address owner, bytes32 qx, bytes32 qy, uint256 salt, uint256 sessionExpiry)
+        external
+        returns (LockedSignerAccount account)
+    {
+        if (owner == address(0) && qx == bytes32(0)) revert NoOwner();
+        address predicted = predict(owner, qx, qy, salt, sessionExpiry);
         if (predicted.code.length > 0) return LockedSignerAccount(predicted);
-        account = LockedSignerAccount(LockedLib.clone(address(IMPLEMENTATION), _salt(owner, salt, sessionExpiry)));
-        account.initialize(owner, sessionExpiry);
-        emit AccountCreated(address(account), owner, salt);
+        account = LockedSignerAccount(LockedLib.clone(address(IMPLEMENTATION), _salt(owner, qx, qy, salt, sessionExpiry)));
+        isAccount[address(account)] = true;
+        account.initialize(owner, qx, qy, sessionExpiry);
+        emit AccountCreated(address(account), owner, qx, salt);
     }
 }

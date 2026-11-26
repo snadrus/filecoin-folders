@@ -18,6 +18,8 @@ interface ImportMetaEnv {
   readonly VITE_FICLUB_CHAIN_ID?: string;
   /** Gasless mode: sponsor backend URL (apps/fifolders/sponsor). */
   readonly VITE_SPONSOR_URL?: string;
+  readonly VITE_SPONSOR_CREDIT_USD?: string;
+  readonly VITE_STRIPE_PUBLISHABLE_KEY?: string;
 }
 
 interface Window {
