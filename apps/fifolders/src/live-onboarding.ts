@@ -38,7 +38,9 @@ import {
   waitForCredit,
   isSponsored,
   sessionSponsorSigner,
-  sponsoredCreditUsd,
+  DEFAULT_SPONSOR_LIMITS,
+  sponsorPricing,
+  sponsoredPurchaseUsd,
   stripeModeNote,
   walletSponsorSigner,
   type SponsorSigner,
@@ -716,10 +718,13 @@ export function createLiveOnboarding(options: LiveOnboardingOptions = {}): Onboa
           if (paymentsReady(before.deposited, before.approved)) return;
         }
         stripeModeNote(choice);
-        report?.({ flow: "payment", phase: "signing", label: intentText(INTENTS.sponsoredCredits(sponsoredCreditUsd())) });
+        // Minimums (charge − Stripe fee ≥ $1.20, + setup on the first purchase) are enforced by the sponsor too.
+        const limits = await sponsorPricing().catch(() => DEFAULT_SPONSOR_LIMITS);
+        const usd = sponsoredPurchaseUsd(limits, !account);
+        report?.({ flow: "payment", phase: "signing", label: intentText(INTENTS.sponsoredCredits(usd)) });
         const here = typeof window !== "undefined" && window.location ? `${window.location.origin}${window.location.pathname ?? "/"}` : "http://localhost/";
         const checkout = await buySponsoredCredits(await sponsorSigner(choice), chainOf(choice).id, {
-          usd: sponsoredCreditUsd(),
+          usd,
           successUrl: `${here}?checkout=success&session_id={CHECKOUT_SESSION_ID}`,
           cancelUrl: `${here}?checkout=cancel`,
         });

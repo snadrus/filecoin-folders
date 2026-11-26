@@ -7,7 +7,7 @@ import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { verifyAuth, requestDigest } from "../sponsor/auth.js";
 import { RateLimiter } from "../sponsor/ratelimit.js";
 import { createSponsor, type SponsorConfig } from "../sponsor/server.js";
-import { DEFAULT_PRICING, creditFor, poolTopUp, usdfcForCents } from "../sponsor/pricing.js";
+import { DEFAULT_PRICING, creditFor, minChargeCents, poolTopUp, pricingFromEnv, stripeFeeModelCents, usdfcForCents } from "../sponsor/pricing.js";
 import { lockedFactoryAbi } from "../src/sponsored-abi.js";
 import { assertStripeMode, stripeSignatureHeader, verifyStripeSignature } from "../sponsor/stripe.js";
 import { derToRS, encodeContractAssertion } from "../src/passkey.js";
@@ -132,10 +132,24 @@ describe("pricing", () => {
   it("credit = charge − Stripe fee − $0.20 reserve − setup fee (first purchase)", () => {
     expect(creditFor(DEFAULT_PRICING, { chargeCents: 500, feeCents: 45, first: true })).toMatchObject({ netCents: 455, creditCents: 285, creditUsdfc: 285n * E });
     expect(creditFor(DEFAULT_PRICING, { chargeCents: 500, feeCents: 45, first: false })).toMatchObject({ creditCents: 435 });
-    // the minimums leave a positive credit at standard card pricing
     expect(creditFor(DEFAULT_PRICING, { chargeCents: 305, feeCents: 39, first: true }).creditCents).toBe(96);
+    expect(creditFor(DEFAULT_PRICING, { chargeCents: 310, feeCents: 39, first: true }).creditCents).toBe(101);
     expect(creditFor(DEFAULT_PRICING, { chargeCents: 155, feeCents: 34, first: false }).creditCents).toBe(101);
     expect(creditFor(DEFAULT_PRICING, { chargeCents: 100, feeCents: 33, first: true }).creditCents).toBe(0);
+  });
+  it("minimums: charge − Stripe fee (2.9% + 30¢) ≥ $1.20, + $1.50 setup on a first purchase", () => {
+    expect(DEFAULT_PRICING).toMatchObject({ minTopUpCents: 155, minFirstCents: 310, minNetCents: 120 });
+    expect(stripeFeeModelCents(310)).toBe(39);
+    for (let c = DEFAULT_PRICING.minTopUpCents; c <= DEFAULT_PRICING.maxCents; c += 1) expect(c - stripeFeeModelCents(c)).toBeGreaterThanOrEqual(120);
+    for (let c = DEFAULT_PRICING.minFirstCents; c <= DEFAULT_PRICING.maxCents; c += 1) {
+      expect(creditFor(DEFAULT_PRICING, { chargeCents: c, feeCents: stripeFeeModelCents(c), first: true }).creditCents).toBeGreaterThanOrEqual(100);
+    }
+    expect(minChargeCents(120, DEFAULT_PRICING, 1)).toBe(154);
+    expect(minChargeCents(270, DEFAULT_PRICING, 1)).toBe(309);
+    // configurable; overrides can only raise a minimum
+    expect(pricingFromEnv({ SPONSOR_MIN_NET_USD: "2", SPONSOR_SETUP_FEE_USD: "1" })).toMatchObject({ minTopUpCents: 240, minFirstCents: 340 });
+    expect(pricingFromEnv({ SPONSOR_MIN_FIRST_USD: "1" }).minFirstCents).toBe(310);
+    expect(pricingFromEnv({ SPONSOR_MIN_FIRST_USD: "4" }).minFirstCents).toBe(400);
   });
   it("pool handover deposits only the credit above the 1 USDFC seed", () => {
     expect(poolTopUp(285n * E, 100n * E)).toBe(185n * E);
@@ -148,7 +162,7 @@ describe("sponsor server (fake chain)", () => {
   let close: (() => void) | undefined;
   afterEach(() => close?.());
 
-  async function start(opts: { pool?: number; secretKey?: string; fetch?: typeof fetch } = {}) {
+  async function start(opts: { pool?: number; secretKey?: string; fetch?: typeof fetch; noStripe?: boolean } = {}) {
     const sends: { label: string; to?: Address; data: Hex }[] = [];
     const factoryAccounts = new Set<string>();
     const predicted = (args: readonly unknown[]) => getAddress(keccak256(toHex(JSON.stringify(args, (_, v) => (typeof v === "bigint" ? v.toString() : v)))).slice(0, 42));
@@ -198,7 +212,7 @@ describe("sponsor server (fake chain)", () => {
         providerId: 2n,
         contracts: { pay: getAddress("0x0000000000000000000000000000000000000001"), usdfc: getAddress("0x0000000000000000000000000000000000000002"), fwss: getAddress("0x0000000000000000000000000000000000000003"), pdp: getAddress("0x0000000000000000000000000000000000000004") },
         pool: { size: opts.pool ?? 0, seedUsdfc: "1" },
-        stripe: { webhookSecret: WHSEC, ...(opts.secretKey ? { secretKey: opts.secretKey } : { fake: true }), allowedOrigins: ["http://localhost"] },
+        stripe: opts.noStripe ? { allowedOrigins: [] } : { webhookSecret: WHSEC, ...(opts.secretKey ? { secretKey: opts.secretKey } : { fake: true }), allowedOrigins: ["http://localhost"] },
         limits: { executePerMinute: 2 },
       },
       {
@@ -223,7 +237,11 @@ describe("sponsor server (fake chain)", () => {
       const raw = JSON.stringify({ id: `evt_${sessionId}`, type: "checkout.session.completed", livemode: false, data: { object: { id: sessionId, payment_status: "paid", currency: "usd", amount_total: cents, metadata: { identity, factory: FACTORY } } } });
       return post("/stripe/webhook", raw, { "stripe-signature": stripeSignatureHeader(raw, WHSEC) });
     };
-    return { sponsor, sends, post, as, pay, opened, factoryAccounts };
+    const get = async (path: string) => {
+      const response = await fetch(`${base}${path}`);
+      return { status: response.status, json: (await response.json()) as Record<string, unknown> };
+    };
+    return { sponsor, sends, post, get, as, pay, opened, factoryAccounts };
   }
 
   const newUser = () => {
@@ -231,6 +249,18 @@ describe("sponsor server (fake chain)", () => {
     return { key, id: `eoa:${key.address.toLowerCase()}`, signed: walletSponsorSigner(key.address, (typed) => key.signTypedData(typed)) };
   };
   const checkoutBody = (usd: number) => ({ usd, successUrl: "http://localhost/?checkout=success&session_id={CHECKOUT_SESSION_ID}", cancelUrl: "http://localhost/?checkout=cancel" });
+
+  it("health, pool status, and a clear error while Stripe is not configured", async () => {
+    const { sponsor, get, as, pay } = await start({ pool: 1, noStripe: true });
+    await sponsor.refillPool();
+    expect((await get("/health")).json).toMatchObject({ ok: true, network: "calibration", factory: FACTORY, stripe: { checkout: false, webhook: false }, pool: { target: 1, ready: 1 } });
+    expect((await get("/pool")).json).toMatchObject({ counts: { ready: 1 }, entries: [{ status: "ready", dataSetId: "1001" }] });
+    expect((await get("/pricing")).json).toMatchObject({ minFirstUsd: 3.1, minTopUpUsd: 1.55, minNetUsd: 1.2 });
+    const user = newUser();
+    const checkout = await as(user.signed)("checkout", checkoutBody(5));
+    expect(checkout).toMatchObject({ status: 503, json: { error: expect.stringMatching(/^Stripe not configured/) } });
+    expect((await pay("cs_x", user.id, 500)).status).toBe(503);
+  });
 
   it("warm pool: first purchase hands over a ready account in one assign tx; top-up above the 1 USDFC seed", async () => {
     const { sponsor, sends, post, as, pay, opened } = await start({ pool: 1 });
@@ -241,7 +271,7 @@ describe("sponsor server (fake chain)", () => {
 
     const user = newUser();
     expect((await post("/checkout", checkoutBody(5))).status).toBe(401);
-    expect((await as(user.signed)("checkout", checkoutBody(3.04))).status).toBe(400); // first-purchase minimum $3.05
+    expect((await as(user.signed)("checkout", checkoutBody(3.09))).status).toBe(400); // first-purchase minimum $3.10
     const checkout = await as(user.signed)("checkout", checkoutBody(5));
     expect(checkout.json).toMatchObject({ first: true });
     const sessionId = String(checkout.json.id);
@@ -276,8 +306,8 @@ describe("sponsor server (fake chain)", () => {
     await sponsor.refillPool();
     await sponsor.refillPool(); // no-op on a full pool must not block later refills
     const user = newUser();
-    const checkout = await as(user.signed)("checkout", checkoutBody(3.05));
-    await pay(String(checkout.json.id), user.id, 305);
+    const checkout = await as(user.signed)("checkout", checkoutBody(3.1));
+    await pay(String(checkout.json.id), user.id, 305); // e.g. a higher-fee card left less than the modelled net
     await sponsor.settled();
     const assign = sends.find((s) => s.label.startsWith("assign"))!;
     expect(decodeFunctionData({ abi: lockedFactoryAbi, data: assign.data }).args[4]).toBe(0n);

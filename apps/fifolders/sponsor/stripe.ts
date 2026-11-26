@@ -1,6 +1,7 @@
 // Stripe without the SDK: Checkout Session creation over REST and webhook signature checks
 // (https://docs.stripe.com/webhooks#verify-manually: HMAC-SHA256 of `${t}.${payload}`, header `t=…,v1=…`).
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { stripeFeeModelCents } from "./pricing.js";
 
 export type Network = "calibration" | "mainnet";
 
@@ -90,8 +91,8 @@ export function fakeCheckoutSession(input: CheckoutInput): CheckoutSession {
 }
 
 /** Stripe's standard US card pricing (2.9% + 30¢); only for the local fake, where there is no balance transaction. */
-export function estimateStripeFeeCents(cents: number): number {
-  return Math.round(cents * 0.029) + 30;
+export function estimateStripeFeeCents(cents: number, model?: { stripeFeeBps: number; stripeFeeFixedCents: number }): number {
+  return stripeFeeModelCents(cents, model);
 }
 
 /**

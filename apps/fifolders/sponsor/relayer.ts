@@ -20,28 +20,48 @@ export interface Relayer {
   relay(call: RelayCall): Promise<TransactionReceipt>;
 }
 
-export const NETWORK: "calibration" | "mainnet" = process.env.SPONSOR_NETWORK === "mainnet" ? "mainnet" : "calibration";
-export const CHAIN = NETWORK === "mainnet" ? mainnet : calibration;
-export const RPC = process.env.SPONSOR_RPC ?? process.env.CALIBRATION_RPC ?? (NETWORK === "mainnet" ? "https://api.node.glif.io/rpc/v1" : "https://api.calibration.node.glif.io/rpc/v1");
+export type SponsorNetwork = "calibration" | "mainnet";
+export interface ChainOptions {
+  network?: SponsorNetwork;
+  rpc?: string;
+}
 
-export function publicClient(): PublicClient {
-  return createPublicClient({ chain: CHAIN as never, transport: http(RPC, { retryCount: 5 }) }) as unknown as PublicClient;
+// Node reads process.env; the Worker passes options explicitly.
+const ENV: Record<string, string | undefined> = typeof process !== "undefined" && process.env ? process.env : {};
+export const NETWORK: SponsorNetwork = ENV.SPONSOR_NETWORK === "mainnet" ? "mainnet" : "calibration";
+
+export function chainFor(network: SponsorNetwork = NETWORK) {
+  return network === "mainnet" ? mainnet : calibration;
+}
+
+export function rpcFor(network: SponsorNetwork = NETWORK, override?: string): string {
+  return override ?? ENV.SPONSOR_RPC ?? ENV.CALIBRATION_RPC ?? (network === "mainnet" ? "https://api.node.glif.io/rpc/v1" : "https://api.calibration.node.glif.io/rpc/v1");
+}
+
+export const CHAIN = chainFor(NETWORK);
+export const RPC = rpcFor(NETWORK);
+
+export function publicClient(opts: ChainOptions = {}): PublicClient {
+  const network = opts.network ?? NETWORK;
+  return createPublicClient({ chain: chainFor(network) as never, transport: http(rpcFor(network, opts.rpc), { retryCount: 5 }) }) as unknown as PublicClient;
 }
 
 export class SponsorWalletRelayer implements Relayer {
   readonly name = "sponsor-hot-wallet";
   readonly address: Address;
   private wallet;
-  private pub = publicClient();
+  private pub: PublicClient;
   /** Every submission, for audit logs. */
   readonly sent: { label: string; hash: Hex }[] = [];
   /** One sender, one nonce sequence: serialize submissions. */
   private queue: Promise<unknown> = Promise.resolve();
 
-  constructor(privateKey: Hex) {
+  constructor(privateKey: Hex, opts: ChainOptions = {}) {
     const account = privateKeyToAccount(privateKey);
+    const network = opts.network ?? NETWORK;
     this.address = account.address;
-    this.wallet = createWalletClient({ account, chain: CHAIN as never, transport: http(RPC, { retryCount: 5 }) });
+    this.pub = publicClient(opts);
+    this.wallet = createWalletClient({ account, chain: chainFor(network) as never, transport: http(rpcFor(network, opts.rpc), { retryCount: 5 }) });
   }
 
   send(call: RelayCall): Promise<Hex> {
@@ -51,6 +71,7 @@ export class SponsorWalletRelayer implements Relayer {
       const hash = (await this.wallet.sendTransaction({ to: call.to ?? null, data: call.data, value: call.value ?? 0n, gas: (estimate * 13n) / 10n } as never)) as Hex;
       console.log(`[relay:${this.name}] ${call.label}: ${hash}`);
       this.sent.push({ label: call.label, hash });
+      if (this.sent.length > 500) this.sent.splice(0, this.sent.length - 500);
       // FEVM: wait until the node has the tx so the next nonce read is fresh.
       await this.pub.getTransaction({ hash }).catch(() => undefined);
       return hash;

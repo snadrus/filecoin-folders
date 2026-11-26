@@ -17,7 +17,7 @@ export function isSponsored(): boolean {
   return sponsorUrl() !== "";
 }
 
-export const SPONSORED_DEPOSIT_NOTE = "Pay by card. Credits pay only for storage; no FIL or USDFC needed. First purchase includes a one-time $1.50 account setup.";
+export const SPONSORED_DEPOSIT_NOTE = "Pay by card. Credits pay only for storage; no FIL or USDFC needed. First purchase includes a one-time $1.50 account setup (minimum $3.10; top-ups from $1.55).";
 export const SPONSORED_DATASET_NOTE = "Created once for you and paid from your FiFolders credits.";
 
 async function call<T>(path: string, body?: unknown): Promise<T> {
@@ -89,6 +89,7 @@ export interface SponsorPricing {
   minFirstUsd: number;
   minTopUpUsd: number;
   maxUsd: number;
+  minNetUsd?: number;
   setupFeeUsd: number;
   reserveUsd: number;
   testMode: boolean;
@@ -127,6 +128,19 @@ export async function sponsoredCreditStatus(sessionId: string): Promise<{ status
 /** One-time dataset creation by the sponsor (approved provider only). */
 export async function createSponsoredDataset(signer: SponsorSigner, chainId: number, metadata: Record<string, string>): Promise<{ dataSetId: string; providerId: string; hash: Hex }> {
   return signed("/dataset", signer, chainId, { metadata });
+}
+
+/**
+ * Fallback minimums, mirroring the sponsor's defaults (sponsor/pricing.ts): charge − Stripe fee (2.9% + 30¢) must
+ * reach $1.20, plus the $1.50 setup fee on a first purchase. The sponsor's /pricing wins when reachable.
+ */
+export const DEFAULT_SPONSOR_LIMITS = { minFirstUsd: 3.1, minTopUpUsd: 1.55, maxUsd: 200 } as const;
+
+/** Card amount to charge: the suggestion, raised to the minimum for this purchase and capped at the maximum. */
+export function sponsoredPurchaseUsd(limits: Pick<SponsorPricing, "minFirstUsd" | "minTopUpUsd" | "maxUsd">, first: boolean, requested = sponsoredCreditUsd()): number {
+  const min = first ? limits.minFirstUsd : limits.minTopUpUsd;
+  const usd = Number.isFinite(requested) ? Math.round(requested * 100) / 100 : min;
+  return Math.min(limits.maxUsd, Math.max(min, usd));
 }
 
 /** Suggested card purchase in USD (default $5). */
