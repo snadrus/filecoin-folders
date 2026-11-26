@@ -451,7 +451,8 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
   async function assertFunded(cents: number, first: boolean): Promise<void> {
     // Upper bound on what this purchase can cost the sponsor in USDFC: the charge (less the setup fee on a first
     // purchase) at the credit rate; a first purchase served from a ready pool account only needs what exceeds its seed.
-    const creditCeiling = (parseUnits(((cents - (first ? pricing.setupCents : 0)) / 100).toFixed(2), 18) * parseUnits(pricing.usdfcPerUsd, 18)) / 10n ** 18n;
+    const ceilingCents = Math.max(pricing.minCreditCents, cents - (first ? pricing.setupCents : 0) - pricing.reserveCents);
+    const creditCeiling = (parseUnits((ceilingCents / 100).toFixed(2), 18) * parseUnits(pricing.usdfcPerUsd, 18)) / 10n ** 18n;
     const fromPool = first && Object.values(state.pool).some((entry) => entry.status === "ready");
     const need = (fromPool ? poolTopUp(creditCeiling, seed) : creditCeiling) + pendingUsdfc();
     let funds: { fil: bigint; usdfc: bigint };
@@ -800,6 +801,22 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
     return { reconciled, credits, trimmed, swept, pool: poolStatus().counts };
   }
 
+  /** Off-chain reserve + creation fees from delivered purchases: dollars owed back to the sponsor. */
+  function ledger() {
+    let reserve = 0;
+    let creation = 0;
+    let purchases = 0;
+    let first = 0;
+    for (const credit of Object.values(state.credits)) {
+      if (credit.status !== "done") continue;
+      purchases += 1;
+      reserve += credit.reserveCents;
+      creation += credit.setupCents;
+      if (credit.setupCents) first += 1;
+    }
+    return { purchases, firstPurchases: first, reserveUsd: reserve / 100, creationFeesUsd: creation / 100, owedToSponsorUsd: (reserve + creation) / 100 };
+  }
+
   async function status() {
     let funds: { fil: bigint; usdfc: bigint } | null = null;
     try {
@@ -824,6 +841,7 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
         thresholds: { minFil: config.minSponsorFil ?? "0.005", lowFil: config.lowFil ?? "0.05", lowUsdfc: config.lowUsdfc ?? "20" },
       },
       checkoutOpen: level === "ok" || level === "low",
+      ledger: ledger(),
       pool: poolStatus().counts,
       credits,
       refundAfterHours: config.refundAfterHours ?? 24,
@@ -872,7 +890,7 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
       if (req.method === "GET" && url.pathname === "/pool") return ok(poolStatus());
       if (req.method === "GET" && url.pathname === "/status") return ok(await status());
       if (req.method === "GET" && url.pathname === "/pricing") {
-        return ok({ minFirstUsd: pricing.minFirstCents / 100, minTopUpUsd: pricing.minTopUpCents / 100, maxUsd: pricing.maxCents / 100, setupFeeUsd: pricing.setupCents / 100, reserveUsd: pricing.reserveCents / 100, minNetUsd: pricing.minNetCents / 100, stripeFee: { pct: pricing.stripeFeeBps / 100, fixedUsd: pricing.stripeFeeFixedCents / 100 }, usdfcPerUsd: pricing.usdfcPerUsd, testMode: config.network !== "mainnet" });
+        return ok({ minFirstUsd: pricing.minFirstCents / 100, minTopUpUsd: pricing.minTopUpCents / 100, maxUsd: pricing.maxCents / 100, suggestedUsd: pricing.suggestedCents / 100, setupFeeUsd: pricing.setupCents / 100, reserveUsd: pricing.reserveCents / 100, minCreditUsd: pricing.minCreditCents / 100, minNetUsd: pricing.minNetCents / 100, stripeFee: { pct: pricing.stripeFeeBps / 100, fixedUsd: pricing.stripeFeeFixedCents / 100 }, usdfcPerUsd: pricing.usdfcPerUsd, testMode: config.network !== "mainnet" });
       }
       if (req.method === "GET" && url.pathname === "/account") return ok(lookup(url));
       if (req.method === "GET" && url.pathname === "/credits") {

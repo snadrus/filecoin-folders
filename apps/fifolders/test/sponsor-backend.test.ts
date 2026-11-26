@@ -129,27 +129,31 @@ describe("rate limiter", () => {
 
 describe("pricing", () => {
   const E = 10n ** 16n; // USDFC per cent
-  it("credit = charge − Stripe fee − $0.20 reserve − setup fee (first purchase)", () => {
-    expect(creditFor(DEFAULT_PRICING, { chargeCents: 500, feeCents: 45, first: true })).toMatchObject({ netCents: 455, creditCents: 285, creditUsdfc: 285n * E });
-    expect(creditFor(DEFAULT_PRICING, { chargeCents: 500, feeCents: 45, first: false })).toMatchObject({ creditCents: 435 });
-    expect(creditFor(DEFAULT_PRICING, { chargeCents: 305, feeCents: 39, first: true }).creditCents).toBe(96);
-    expect(creditFor(DEFAULT_PRICING, { chargeCents: 310, feeCents: 39, first: true }).creditCents).toBe(101);
-    expect(creditFor(DEFAULT_PRICING, { chargeCents: 155, feeCents: 34, first: false }).creditCents).toBe(101);
-    expect(creditFor(DEFAULT_PRICING, { chargeCents: 100, feeCents: 33, first: true }).creditCents).toBe(0);
+  it("credit = charge − Stripe fee − $1.00 reserve − $1.50 creation fee (first purchase), at least 1 USDFC", () => {
+    expect(creditFor(DEFAULT_PRICING, { chargeCents: 1000, feeCents: 59, first: true })).toMatchObject({ netCents: 941, reserveCents: 100, setupCents: 150, creditCents: 691, creditUsdfc: 691n * E });
+    expect(creditFor(DEFAULT_PRICING, { chargeCents: 500, feeCents: 45, first: true })).toMatchObject({ creditCents: 205 }); // $5 still ≥ 1 USDFC
+    expect(creditFor(DEFAULT_PRICING, { chargeCents: 500, feeCents: 45, first: false })).toMatchObject({ reserveCents: 100, setupCents: 0, creditCents: 355 });
+    expect(creditFor(DEFAULT_PRICING, { chargeCents: 391, feeCents: 41, first: true }).creditCents).toBe(100);
+    expect(creditFor(DEFAULT_PRICING, { chargeCents: 237, feeCents: 37, first: false }).creditCents).toBe(100);
+    // A pricier card (fee above the model) still credits 1 USDFC; the shortfall comes out of the reserve.
+    expect(creditFor(DEFAULT_PRICING, { chargeCents: 391, feeCents: 50, first: true })).toMatchObject({ creditCents: 100, reserveCents: 91, setupCents: 150 });
   });
-  it("minimums: charge − Stripe fee (2.9% + 30¢) ≥ $1.20, + $1.50 setup on a first purchase", () => {
-    expect(DEFAULT_PRICING).toMatchObject({ minTopUpCents: 155, minFirstCents: 310, minNetCents: 120 });
-    expect(stripeFeeModelCents(310)).toBe(39);
-    for (let c = DEFAULT_PRICING.minTopUpCents; c <= DEFAULT_PRICING.maxCents; c += 1) expect(c - stripeFeeModelCents(c)).toBeGreaterThanOrEqual(120);
+  it("minimums (exact): charge − Stripe fee (2.9% + 30¢) ≥ $2.00, + $1.50 creation fee on a first purchase", () => {
+    expect(DEFAULT_PRICING).toMatchObject({ minTopUpCents: 237, minFirstCents: 391, minNetCents: 200, reserveCents: 100, minCreditCents: 100, suggestedCents: 1000 });
+    expect(236 - stripeFeeModelCents(236)).toBe(199);
+    expect(390 - stripeFeeModelCents(390) - 150).toBe(199);
+    for (let c = DEFAULT_PRICING.minTopUpCents; c <= DEFAULT_PRICING.maxCents; c += 1) expect(c - stripeFeeModelCents(c)).toBeGreaterThanOrEqual(200);
     for (let c = DEFAULT_PRICING.minFirstCents; c <= DEFAULT_PRICING.maxCents; c += 1) {
-      expect(creditFor(DEFAULT_PRICING, { chargeCents: c, feeCents: stripeFeeModelCents(c), first: true }).creditCents).toBeGreaterThanOrEqual(100);
+      const q = creditFor(DEFAULT_PRICING, { chargeCents: c, feeCents: stripeFeeModelCents(c), first: true });
+      expect(q.creditCents).toBeGreaterThanOrEqual(100);
+      expect(q.reserveCents + q.setupCents).toBe(250); // reserve + creation fee stay whole at the modelled fee
     }
-    expect(minChargeCents(120, DEFAULT_PRICING, 1)).toBe(154);
-    expect(minChargeCents(270, DEFAULT_PRICING, 1)).toBe(309);
     // configurable; overrides can only raise a minimum
-    expect(pricingFromEnv({ SPONSOR_MIN_NET_USD: "2", SPONSOR_SETUP_FEE_USD: "1" })).toMatchObject({ minTopUpCents: 240, minFirstCents: 340 });
-    expect(pricingFromEnv({ SPONSOR_MIN_FIRST_USD: "1" }).minFirstCents).toBe(310);
+    expect(pricingFromEnv({ SPONSOR_RESERVE_USD: "0.20" })).toMatchObject({ minNetCents: 120, minTopUpCents: 154, minFirstCents: 309 });
+    expect(pricingFromEnv({ SPONSOR_MIN_FIRST_USD: "1" }).minFirstCents).toBe(391);
     expect(pricingFromEnv({ SPONSOR_MIN_FIRST_USD: "4" }).minFirstCents).toBe(400);
+    expect(pricingFromEnv({ SPONSOR_SUGGESTED_USD: "20" }).suggestedCents).toBe(2000);
+    expect(pricingFromEnv({})).toEqual(DEFAULT_PRICING);
   });
   it("pool handover deposits only the credit above the 1 USDFC seed", () => {
     expect(poolTopUp(285n * E, 100n * E)).toBe(185n * E);
@@ -266,7 +270,7 @@ describe("sponsor server (fake chain)", () => {
     await sponsor.refillPool();
     expect((await get("/health")).json).toMatchObject({ ok: true, network: "calibration", factory: FACTORY, stripe: { checkout: false, webhook: false }, pool: { target: 1, ready: 1 } });
     expect((await get("/pool")).json).toMatchObject({ counts: { ready: 1 }, entries: [{ status: "ready", dataSetId: "1001" }] });
-    expect((await get("/pricing")).json).toMatchObject({ minFirstUsd: 3.1, minTopUpUsd: 1.55, minNetUsd: 1.2 });
+    expect((await get("/pricing")).json).toMatchObject({ minFirstUsd: 3.91, minTopUpUsd: 2.37, minNetUsd: 2, reserveUsd: 1, setupFeeUsd: 1.5, minCreditUsd: 1, suggestedUsd: 10 });
     const user = newUser();
     const checkout = await as(user.signed)("checkout", checkoutBody(5));
     expect(checkout).toMatchObject({ status: 503, json: { error: expect.stringMatching(/^Stripe not configured/) } });
@@ -276,15 +280,15 @@ describe("sponsor server (fake chain)", () => {
   it("refuses card payments the sponsor wallet could not honor", async () => {
     const { as, sponsorUsdfc, sponsor } = await start({ pool: 0 });
     const user = newUser();
-    sponsorUsdfc.value = 3n * 10n ** 18n; // 3 USDFC < $5 − $1.50 setup
+    sponsorUsdfc.value = 2n * 10n ** 18n; // 2 USDFC < $5 − $1.50 creation − $1.00 reserve
     expect(await as(user.signed)("checkout", checkoutBody(5))).toMatchObject({ status: 503, json: { error: expect.stringMatching(/temporarily unavailable.*not been charged/) } });
     expect(Object.keys(sponsor.state.checkouts)).toHaveLength(0);
-    sponsorUsdfc.value = 35n * 10n ** 17n;
+    sponsorUsdfc.value = 25n * 10n ** 17n;
     expect((await as(user.signed)("checkout", checkoutBody(4.99))).status).toBe(200); // a fresh request (no replay)
   });
 
   it("warm pool: first purchase hands over a ready account in one assign tx; top-up above the 1 USDFC seed", async () => {
-    const { sponsor, sends, post, as, pay, opened } = await start({ pool: 1 });
+    const { sponsor, sends, post, get, as, pay, opened } = await start({ pool: 1 });
     await sponsor.refillPool();
     const [pooled] = Object.values(sponsor.state.pool);
     expect(pooled).toMatchObject({ status: "ready", dataSetId: "1001" });
@@ -294,20 +298,20 @@ describe("sponsor server (fake chain)", () => {
     expect((await post("/checkout", checkoutBody(5))).status).toBe(401);
     const forged = await user.signed.auth(CHAIN_ID, "checkout", checkoutBody(5));
     expect((await post("/checkout", { ...checkoutBody(5), auth: { ...forged, signature: `0x${"11".repeat(65)}` } })).status).toBe(401); // malformed, not 500
-    expect((await as(user.signed)("checkout", checkoutBody(3.09))).status).toBe(400); // first-purchase minimum $3.10
+    expect((await as(user.signed)("checkout", checkoutBody(3.9))).status).toBe(400); // first-purchase minimum $3.91
     const checkout = await as(user.signed)("checkout", checkoutBody(5));
     expect(checkout.json).toMatchObject({ first: true });
     const sessionId = String(checkout.json.id);
 
     const before = sends.length;
-    expect((await pay(sessionId, user.id, 500)).json).toMatchObject({ credited: (285n * E).toString() }); // 500 − 45 fee − 20 − 150
+    expect((await pay(sessionId, user.id, 500)).json).toMatchObject({ credited: (205n * E).toString() }); // 500 − 45 fee − 100 − 150
     expect((await pay(sessionId, user.id, 500)).json).toMatchObject({ duplicate: true });
     await sponsor.settled();
     const assigns = sends.slice(before).filter((s) => s.label.startsWith("assign"));
     expect(assigns).toHaveLength(1);
     const decoded = decodeFunctionData({ abi: lockedFactoryAbi, data: assigns[0]!.data });
-    expect(decoded.args).toEqual([pooled!.account, user.key.address, `0x${"0".repeat(64)}`, `0x${"0".repeat(64)}`, 185n * E]);
-    expect(sponsor.state.credits[sessionId]).toMatchObject({ status: "done", path: "pool", depositUsdfc: (185n * E).toString(), feeCents: 45, setupCents: 150, reserveCents: 20 });
+    expect(decoded.args).toEqual([pooled!.account, user.key.address, `0x${"0".repeat(64)}`, `0x${"0".repeat(64)}`, 105n * E]);
+    expect(sponsor.state.credits[sessionId]).toMatchObject({ status: "done", path: "pool", depositUsdfc: (105n * E).toString(), feeCents: 45, setupCents: 150, reserveCents: 100 });
     expect(sponsor.state.users[user.id]).toMatchObject({ account: pooled!.account, dataSetId: "1001", via: "pool" });
     expect(sponsor.state.pool[pooled!.account]!.status).toBe("assigned");
 
@@ -315,26 +319,28 @@ describe("sponsor server (fake chain)", () => {
     expect(Object.values(sponsor.state.pool).filter((e) => e.status === "ready")).toHaveLength(1);
     expect(opened).toHaveLength(2);
 
-    // Top-up: no setup fee, minimum $1.55, plain deposit.
-    expect((await as(user.signed)("checkout", checkoutBody(1.54))).status).toBe(400);
-    const topUp = await as(user.signed)("checkout", checkoutBody(1.55));
+    // Top-up: no creation fee, minimum $2.37, plain deposit.
+    expect((await as(user.signed)("checkout", checkoutBody(2.36))).status).toBe(400);
+    const topUp = await as(user.signed)("checkout", checkoutBody(2.37));
     expect(topUp.json).toMatchObject({ first: false });
-    await pay(String(topUp.json.id), user.id, 155);
+    await pay(String(topUp.json.id), user.id, 237);
     await sponsor.settled();
-    expect(sponsor.state.credits[String(topUp.json.id)]).toMatchObject({ status: "done", path: "topup", creditCents: 101 });
+    expect(sponsor.state.credits[String(topUp.json.id)]).toMatchObject({ status: "done", path: "topup", creditCents: 100, reserveCents: 100, setupCents: 0 });
+    // Ledger: reserve + creation fee owed to the sponsor.
+    expect((await get("/status")).json).toMatchObject({ ledger: { purchases: 2, firstPurchases: 1, reserveUsd: 2, creationFeesUsd: 1.5, owedToSponsorUsd: 3.5 } });
   });
 
-  it("warm pool: a credit under 1 USDFC still hands over the account, without a top-up", async () => {
+  it("warm pool: a minimum (1 USDFC) credit hands over the account without a top-up", async () => {
     const { sponsor, sends, as, pay } = await start({ pool: 1 });
     await sponsor.refillPool();
     await sponsor.refillPool(); // no-op on a full pool must not block later refills
     const user = newUser();
-    const checkout = await as(user.signed)("checkout", checkoutBody(3.1));
-    await pay(String(checkout.json.id), user.id, 305); // e.g. a higher-fee card left less than the modelled net
+    const checkout = await as(user.signed)("checkout", checkoutBody(3.91));
+    await pay(String(checkout.json.id), user.id, 391);
     await sponsor.settled();
     const assign = sends.find((s) => s.label.startsWith("assign"))!;
     expect(decodeFunctionData({ abi: lockedFactoryAbi, data: assign.data }).args[4]).toBe(0n);
-    expect(sponsor.state.credits[String(checkout.json.id)]).toMatchObject({ path: "pool", creditCents: 96, usdfc: (100n * E).toString(), depositUsdfc: "0" });
+    expect(sponsor.state.credits[String(checkout.json.id)]).toMatchObject({ path: "pool", creditCents: 100, usdfc: (100n * E).toString(), depositUsdfc: "0" });
     await sponsor.refillPool();
     expect(Object.values(sponsor.state.pool).filter((e) => e.status === "ready")).toHaveLength(1);
   });
@@ -348,15 +354,15 @@ describe("sponsor server (fake chain)", () => {
     expect(sends.map((s) => s.label.split(" ")[0])).toEqual(["create", "USDFC", "credit"]);
     expect(opened).toHaveLength(1);
     expect(sponsor.state.users[user.id]).toMatchObject({ via: "create", dataSetId: "1001" });
-    expect(sponsor.state.credits[String(checkout.json.id)]).toMatchObject({ path: "create", depositUsdfc: (285n * E).toString() });
+    expect(sponsor.state.credits[String(checkout.json.id)]).toMatchObject({ path: "create", depositUsdfc: (205n * E).toString() });
   });
 
   it("a first purchase from a ready pool account needs only the USDFC above its seed", async () => {
     const { as, sponsor, sponsorUsdfc } = await start({ pool: 1 });
     await sponsor.refillPool();
-    sponsorUsdfc.value = 25n * 10n ** 17n; // 2.5 USDFC: enough for $5 − $1.50 − 1 USDFC seed, not for $3.50 outright
+    sponsorUsdfc.value = 16n * 10n ** 17n; // 1.6 USDFC: enough for $5 − $2.50 − 1 USDFC seed, not for $2.50 outright
     expect((await as(newUser().signed)("checkout", checkoutBody(5))).status).toBe(200);
-    sponsorUsdfc.value = 2n * 10n ** 18n;
+    sponsorUsdfc.value = 14n * 10n ** 17n;
     expect((await as(newUser().signed)("checkout", checkoutBody(5))).status).toBe(503);
   });
 
@@ -478,7 +484,7 @@ describe("sponsor server (fake chain)", () => {
     await pay("cs_test_real", user.id, 1000);
     await sponsor.settled();
     expect(calls[1]).toContain("expand[]=payment_intent.latest_charge.balance_transaction");
-    expect(sponsor.state.credits.cs_test_real).toMatchObject({ feeCents: 175, netCents: 825, creditCents: 655 });
+    expect(sponsor.state.credits.cs_test_real).toMatchObject({ feeCents: 175, netCents: 825, creditCents: 575 });
   });
 
   it("relays only to factory accounts, rate limited per account", async () => {

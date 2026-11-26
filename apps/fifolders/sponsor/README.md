@@ -11,9 +11,9 @@ All amounts are in USD, and 1 USDFC is credited per $1.
 | Item | Rule |
 | --- | --- |
 | Net | Charge minus Stripe's actual fee, read from the charge's balance transaction. |
-| Credit | Net minus the $0.20 reserve (kept by the company), minus the $1.50 setup fee on the first purchase only. |
-| Minimum charge | $1.55 for a top-up, $3.10 for a first purchase, so that (charge − Stripe fee at 2.9% + 30¢) ≥ $1.20, plus the $1.50 setup fee. |
-| Maximum | $200. The UI suggests $5. |
+| Credit | Net minus the $1.00 reserve, minus the $1.50 creation fee on the first purchase only; at least 1 USDFC. Reserve and creation fee stay off-chain and are owed to the sponsor (it paid for account and dataset creation); `/status` → `ledger` keeps the running total. |
+| Minimum charge | $2.37 for a top-up, $3.91 for a first purchase (exact, to the cent), so that (charge − Stripe fee at 2.9% + 30¢) ≥ $2.00 ($1.00 reserve + 1 USDFC), plus the $1.50 creation fee. |
+| Maximum | $200. The UI suggests $10 (a first $10 purchase credits 6.91 USDFC). |
 | Balance floor | None. Users can spend their whole balance. |
 
 The first purchase shows the setup fee as its own line item on the Stripe page.
@@ -44,17 +44,19 @@ deposits the credit, and opens the dataset (the slow path).
 | `STRIPE_WEBHOOK_SECRET` | sponsor | `whsec_…` from the Stripe endpoint for `POST /stripe/webhook`. Subscribe it to `checkout.session.completed` and `checkout.session.async_payment_succeeded`. |
 | `SPONSOR_ALLOWED_ORIGINS` | sponsor | Comma-separated app origins allowed in Checkout redirects. Required on mainnet. |
 | `SPONSOR_USDFC_PER_USD` | sponsor | Credit rate. Default `1`. |
-| `SPONSOR_RESERVE_USD` | sponsor | Default `0.20`. |
-| `SPONSOR_SETUP_FEE_USD` | sponsor | Default `1.50`. |
-| `SPONSOR_MIN_TOPUP_USD` / `SPONSOR_MIN_FIRST_USD` / `SPONSOR_MAX_USD` | sponsor | Defaults are `1.55`, `3.10`, and `200` (overrides can only raise the minimums). |
-| `SPONSOR_MIN_NET_USD` / `SPONSOR_STRIPE_FEE_PCT` / `SPONSOR_STRIPE_FEE_FIXED_USD` | sponsor | Minimum net after Stripe's fee (`1.20`) and the fee model (`2.9`, `0.30`). |
+| `SPONSOR_RESERVE_USD` | sponsor | Default `1.00`. |
+| `SPONSOR_MIN_CREDIT_USD` | sponsor | Minimum user credit per purchase. Default `1`. |
+| `SPONSOR_SUGGESTED_USD` | sponsor | Recommended purchase returned by `/pricing`. Default `10`. |
+| `SPONSOR_SETUP_FEE_USD` | sponsor | Creation fee (first purchase). Default `1.50`. |
+| `SPONSOR_MIN_TOPUP_USD` / `SPONSOR_MIN_FIRST_USD` / `SPONSOR_MAX_USD` | sponsor | Defaults are `2.37`, `3.91`, and `200` (overrides can only raise the minimums). |
+| `SPONSOR_MIN_NET_USD` / `SPONSOR_STRIPE_FEE_PCT` / `SPONSOR_STRIPE_FEE_FIXED_USD` | sponsor | Minimum net after Stripe's fee (default reserve + minimum credit = `2.00`; can only raise it) and the fee model (`2.9`, `0.30`). |
 | `SPONSOR_MIN_FIL` | sponsor | FIL kept for gas. Below it, checkout and pool refill pause. Default `0.005`. |
 | `SPONSOR_LOW_FIL` / `SPONSOR_LOW_USDFC` | sponsor | `/status` and `/health` report `low` below these. Defaults `0.05` and `20`. |
 | `SPONSOR_REFUND_AFTER_HOURS` | sponsor | A paid credit still waiting for sponsor funds after this long is refunded through Stripe. Default `24`. |
 | `SPONSOR_POOL_SIZE` / `SPONSOR_POOL_SEED_USDFC` | sponsor | Defaults are `5` and `1`. |
 | `SPONSOR_STRIPE_FAKE=1` | sponsor | Calibration only, and only when no Stripe key is set. Creates a local Checkout session; you then post a webhook signed with `STRIPE_WEBHOOK_SECRET` yourself. |
 | `VITE_SPONSOR_URL` | app | Turns on gasless mode. |
-| `VITE_SPONSOR_CREDIT_USD` | app | Suggested purchase. Default `5`. |
+| `VITE_SPONSOR_CREDIT_USD` | app | Suggested purchase. Default: the sponsor's `suggestedUsd`, else `10`. |
 | `VITE_STRIPE_PUBLISHABLE_KEY` | app | Optional. Only used to check test vs live mode, since Checkout is a redirect. Calibration: `pk_test_…`. Mainnet: `pk_live_…`. |
 
 For local testing with real test keys, run
@@ -86,8 +88,12 @@ For local testing with real test keys, run
   using an idempotency key per session.
 - **The warm pool** refills after every handover and on each cron tick. Refill holds back whenever the wallet cannot
   cover owed credits plus a seed. With no ready account, a purchase falls back to on-demand creation.
+- **Pool trimming.** When ready accounts exceed the target (for example after lowering `SPONSOR_POOL_SIZE`), the cron
+  admin-sweeps the extra ones to the treasury (the sponsor on Calibration, so the USDFC is reused) and retires them.
+  An account leaves `ready` before any await, so a purchase can never be handed one that is being swept. Entries
+  stuck in `assigning` with no handover in flight are settled from the chain (`unassigned()`).
 - **`GET /status`** returns the funds level (`ok`, `low`, `empty`, or `unknown`), FIL and USDFC balances, owed USDFC,
-  thresholds, `checkoutOpen`, pool counts, and credit counts by status. `/health` adds `funds` and `warnings`. The
+  thresholds, `checkoutOpen`, pool counts, credit counts by status, and `ledger` (reserve + creation fees owed to the sponsor). `/health` adds `funds` and `warnings`. The
   deploy workflow turns those warnings into run annotations.
 
 ## Ops

@@ -123,7 +123,7 @@ describe("gasless UI (sponsor configured)", () => {
     expect(buy.textContent).toBe("Buy storage credits");
     expect(buy.dataset.action).toBe("fix-payments");
     expect(root.querySelector("[data-testid=credit-balance]")).toBeNull();
-    expect(root.textContent).toContain("minimum $3.10");
+    expect(root.textContent).toContain("minimum $3.91; top-ups from $2.37");
   });
 
   it("funded: shows the available USDFC and an 'Add credits' button", () => {
@@ -136,14 +136,16 @@ describe("gasless UI (sponsor configured)", () => {
 });
 
 describe("card amount", () => {
-  it("suggests $5, raised to the minimum and capped at $200", () => {
-    expect(sponsoredPurchaseUsd(DEFAULT_SPONSOR_LIMITS, true)).toBe(5);
-    expect(sponsoredPurchaseUsd(DEFAULT_SPONSOR_LIMITS, true, 2)).toBe(3.1);
-    expect(sponsoredPurchaseUsd(DEFAULT_SPONSOR_LIMITS, false, 1)).toBe(1.55);
+  it("suggests $10, raised to the minimum and capped at $200", () => {
+    expect(sponsoredPurchaseUsd(DEFAULT_SPONSOR_LIMITS, true)).toBe(10);
+    expect(sponsoredPurchaseUsd(DEFAULT_SPONSOR_LIMITS, false)).toBe(10);
+    expect(sponsoredPurchaseUsd({ ...DEFAULT_SPONSOR_LIMITS, suggestedUsd: 20 }, true)).toBe(20); // sponsor's /pricing suggestion
+    expect(sponsoredPurchaseUsd(DEFAULT_SPONSOR_LIMITS, true, 2)).toBe(3.91);
+    expect(sponsoredPurchaseUsd(DEFAULT_SPONSOR_LIMITS, false, 1)).toBe(2.37);
     expect(sponsoredPurchaseUsd(DEFAULT_SPONSOR_LIMITS, false, 500)).toBe(200);
   });
   it("client fallback minimums match the sponsor's", () => {
-    expect(DEFAULT_SPONSOR_LIMITS).toEqual({ minFirstUsd: DEFAULT_PRICING.minFirstCents / 100, minTopUpUsd: DEFAULT_PRICING.minTopUpCents / 100, maxUsd: DEFAULT_PRICING.maxCents / 100 });
+    expect(DEFAULT_SPONSOR_LIMITS).toEqual({ minFirstUsd: DEFAULT_PRICING.minFirstCents / 100, minTopUpUsd: DEFAULT_PRICING.minTopUpCents / 100, maxUsd: DEFAULT_PRICING.maxCents / 100, suggestedUsd: DEFAULT_PRICING.suggestedCents / 100 });
   });
 });
 

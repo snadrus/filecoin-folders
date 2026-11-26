@@ -36,7 +36,7 @@ export function isSponsored(): boolean {
   return sponsorUrl() !== "";
 }
 
-export const SPONSORED_DEPOSIT_NOTE = "Pay by card. Credits pay only for storage; no FIL or USDFC needed. First purchase includes a one-time $1.50 account setup (minimum $3.10; top-ups from $1.55).";
+export const SPONSORED_DEPOSIT_NOTE = "Pay by card. Credits pay only for storage; no FIL or USDFC needed. First purchase includes a one-time $1.50 account setup (minimum $3.91; top-ups from $2.37).";
 export const SPONSORED_DATASET_NOTE = "Created once for you and paid from your FiFolders credits.";
 
 async function call<T>(path: string, body?: unknown): Promise<T> {
@@ -114,6 +114,8 @@ export interface SponsorPricing {
   minFirstUsd: number;
   minTopUpUsd: number;
   maxUsd: number;
+  suggestedUsd?: number;
+  minCreditUsd?: number;
   minNetUsd?: number;
   setupFeeUsd: number;
   reserveUsd: number;
@@ -156,21 +158,22 @@ export async function createSponsoredDataset(signer: SponsorSigner, chainId: num
 }
 
 /**
- * Fallback minimums, mirroring the sponsor's defaults (sponsor/pricing.ts): charge − Stripe fee (2.9% + 30¢) must
- * reach $1.20, plus the $1.50 setup fee on a first purchase. The sponsor's /pricing wins when reachable.
+ * Fallback limits, mirroring the sponsor's defaults (sponsor/pricing.ts): charge − Stripe fee (2.9% + 30¢) must
+ * reach $2.00 ($1.00 reserve + at least 1 USDFC credit), plus the $1.50 creation fee on a first purchase.
+ * The sponsor's /pricing wins when reachable.
  */
-export const DEFAULT_SPONSOR_LIMITS = { minFirstUsd: 3.1, minTopUpUsd: 1.55, maxUsd: 200 } as const;
+export const DEFAULT_SPONSOR_LIMITS = { minFirstUsd: 3.91, minTopUpUsd: 2.37, maxUsd: 200, suggestedUsd: 10 } as const;
 
 /** Card amount to charge: the suggestion, raised to the minimum for this purchase and capped at the maximum. */
-export function sponsoredPurchaseUsd(limits: Pick<SponsorPricing, "minFirstUsd" | "minTopUpUsd" | "maxUsd">, first: boolean, requested = sponsoredCreditUsd()): number {
+export function sponsoredPurchaseUsd(limits: Pick<SponsorPricing, "minFirstUsd" | "minTopUpUsd" | "maxUsd" | "suggestedUsd">, first: boolean, requested = sponsoredCreditUsd(limits.suggestedUsd)): number {
   const min = first ? limits.minFirstUsd : limits.minTopUpUsd;
   const usd = Number.isFinite(requested) ? Math.round(requested * 100) / 100 : min;
   return Math.min(limits.maxUsd, Math.max(min, usd));
 }
 
-/** Suggested card purchase in USD (default $5). */
-export function sponsoredCreditUsd(): number {
-  return Number(import.meta.env?.VITE_SPONSOR_CREDIT_USD ?? 5) || 5;
+/** Suggested card purchase in USD: VITE_SPONSOR_CREDIT_USD, else the sponsor's suggestion, else $10. */
+export function sponsoredCreditUsd(fromSponsor?: number): number {
+  return Number(import.meta.env?.VITE_SPONSOR_CREDIT_USD ?? fromSponsor ?? 10) || 10;
 }
 
 /** Calibration must use Stripe test mode (pk_test_); mainnet live mode. Empty is allowed (sponsor decides). */

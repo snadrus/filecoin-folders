@@ -43,7 +43,7 @@ describe.skipIf(!RUN)("deployed sponsor Worker (Calibration, Stripe test mode)",
     const health = await json("/health");
     expect(health).toMatchObject({ status: 200, body: { ok: true, network: "calibration", stripe: { checkout: true, webhook: true, fake: false } } });
     log.health = health.body;
-    expect((await json("/pricing")).body).toMatchObject({ minFirstUsd: 3.1, minTopUpUsd: 1.55, testMode: true });
+    expect((await json("/pricing")).body).toMatchObject({ minFirstUsd: 3.91, minTopUpUsd: 2.37, testMode: true });
     expect((await json("/mainnet/health")).body).toMatchObject({ network: "mainnet" });
 
     // 2. Signed-request auth: missing, forged and tampered signatures are refused.
