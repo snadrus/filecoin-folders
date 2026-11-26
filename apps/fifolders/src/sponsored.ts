@@ -85,6 +85,12 @@ export async function findPasskeyAccount(key: { x: Hex; y: Hex }): Promise<Addre
   return out.account ? getAddress(out.account) : null;
 }
 
+/** Public key of a passkey the sponsor has seen (recorded at its first purchase), by WebAuthn credential id. */
+export async function findPasskeyByCredential(credentialId: string): Promise<{ x: Hex; y: Hex } | null> {
+  const out = await call<{ account: Address | null; x?: Hex; y?: Hex }>(`/account?credential=${encodeURIComponent(credentialId)}`);
+  return out.account && out.x && out.y ? { x: out.x, y: out.y } : null;
+}
+
 export interface SponsorPricing {
   minFirstUsd: number;
   minTopUpUsd: number;

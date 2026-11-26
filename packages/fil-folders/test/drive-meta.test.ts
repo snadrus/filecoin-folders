@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { decodeCar, driveMetadata, fitBytes, openVolume, readDriveMetadata, versionsToPrune } from "../src/index.js";
+import { decodeCar, driveMetadata, fitBytes, isCommitPiece, openVolume, readDriveMetadata, versionsToPrune } from "../src/index.js";
 import { OWNER, decode, makeVolume, text } from "./helpers.js";
 
 describe("Filecoin Drive piece metadata", () => {
@@ -9,8 +9,12 @@ describe("Filecoin Drive piece metadata", () => {
     await volume.put("/FiPen/Notes.fipen", text("hello again"));
     const history = await volume.history();
     const meta = storage.metadata.get(history[1]!.pieceCid)!;
+    // Exactly Drive's keys, identical on Calibration and mainnet (FWSS: ≤ 3 keys, ≤ 96-byte values).
+    expect(Object.keys(meta).sort()).toEqual(["ipfsRootCID", "label", "path"]);
     expect(meta).toMatchObject({ label: "Notes.fipen", path: "FiPen" });
-    expect(Object.keys(meta)).toHaveLength(3);
+    for (const value of Object.values(meta)) expect(new TextEncoder().encode(value).byteLength).toBeLessThanOrEqual(96);
+    // The version lives in the registry; the piece is recognisable as a commit from its bytes.
+    expect(isCommitPiece(storage.pieces.get(history[1]!.pieceCid)!)).toBe(true);
     // What Drive does on download: read the CAR piece, export the ipfsRootCID block.
     const car = decodeCar(storage.pieces.get(history[1]!.pieceCid)!);
     expect(decode(car.blocks.get(meta.ipfsRootCID!)!)).toBe("hello again");
@@ -32,11 +36,19 @@ describe("Filecoin Drive piece metadata", () => {
     }
   });
 
-  it("publishes only the version for encrypted volumes", async () => {
+  it("publishes no piece metadata for encrypted volumes", async () => {
     const { volume, storage } = await makeVolume({ encryption: true });
     await volume.put("/secret/plan.txt", text("x"));
     const [entry] = await volume.history();
-    expect(storage.metadata.get(entry!.pieceCid)).toEqual({ version: "1" });
+    expect(storage.metadata.get(entry!.pieceCid) ?? {}).toEqual({});
+  });
+
+  it("tells commit pieces from Drive uploads by content", async () => {
+    const { volume, storage } = await makeVolume();
+    await volume.put("/a.txt", text("a"));
+    const [entry] = await volume.history();
+    expect(isCommitPiece(storage.pieces.get(entry!.pieceCid)!)).toBe(true);
+    expect(isCommitPiece(text("plain upload"))).toBe(false);
   });
 
   it("respects Drive and Synapse limits", () => {
@@ -44,9 +56,8 @@ describe("Filecoin Drive piece metadata", () => {
     const fitted = fitBytes(long);
     expect(new TextEncoder().encode(fitted).byteLength).toBeLessThanOrEqual(96);
     expect(fitted.endsWith(".figrid")).toBe(true);
-    const meta = driveMetadata({ name: "a.txt", folder: "x".repeat(200), ipfsRootCID: "bafk", version: 3n, extra: { one: "1", two: "2" } });
-    expect(meta.path).toBe("");
-    expect(Object.keys(meta).length).toBeLessThanOrEqual(3);
+    const meta = driveMetadata({ name: "a.txt", folder: "x".repeat(200), ipfsRootCID: "bafk" });
+    expect(meta).toEqual({ label: "a.txt", path: "", ipfsRootCID: "bafk" });
   });
 
   it("reads Drive-written metadata (label/name, path/carPath)", () => {
@@ -58,6 +69,8 @@ describe("Filecoin Drive piece metadata", () => {
     });
     expect(readDriveMetadata({ name: "site.car", carPath: "" })?.importedCar).toBe(true);
     expect(readDriveMetadata({ source: "x" })).toBeNull();
+    // pieces from earlier FiFolders builds still read their version
+    expect(readDriveMetadata({ label: "a.txt", path: "", version: "4" })?.version).toBe(4n);
   });
 });
 

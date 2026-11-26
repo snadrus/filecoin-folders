@@ -42,6 +42,9 @@ importers:
       '@fontsource/roboto':
         specifier: ^5.2.6
         version: 5.3.0
+      '@noble/curves':
+        specifier: 1.9.7
+        version: 1.9.7
       '@walletconnect/ethereum-provider':
         specifier: ^2.26.0
         version: 2.26.0(@types/react@19.3.0)(typescript@5.9.3)(zod@3.25.76)
@@ -3591,7 +3594,7 @@ snapshots:
 
   '@scure/bip32@1.7.0':
     dependencies:
-      '@noble/curves': 1.9.1
+      '@noble/curves': 1.9.7
       '@noble/hashes': 1.8.0
       '@scure/base': 1.2.6
 

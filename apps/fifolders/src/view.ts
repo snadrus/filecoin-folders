@@ -253,13 +253,40 @@ function renderConnect(model: ViewModel): string {
       <label class="field">Volume name
         <input data-testid="volume-name" name="volume" value="${escapeHtml(model.volumeName)}" autocomplete="off" />
       </label>
-      ${walletPicker(model)}
+      ${isSponsored() ? sponsoredSignIn(model) : `${walletPicker(model)}
       <label class="check"><input data-testid="encrypt" name="encrypt" type="checkbox" ${model.encrypt ? "checked" : ""}/> Encrypt this volume</label>
-      <button class="primary" data-testid="connect-wallet" type="submit">${isSponsored() ? "Continue" : "Connect wallet"}</button>
+      <button class="primary" data-testid="connect-wallet" type="submit">Connect wallet</button>`}
       <p class="note" data-testid="mainnet-note" ${model.mainnetBlocked ? "" : "hidden"}>Registry not deployed</p>
       ${model.connectError ? `<p class="error" data-testid="connect-error">${escapeHtml(friendlyError(model.connectError))}</p>` : ""}
     </form>
   </div>`;
+}
+
+const isPasskeyRdns = (rdns: string) => rdns === "passkey" || rdns.startsWith("passkey:");
+
+/**
+ * Gasless sign-in: a passkey is the default (saved on this device → continue; else create one, or pick an existing
+ * one synced from another device). Wallets (and wallet-only options like encryption) sit in a collapsed Advanced section.
+ */
+function sponsoredSignIn(model: ViewModel): string {
+  const passkeys = model.wallets.filter((wallet) => isPasskeyRdns(wallet.rdns));
+  const wallets = model.wallets.filter((wallet) => !isPasskeyRdns(wallet.rdns));
+  const saved = passkeys.some((wallet) => wallet.rdns === "passkey");
+  const button = (rdns: string, label: string, primary: boolean, testid: string) =>
+    passkeys.some((wallet) => wallet.rdns === rdns) ? `<button class="${primary ? "primary" : ""}" type="submit" name="wallet" value="${rdns}" data-testid="${testid}">${label}</button>` : "";
+  const walletOptions = wallets.map((wallet) => `<option value="${escapeHtml(wallet.rdns)}" ${wallet.rdns === model.walletRdns ? "selected" : ""}>${escapeHtml(wallet.name)}</option>`).join("");
+  return `<div class="passkey-signin" data-testid="passkey-signin">
+      ${button("passkey", "Continue with your passkey", true, "passkey-continue")}
+      ${button("passkey:new", "Create a passkey", !saved, "passkey-new")}
+      ${button("passkey:existing", "Use an existing passkey", false, "passkey-existing")}
+      ${passkeys.length ? `<p class="note">No wallet or crypto needed: a passkey (Face ID, Touch ID, Windows Hello or a security key) owns your storage account.</p>` : `<p class="note" data-testid="passkey-unavailable">This browser has no passkey support. Use a wallet under Advanced.</p>`}
+    </div>
+    <details class="advanced" data-testid="advanced" ${passkeys.length ? "" : "open"}>
+      <summary>Advanced: use a wallet</summary>
+      ${wallets.length ? `<label class="field">Wallet <select name="wallet-pick" data-testid="wallet-pick">${walletOptions}</select></label>` : `<p class="note">No browser wallet found.</p>`}
+      <label class="check"><input data-testid="encrypt" name="encrypt" type="checkbox" ${model.encrypt ? "checked" : ""}/> Encrypt this volume (wallet only)</label>
+      <button type="submit" name="wallet" value="" data-testid="connect-wallet">Connect wallet</button>
+    </details>`;
 }
 
 /** Gasless mode: available USDFC credit and a card top-up (Stripe Checkout). */

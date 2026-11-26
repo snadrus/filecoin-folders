@@ -2065,7 +2065,9 @@ export class DriveApp {
       const data = new FormData(form);
       const volumeName = String(data.get("volume") ?? "").trim() || "My Drive";
       const encrypt = form.querySelector<HTMLInputElement>("[data-testid=encrypt]")?.checked ?? false;
-      const wallet = String(data.get("wallet") ?? "");
+      // Gasless sign-in uses submit buttons (passkey choices; "Connect wallet" defers to the Advanced picker).
+      const submitter = (event as SubmitEvent).submitter as HTMLButtonElement | null;
+      const wallet = submitter?.name === "wallet" ? submitter.value || String(data.get("wallet-pick") ?? "") : String(data.get("wallet") ?? "");
       if (wallet) this.walletRdns = wallet;
       this.volumeName = volumeName;
       this.encryptPref = encrypt;

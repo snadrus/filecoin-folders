@@ -8,14 +8,21 @@
  * Drive only lists data sets whose data-set metadata has `source: "filecoin-pin"`.
  * Drive has no versions: each upload is its own piece, and Delete schedules piece removal.
  *
- * FiFolders adds `version` (registry commit number, decimal) so a commit piece is recognisable as one
- * version of a file and not a loose upload. Synapse allows 5 piece keys, 32-byte keys, 128-byte values.
+ * FiFolders writes exactly Drive's keys, on every network: FWSS (filecoin-services ≥ v1.3.0, live on Calibration
+ * and mainnet) caps piece metadata at MAX_KEYS_PER_PIECE = 3 keys, 32-byte keys and 96-byte values, and Drive itself
+ * spends all three (`label`, `path`|`carPath`, `ipfsRootCID`; a directory is a trailing "/" on `label`, not a 4th key).
+ * The commit version is not piece metadata: the FolderRegistry is the source of truth for versions, and a commit
+ * piece is recognised by its bytes (a FiFolders CAR whose root block is a folder manifest, {@link isCommitPiece}).
+ * Pieces written by earlier builds may still carry a `version` key; readers accept it.
  */
+import { decodeCar } from "./car.js";
+import { parseManifest } from "./codec.js";
 import type { DirNode, Node } from "./types.js";
 
 export const DRIVE_METADATA_BYTES = 96;
 export const DRIVE_SOURCE = "filecoin-pin";
 export const FIFOLDERS_SOURCE = "fifolders";
+/** Legacy (pre-v1.3 FWSS) FiFolders key; read for old pieces, never written. */
 export const VERSION_KEY = "version";
 /** Folder Drive shows FiFolders commits that change several files at once. */
 export const SYSTEM_FOLDER = ".fifolders";
@@ -43,39 +50,44 @@ export interface DriveMetadataInput {
   name?: string;
   folder?: string;
   ipfsRootCID?: string;
-  version?: bigint | number;
-  /** Extra keys (e.g. `source`); dropped first when over the {@link MAX_PIECE_KEYS} limit. */
-  extra?: Record<string, string>;
 }
 
-/** Piece metadata Filecoin Drive understands, within Synapse limits. */
+/** FWSS piece-metadata limits (filecoin-services FWSSConstants, v1.3.0+ on every network). */
+export const MAX_PIECE_KEYS = 3;
+export const MAX_PIECE_KEY_BYTES = 32;
+export const MAX_PIECE_VALUE_BYTES = 96;
+
+/** Piece metadata exactly as Filecoin Drive writes it: `label`, `path`, `ipfsRootCID` (at most 3 keys, 96-byte values). */
 export function driveMetadata(input: DriveMetadataInput): Record<string, string> {
   const out: Record<string, string> = {};
   if (input.name?.trim()) out.label = fitBytes(input.name.trim());
   if (input.folder !== undefined && out.label) {
-    // Over-long folders go to the root rather than failing the save.
+    // Over-long folders go to the root rather than failing the save (Drive rejects them at upload).
     out.path = utf8(input.folder).byteLength <= DRIVE_METADATA_BYTES ? input.folder : "";
   }
-  if (input.ipfsRootCID) out.ipfsRootCID = input.ipfsRootCID;
-  if (input.version !== undefined) out[VERSION_KEY] = String(input.version);
-  for (const [key, value] of Object.entries(input.extra ?? {})) {
-    if (Object.keys(out).length >= MAX_PIECE_KEYS) break;
-    if (key.length <= 32 && utf8(value).byteLength <= 128 && !(key in out)) out[key] = value;
-  }
-  // FWSS caps piece metadata at MAX_PIECE_KEYS: keep what Filecoin Drive reads (label, path, ipfsRootCID), drop the version.
-  if (Object.keys(out).length > MAX_PIECE_KEYS) delete out[VERSION_KEY];
+  if (input.ipfsRootCID && utf8(input.ipfsRootCID).byteLength <= MAX_PIECE_VALUE_BYTES) out.ipfsRootCID = input.ipfsRootCID;
   return out;
 }
 
-/** FWSS MAX_KEYS_PER_PIECE (5 before filecoin-services v1.6, 3 since). */
-export const MAX_PIECE_KEYS = 3;
+/** True for a FiFolders commit piece: a FiFolders CAR whose root block is a folder manifest. */
+export function isCommitPiece(bytes: Uint8Array): boolean {
+  try {
+    const car = decodeCar(bytes);
+    const root = car.blocks.get(car.root);
+    if (!root) return false;
+    parseManifest(root);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export interface DrivePieceInfo {
   fileName: string;
   folderPath: string;
   ipfsRootCID: string;
   importedCar: boolean;
-  /** Set when a FiFolders writer stored this piece as a version of a file. */
+  /** Legacy pieces only (pre-v1.3 FWSS builds wrote a `version` key). New commits are found with {@link isCommitPiece}. */
   version?: bigint;
 }
 
@@ -100,7 +112,7 @@ export function readDriveMetadata(metadata: Record<string, string> | undefined |
 /**
  * Piece metadata for one volume commit. A commit that adds exactly one plaintext file's bytes is
  * named after that file, so Filecoin Drive lists (and downloads) it as that file. Other commits
- * get a system name under `.fifolders`. Encrypted volumes publish only the version: names stay private.
+ * get a system name under `.fifolders`. Encrypted volumes publish no piece metadata: names stay private.
  */
 export function commitMetadata(opts: {
   tree: DirNode;
@@ -110,7 +122,7 @@ export function commitMetadata(opts: {
   version: bigint;
   encrypted: boolean;
 }): Record<string, string> {
-  if (opts.encrypted) return driveMetadata({ version: opts.version });
+  if (opts.encrypted) return {};
   const changed: { path: string; cid: string }[] = [];
   const walk = (node: Node, prefix: string): void => {
     const path = prefix ? `${prefix}/${node.name}` : node.name;
@@ -124,13 +136,12 @@ export function commitMetadata(opts: {
   const unique = [...new Map(changed.map((item) => [item.cid, item])).values()];
   if (unique.length === 1 && changed.length === 1) {
     const { name, folder } = splitDrivePath(unique[0]!.path);
-    return driveMetadata({ name, folder, ipfsRootCID: unique[0]!.cid, version: opts.version });
+    return driveMetadata({ name, folder, ipfsRootCID: unique[0]!.cid });
   }
   return driveMetadata({
     name: `${opts.volumeName || "default"}.manifest.json`,
     folder: SYSTEM_FOLDER,
     ipfsRootCID: opts.manifestRoot,
-    version: opts.version,
   });
 }
 

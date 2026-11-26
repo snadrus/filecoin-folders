@@ -15,6 +15,7 @@
     "@filoz/synapse-core": "^0.4.1",
     "@filoz/synapse-sdk": "^0.40.4",
     "@fontsource/roboto": "^5.2.6",
+    "@noble/curves": "1.9.7",
     "@walletconnect/ethereum-provider": "^2.26.0",
     "fil-folders": "workspace:*",
     "fiperson": "workspace:*",

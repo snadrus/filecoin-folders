@@ -33,6 +33,7 @@ import {
   buySponsoredCredits,
   createSponsoredDataset,
   findPasskeyAccount,
+  findPasskeyByCredential,
   findSponsoredAccount,
   passkeySponsorSigner,
   waitForCredit,
@@ -49,7 +50,7 @@ import {
   sponsoredTransport,
 } from "./sponsored.js";
 import { discoverWallets, safeOn, type AnnouncedWallet } from "./eip6963.js";
-import { createPasskey, encodeContractAssertion, passkeyAssert, type PasskeyPublicKey } from "./passkey.js";
+import { createPasskey, findExistingPasskey, encodeContractAssertion, passkeyAssert, type PasskeyPublicKey } from "./passkey.js";
 import { activeProviderUrls } from "./filecoin-api.js";
 import { FILECOIN_DRIVE_SOURCE, isDriveSource, loadPieceDetails, setPieceDetailSource, type PieceDetail } from "./drive-pieces.js";
 import { REGISTRY_NOT_DEPLOYED, registryReady } from "./network.js";
@@ -124,6 +125,10 @@ const FRESH_LOGIN_MS = 10 * 60 * 1000;
 
 /** Gasless mode's default sign-in: a passkey owns the storage account (no wallet app). */
 export const PASSKEY_RDNS = "passkey";
+/** Sign-in choices (rdns values): saved passkey on this device, a new passkey, or an existing one from any device. */
+export const PASSKEY_NEW = "passkey:new";
+export const PASSKEY_EXISTING = "passkey:existing";
+export const isPasskeyChoice = (rdns: string | null | undefined): boolean => rdns === PASSKEY_RDNS || Boolean(rdns?.startsWith(`${PASSKEY_RDNS}:`));
 const PASSKEY_KEY = "fifolders:passkey";
 
 function loadPasskey(): PasskeyPublicKey | null {
@@ -496,13 +501,30 @@ export function createLiveOnboarding(options: LiveOnboardingOptions = {}): Onboa
       wallets = await discoverWallets();
       const choices = walletChoices(wallets.map((wallet) => ({ rdns: wallet.rdns, name: wallet.name })));
       // Gasless mode: passkey first (default), wallets second.
-      return isSponsored() && passkeyAvailable() ? [{ rdns: PASSKEY_RDNS, name: "Passkey (recommended, no wallet needed)" }, ...choices] : choices;
+      if (!isSponsored() || !passkeyAvailable()) return choices;
+      const saved = loadPasskey();
+      return [
+        ...(saved ? [{ rdns: PASSKEY_RDNS, name: "Continue with your passkey" }] : []),
+        { rdns: PASSKEY_NEW, name: "Create a passkey" },
+        { rdns: PASSKEY_EXISTING, name: "Use an existing passkey" },
+        ...choices,
+      ];
     },
     async connect(input) {
       if (!registryReady(input.chain)) throw new Error(REGISTRY_NOT_DEPLOYED);
-      if (input.rdns === PASSKEY_RDNS) {
+      if (isPasskeyChoice(input.rdns)) {
         if (!isSponsored()) throw new Error("Passkeys need the FiFolders sponsor (VITE_SPONSOR_URL).");
-        passkey = loadPasskey() ?? (await createPasskey("FiFolders"));
+        const existing = () =>
+          findExistingPasskey({
+            byCredential: findPasskeyByCredential,
+            hasAccount: async (key) => Boolean(await findPasskeyAccount(key)),
+          });
+        passkey =
+          input.rdns === PASSKEY_NEW
+            ? await createPasskey(`FiFolders ${new Date().toISOString().slice(0, 10)}`)
+            : input.rdns === PASSKEY_EXISTING
+              ? await existing()
+              : (loadPasskey() ?? (await existing()));
         localStorage.setItem(PASSKEY_KEY, JSON.stringify(passkey));
         root = null;
         payer = null;
@@ -545,7 +567,7 @@ export function createLiveOnboarding(options: LiveOnboardingOptions = {}): Onboa
       if (localStorage.getItem("fifolders:wallet-permitted") !== "1") return false;
       const stored = readStoredWallet();
       if (!stored || stored.chain !== chain) return false;
-      if (stored.rdns === PASSKEY_RDNS) {
+      if (isPasskeyChoice(stored.rdns)) {
         passkey = isSponsored() ? loadPasskey() : null;
         root = null;
         payer = null;

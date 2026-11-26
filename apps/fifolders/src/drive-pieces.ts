@@ -2,7 +2,8 @@
  * Filecoin Pin "Filecoin Drive" pieces: one file (or directory/CAR) per piece, described by
  * per-piece metadata {label, path | carPath, ipfsRootCID}. Filecoin Drive creates (and lists) only
  * data sets whose metadata has source="filecoin-pin" (filecoin-pin APPLICATION_SOURCE).
- * FiFolders commit pieces add `version`; those are versions of a folder, not loose uploads.
+ * FiFolders commit pieces use the same three keys (FWSS caps piece metadata at 3 on every network); they are told
+ * apart by content (fil-folders `isCommitPiece`). Older FiFolders pieces also carried `version`.
  */
 import { readDriveMetadata } from "fil-folders";
 
