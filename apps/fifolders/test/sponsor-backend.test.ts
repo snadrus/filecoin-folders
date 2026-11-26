@@ -271,6 +271,8 @@ describe("sponsor server (fake chain)", () => {
 
     const user = newUser();
     expect((await post("/checkout", checkoutBody(5))).status).toBe(401);
+    const forged = await user.signed.auth(CHAIN_ID, "checkout", checkoutBody(5));
+    expect((await post("/checkout", { ...checkoutBody(5), auth: { ...forged, signature: `0x${"11".repeat(65)}` } })).status).toBe(401); // malformed, not 500
     expect((await as(user.signed)("checkout", checkoutBody(3.09))).status).toBe(400); // first-purchase minimum $3.10
     const checkout = await as(user.signed)("checkout", checkoutBody(5));
     expect(checkout.json).toMatchObject({ first: true });

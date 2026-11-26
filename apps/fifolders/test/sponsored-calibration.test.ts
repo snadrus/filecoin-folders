@@ -7,54 +7,17 @@
  *
  *   SPONSOR_E2E=1 SPONSOR_KEY=0x… SPONSOR_FACTORY=0x… pnpm --filter fifolders exec vitest run test/sponsored-calibration.test.ts
  */
-import { webcrypto } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { describe, expect, it, vi } from "vitest";
 import { createPublicClient, http, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { calibration } from "@filoz/synapse-core/chains";
+import { softAuthenticator } from "./support/soft-authenticator.js";
 
 const RUN = process.env.SPONSOR_E2E === "1";
 const RPC = "https://api.calibration.node.glif.io/rpc/v1";
 const link = (hash: string) => `https://calibration.filfox.info/en/message/${hash}`;
-
-/** Software WebAuthn authenticator (ES256), shaped like the browser API surface src/passkey.ts uses. */
-async function softAuthenticator() {
-  const pair = await webcrypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"]);
-  const spki = await webcrypto.subtle.exportKey("spki", pair.publicKey);
-  const rawId = webcrypto.getRandomValues(new Uint8Array(16));
-  let assertions = 0;
-  const der = (p1363: Uint8Array) => {
-    const int = (b: Uint8Array) => {
-      let i = 0;
-      while (i < b.length - 1 && b[i] === 0) i += 1;
-      const t = b[i]! >= 0x80 ? [0, ...b.slice(i)] : [...b.slice(i)];
-      return [0x02, t.length, ...t];
-    };
-    const body = [...int(p1363.slice(0, 32)), ...int(p1363.slice(32))];
-    return new Uint8Array([0x30, body.length, ...body]);
-  };
-  return {
-    get assertions() {
-      return assertions;
-    },
-    credentials: {
-      async create() {
-        return { rawId: rawId.buffer, response: { getPublicKey: () => spki } };
-      },
-      async get({ publicKey }: { publicKey: { challenge: Uint8Array } }) {
-        assertions += 1;
-        const clientDataJSON = JSON.stringify({ type: "webauthn.get", challenge: Buffer.from(publicKey.challenge).toString("base64url"), origin: "http://localhost", crossOrigin: false });
-        const authenticatorData = new Uint8Array(37);
-        authenticatorData[32] = 0x05; // UP | UV
-        const clientHash = new Uint8Array(await webcrypto.subtle.digest("SHA-256", new TextEncoder().encode(clientDataJSON)));
-        const sig = new Uint8Array(await webcrypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, pair.privateKey, new Uint8Array([...authenticatorData, ...clientHash])));
-        return { rawId: rawId.buffer, response: { authenticatorData: authenticatorData.buffer, clientDataJSON: new TextEncoder().encode(clientDataJSON).buffer, signature: der(sig).buffer } };
-      },
-    },
-  };
-}
 
 describe.skipIf(!RUN)("gasless FiFolders on Calibration (passkey, warm pool)", () => {
   it("passkey user, card purchase → pooled account handover, upload, remove, terminate", { timeout: 90 * 60_000 }, async () => {
@@ -106,7 +69,7 @@ describe.skipIf(!RUN)("gasless FiFolders on Calibration (passkey, warm pool)", (
     const sponsorBase = `http://127.0.0.1:${(sponsor.server.address() as AddressInfo).port}`;
     vi.stubEnv("VITE_SPONSOR_URL", sponsorBase);
     vi.stubEnv("VITE_SPONSOR_CREDIT_USD", process.env.SPONSOR_E2E_USD ?? "5");
-    const { createLiveOnboarding, PASSKEY_RDNS } = await import("../src/live-onboarding.js");
+    const { createLiveOnboarding, PASSKEY_NEW } = await import("../src/live-onboarding.js");
     const { schedulePieceRemovals } = await import("../src/removal.js");
     let checkoutUrl = "";
     const io = createLiveOnboarding({ openCheckout: (url) => void (checkoutUrl = url) });
@@ -128,8 +91,8 @@ describe.skipIf(!RUN)("gasless FiFolders on Calibration (passkey, warm pool)", (
 
       // 1. Passkey sign-in is offered first; no wallet anywhere.
       const choices = await io.discover();
-      expect(choices[0]?.rdns).toBe(PASSKEY_RDNS);
-      await io.connect({ rdns: PASSKEY_RDNS, chain });
+      expect(choices[0]?.rdns).toBe(PASSKEY_NEW);
+      await io.connect({ rdns: PASSKEY_NEW, chain });
       let panel = await io.snapshot({ chain, volumeName });
       expect(panel.paymentsReady).toBe(false);
 

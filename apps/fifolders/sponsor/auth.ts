@@ -71,7 +71,12 @@ export async function verifyAuth(input: {
     identity = { kind: "passkey", id: passkeyId(auth.x, auth.y), x: auth.x, y: auth.y, ...(typeof auth.credentialId === "string" && /^[A-Za-z0-9_-]{8,512}$/.test(auth.credentialId) ? { credentialId: auth.credentialId } : {}) };
   } else {
     const typed = { domain: sponsorDomain(input.chainId), types: SPONSOR_REQUEST_TYPES, primaryType: "SponsorRequest" as const, message: { action: input.action, bodyHash: bodyHash(input.body), issuedAt } };
-    const signer = await recoverTypedDataAddress({ ...typed, signature: auth.signature });
+    let signer: Address;
+    try {
+      signer = await recoverTypedDataAddress({ ...typed, signature: auth.signature });
+    } catch {
+      throw new AuthError("malformed signature");
+    }
     if (auth.kind === "eoa") {
       if (signer !== getAddress(auth.address)) throw new AuthError("bad owner signature");
       identity = { kind: "eoa", id: `eoa:${signer.toLowerCase()}`, address: signer };
