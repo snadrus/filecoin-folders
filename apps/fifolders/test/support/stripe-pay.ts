@@ -7,6 +7,16 @@ export async function payTestCheckout(url: string, opts: { email?: string; scree
   const page = await browser.newPage();
   try {
     await page.goto(url, { waitUntil: "domcontentloaded" });
+    await payOnPage(page, opts);
+  } finally {
+    await browser.close();
+  }
+}
+
+/** Pay the test-mode Checkout already open in `page` and wait for Stripe's redirect to the success URL. */
+export async function payOnPage(page: import("@playwright/test").Page, opts: { email?: string; screenshot?: string } = {}): Promise<void> {
+  if (!/^https:\/\/checkout\.stripe\.com\/.*cs_test_/.test(page.url())) throw new Error(`not a test-mode Stripe Checkout page: ${page.url()}`);
+  try {
     // Checkout renders its form inside the Payment Element iframe.
     let frame: import("@playwright/test").Frame | undefined;
     for (let i = 0; !frame && i < 90; i += 1) {
@@ -40,7 +50,5 @@ export async function payTestCheckout(url: string, opts: { email?: string; scree
   } catch (error) {
     if (opts.screenshot) await page.screenshot({ path: opts.screenshot, fullPage: true }).catch(() => undefined);
     throw error;
-  } finally {
-    await browser.close();
   }
 }
