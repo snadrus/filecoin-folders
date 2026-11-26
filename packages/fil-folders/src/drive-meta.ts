@@ -44,7 +44,7 @@ export interface DriveMetadataInput {
   folder?: string;
   ipfsRootCID?: string;
   version?: bigint | number;
-  /** Extra keys (e.g. `source`); dropped first when over the 5-key limit. */
+  /** Extra keys (e.g. `source`); dropped first when over the {@link MAX_PIECE_KEYS} limit. */
   extra?: Record<string, string>;
 }
 
@@ -59,11 +59,16 @@ export function driveMetadata(input: DriveMetadataInput): Record<string, string>
   if (input.ipfsRootCID) out.ipfsRootCID = input.ipfsRootCID;
   if (input.version !== undefined) out[VERSION_KEY] = String(input.version);
   for (const [key, value] of Object.entries(input.extra ?? {})) {
-    if (Object.keys(out).length >= 5) break;
+    if (Object.keys(out).length >= MAX_PIECE_KEYS) break;
     if (key.length <= 32 && utf8(value).byteLength <= 128 && !(key in out)) out[key] = value;
   }
+  // FWSS caps piece metadata at MAX_PIECE_KEYS: keep what Filecoin Drive reads (label, path, ipfsRootCID), drop the version.
+  if (Object.keys(out).length > MAX_PIECE_KEYS) delete out[VERSION_KEY];
   return out;
 }
+
+/** FWSS MAX_KEYS_PER_PIECE (5 before filecoin-services v1.6, 3 since). */
+export const MAX_PIECE_KEYS = 3;
 
 export interface DrivePieceInfo {
   fileName: string;

@@ -3,17 +3,18 @@ import { decodeCar, driveMetadata, fitBytes, openVolume, readDriveMetadata, vers
 import { OWNER, decode, makeVolume, text } from "./helpers.js";
 
 describe("Filecoin Drive piece metadata", () => {
-  it("names a single-file commit like Filecoin Drive does (label, path, ipfsRootCID) plus version", async () => {
+  it("names a single-file commit like Filecoin Drive does (label, path, ipfsRootCID) within the 3-key FWSS limit", async () => {
     const { volume, storage } = await makeVolume();
     await volume.put("/FiPen/Notes.fipen", text("hello"));
     await volume.put("/FiPen/Notes.fipen", text("hello again"));
     const history = await volume.history();
     const meta = storage.metadata.get(history[1]!.pieceCid)!;
-    expect(meta).toMatchObject({ label: "Notes.fipen", path: "FiPen", version: "2" });
+    expect(meta).toMatchObject({ label: "Notes.fipen", path: "FiPen" });
+    expect(Object.keys(meta)).toHaveLength(3);
     // What Drive does on download: read the CAR piece, export the ipfsRootCID block.
     const car = decodeCar(storage.pieces.get(history[1]!.pieceCid)!);
     expect(decode(car.blocks.get(meta.ipfsRootCID!)!)).toBe("hello again");
-    expect(readDriveMetadata(meta)).toMatchObject({ fileName: "Notes.fipen", folderPath: "FiPen", version: 2n });
+    expect(readDriveMetadata(meta)).toMatchObject({ fileName: "Notes.fipen", folderPath: "FiPen" });
   });
 
   it("names multi-file and metadata-only commits as a system manifest under .fifolders", async () => {
@@ -45,7 +46,7 @@ describe("Filecoin Drive piece metadata", () => {
     expect(fitted.endsWith(".figrid")).toBe(true);
     const meta = driveMetadata({ name: "a.txt", folder: "x".repeat(200), ipfsRootCID: "bafk", version: 3n, extra: { one: "1", two: "2" } });
     expect(meta.path).toBe("");
-    expect(Object.keys(meta).length).toBeLessThanOrEqual(5);
+    expect(Object.keys(meta).length).toBeLessThanOrEqual(3);
   });
 
   it("reads Drive-written metadata (label/name, path/carPath)", () => {
