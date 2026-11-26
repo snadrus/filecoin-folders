@@ -47,6 +47,13 @@ jobs:
       - run: pnpm --filter fil-folders build
       - run: pnpm --filter fiperson build
       - run: pnpm --filter fifolders build
+        env:
+          # Gasless mode on Calibration: sponsor Worker (apps/fifolders/sponsor/worker.ts) + Stripe test mode.
+          VITE_SPONSOR_URL: https://fast.scionbase.ai
+          # Add mainnet once its sponsor wallet is funded and its factory deployed (served at /mainnet).
+          VITE_SPONSOR_NETWORKS: calibration
+          VITE_STRIPE_PUBLISHABLE_KEY_MAINNET: pk_live_51Ug71bAQKJpucjVchcZvlNbOViSWgtgYn98cVWpw7EudZ7rZQLgUJty5pb1NoWXF2jkuBv9Mwrzby3UDKBzyqaaB00UrydX8lE
+          VITE_STRIPE_PUBLISHABLE_KEY: pk_test_51Ug4s1AFTWNVBowWWqiKGCzkvif6rJKZQmzCHfLHobIBYyb82eWvIUg1jmLlk3A6k83AYGPd7BomXHwvGyFlqnGS00Pz8paxAS
       - name: Build FiPen and FiGrid
         working-directory: collab-edit
         run: |

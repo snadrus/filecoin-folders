@@ -61,6 +61,8 @@ export async function createCheckoutSession(secretKey: string, input: CheckoutIn
     success_url: input.successUrl,
     cancel_url: input.cancelUrl,
     client_reference_id: input.clientReferenceId,
+    // Cards only: credits are deposited at checkout.session.completed (no delayed-settlement methods).
+    "allowed_payment_method_types[0]": "card",
   };
   input.lineItems.forEach((item, i) => {
     body[`line_items[${i}][quantity]`] = 1;

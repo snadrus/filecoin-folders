@@ -16,15 +16,28 @@ SPONSOR_PROVIDER_ID = "2"
 SPONSOR_POOL_SIZE = "5"
 SPONSOR_POOL_SEED_USDFC = "1"
 SPONSOR_SWEEP_ACCOUNTS = "0x2CcbFfB44b410BDa7Fcb7708d1649bA2887370d2"
-SPONSOR_ALLOWED_ORIGINS = ""
+SPONSOR_ALLOWED_ORIGINS = "https://fifolders.scionbase.ai/,http://localhost"
+# Mainnet (/mainnet): set SPONSOR_FACTORY_MAINNET after deploying the factory; SPONSOR_KEY_MAINNET is a secret.
+SPONSOR_FACTORY_MAINNET = ""
+SPONSOR_PROVIDER_ID_MAINNET = "2"
+SPONSOR_POOL_SIZE_MAINNET = "2"
+SPONSOR_ALLOWED_ORIGINS_MAINNET = "https://fifolders.scionbase.ai/"
 
 [[durable_objects.bindings]]
 name = "SPONSOR"
 class_name = "SponsorDO"
 
+[[durable_objects.bindings]]
+name = "SPONSOR_MAINNET"
+class_name = "SponsorMainnetDO"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["SponsorDO"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["SponsorMainnetDO"]
 
 [triggers]
 crons = ["*/10 * * * *"]

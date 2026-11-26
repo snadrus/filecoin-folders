@@ -1,0 +1,65 @@
+name: sponsor-worker
+
+# Deploys the gasless sponsor (apps/fifolders/sponsor/worker.ts) to Cloudflare at fast.scionbase.ai and installs its
+# secrets from GitHub Actions secrets. Secrets never touch the repo or the log (piped through a temp file in $RUNNER_TEMP).
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/fifolders/sponsor/**"
+      - "apps/fifolders/src/sponsored-abi.ts"
+      - ".github/workflows/sponsor-worker.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sponsor-worker
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Typecheck worker
+        working-directory: apps/fifolders/sponsor
+        run: npx tsc -p tsconfig.worker.json
+      - name: Deploy
+        working-directory: apps/fifolders/sponsor
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: npx wrangler deploy
+      - name: Secrets
+        working-directory: apps/fifolders/sponsor
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          SPONSOR_KEY: ${{ secrets.SPONSOR_KEY_CALIBRATION }}
+          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+          STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
+          SPONSOR_KEY_MAINNET: ${{ secrets.SPONSOR_KEY_MAINNET }}
+          STRIPE_LIVE_SECRET_KEY: ${{ secrets.STRIPE_LIVE_SECRET_KEY }}
+          STRIPE_LIVE_WEBHOOK_SECRET: ${{ secrets.STRIPE_LIVE_WEBHOOK_SECRET }}
+        run: |
+          umask 077
+          f="$RUNNER_TEMP/secrets.json"
+          # Only non-empty secrets are uploaded (an unset GitHub secret leaves the Worker's value alone).
+          jq -n 'env | with_entries(select(.key | test("^(SPONSOR_KEY|SPONSOR_KEY_MAINNET|STRIPE_SECRET_KEY|STRIPE_WEBHOOK_SECRET|STRIPE_LIVE_SECRET_KEY|STRIPE_LIVE_WEBHOOK_SECRET)$")) | select(.value != ""))' > "$f"
+          npx wrangler secret bulk "$f" > /dev/null
+          rm -f "$f"
+          echo "secrets updated: $(jq -n 'env | [keys[] | select(test("^(SPONSOR_KEY|SPONSOR_KEY_MAINNET|STRIPE_SECRET_KEY|STRIPE_WEBHOOK_SECRET|STRIPE_LIVE_SECRET_KEY|STRIPE_LIVE_WEBHOOK_SECRET)$"))] | join(",")')"
+      - name: Health
+        run: |
+          sleep 10
+          curl -fsS https://fast.scionbase.ai/health
+          echo
+          curl -sS https://fast.scionbase.ai/mainnet/health || true

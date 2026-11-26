@@ -4,13 +4,31 @@
  * LockedSignerAccount; the connected wallet (or passkey) and the browser session key only sign. The account's fixed
  * on-chain policy blocks every USDFC exit except the sponsor's sweep back to its treasury.
  */
+import { readNetworkPreference } from "./network.js";
 import { createPublicClient, custom, encodeFunctionData, getAddress, hashTypedData, http, keccak256, numberToHex, stringToHex, type Address, type Hex, type PublicClient } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { EXECUTE_TYPES, SPONSOR_REQUEST_TYPES, executeDomain, lockedAccountAbi, sponsorDomain, stableJson, type SponsorAuth } from "./sponsored-abi.js";
 import type { RemovalAdapters } from "./removal.js";
 
+/**
+ * Networks with a sponsor (VITE_SPONSOR_NETWORKS, comma-separated; default "calibration"). Other networks use plain
+ * wallets. One sponsor origin serves both: Calibration at the root, mainnet under /mainnet.
+ */
+export function sponsorNetworks(): ("calibration" | "mainnet")[] {
+  const raw = String(import.meta.env?.VITE_SPONSOR_NETWORKS ?? "calibration");
+  return raw.split(",").map((value) => value.trim()).filter((value): value is "calibration" | "mainnet" => value === "calibration" || value === "mainnet");
+}
+
 export function sponsorUrl(): string {
-  return String(import.meta.env?.VITE_SPONSOR_URL ?? "").replace(/\/+$/, "");
+  const base = String(import.meta.env?.VITE_SPONSOR_URL ?? "").replace(/\/+$/, "");
+  const network = readNetworkPreference();
+  if (!base || !sponsorNetworks().includes(network)) return "";
+  return network === "mainnet" ? `${base}/mainnet` : base;
+}
+
+/** Stripe publishable key for a network: test (pk_test_) on Calibration, live (pk_live_) on mainnet. */
+export function stripePublishableKey(chain: "calibration" | "mainnet"): string {
+  return String((chain === "mainnet" ? import.meta.env?.VITE_STRIPE_PUBLISHABLE_KEY_MAINNET : import.meta.env?.VITE_STRIPE_PUBLISHABLE_KEY) ?? "");
 }
 
 export function isSponsored(): boolean {
@@ -156,7 +174,7 @@ export function sponsoredCreditUsd(): number {
 
 /** Calibration must use Stripe test mode (pk_test_); mainnet live mode. Empty is allowed (sponsor decides). */
 export function stripeModeNote(chain: "calibration" | "mainnet"): string | null {
-  const key = String(import.meta.env?.VITE_STRIPE_PUBLISHABLE_KEY ?? "");
+  const key = stripePublishableKey(chain);
   if (!key) return null;
   if (chain === "calibration" && !key.startsWith("pk_test_")) throw new Error("Calibration needs a Stripe test publishable key (pk_test_…).");
   if (chain === "mainnet" && !key.startsWith("pk_live_")) throw new Error("Mainnet needs a Stripe live publishable key (pk_live_…).");

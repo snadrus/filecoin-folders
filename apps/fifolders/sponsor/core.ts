@@ -81,7 +81,8 @@ export interface PoolEntry {
   account: Address;
   salt: string;
   sessionExpiry: string;
-  status: "seeding" | "ready" | "assigning" | "assigned" | "failed";
+  /** "retired": a failed build whose funds were swept back (cron). */
+  status: "seeding" | "ready" | "assigning" | "assigned" | "failed" | "retired";
   dataSetId?: string;
   dataSetTx?: Hex;
   providerId?: string;
@@ -553,7 +554,9 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
   /** Retry `sweep` on configured accounts until something is swept (cron). */
   async function sweepDeferred(): Promise<(SweepResult & { at: string })[]> {
     const results: (SweepResult & { at: string })[] = [];
-    for (const account of config.sweepAccounts ?? []) {
+    // Failed (or interrupted) pool builds are sponsor-owned and unassigned: return their deposit too.
+    const failedPool = Object.values(state.pool).filter((entry) => entry.status === "failed").map((entry) => entry.account);
+    for (const account of [...(config.sweepAccounts ?? []), ...failedPool]) {
       if (state.sweeps[account]?.outcome === "swept") continue;
       try {
         state.sweeps[account] = { ...(await sweepAccount(pub, relayer, account, config.network)), at: new Date().toISOString() };
@@ -561,6 +564,9 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
         state.sweeps[account] = { account, funds: "?", lockup: "?", outcome: `error: ${error instanceof Error ? error.message : String(error)}`, at: new Date().toISOString() };
       }
       results.push(state.sweeps[account]!);
+      const entry = state.pool[account];
+      const result = state.sweeps[account]!;
+      if (entry?.status === "failed" && (result.outcome === "swept" || result.funds === "0")) entry.status = "retired";
       save();
     }
     return results;
