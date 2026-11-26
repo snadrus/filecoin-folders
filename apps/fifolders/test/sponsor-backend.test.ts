@@ -166,10 +166,11 @@ describe("sponsor server (fake chain)", () => {
     const sends: { label: string; to?: Address; data: Hex }[] = [];
     const sponsorUsdfc = { value: 10n ** 24n };
     const clock = { value: Date.now() };
+    const onChainUnassigned = new Map<string, boolean>();
     const factoryAccounts = new Set<string>();
     const predicted = (args: readonly unknown[]) => getAddress(keccak256(toHex(JSON.stringify(args, (_, v) => (typeof v === "bigint" ? v.toString() : v)))).slice(0, 42));
     const pub = {
-      async readContract({ functionName, args }: { functionName: string; args?: readonly unknown[] }) {
+      async readContract({ functionName, args, address }: { functionName: string; args?: readonly unknown[]; address?: Address }) {
         if (functionName === "predict") return predicted(args!);
         if (functionName === "isAccount") return factoryAccounts.has(String(args?.[0]).toLowerCase());
         if (functionName === "allowance") return 0n;
@@ -177,6 +178,9 @@ describe("sponsor server (fake chain)", () => {
         if (functionName === "sessionSigners") return 0n;
         if (functionName === "isAllowed") return true;
         if (functionName === "balanceOf") return sponsorUsdfc.value;
+        if (functionName === "FACTORY") return FACTORY;
+        if (functionName === "admin" || functionName === "treasury") return getAddress("0x00000000000000000000000000000000000000bb");
+        if (functionName === "unassigned") return onChainUnassigned.get(String(address).toLowerCase()) ?? true;
         throw new Error(functionName);
       },
       async getBalance() {
@@ -248,7 +252,7 @@ describe("sponsor server (fake chain)", () => {
       const response = await fetch(`${base}${path}`);
       return { status: response.status, json: (await response.json()) as Record<string, unknown> };
     };
-    return { sponsor, sends, post, get, as, pay, opened, factoryAccounts, sponsorUsdfc, clock };
+    return { sponsor, sends, post, get, as, pay, opened, factoryAccounts, sponsorUsdfc, clock, onChainUnassigned };
   }
 
   const newUser = () => {
@@ -354,6 +358,53 @@ describe("sponsor server (fake chain)", () => {
     expect((await as(newUser().signed)("checkout", checkoutBody(5))).status).toBe(200);
     sponsorUsdfc.value = 2n * 10n ** 18n;
     expect((await as(newUser().signed)("checkout", checkoutBody(5))).status).toBe(503);
+  });
+
+  it("trims ready accounts above the pool target back to the sponsor, never one being handed over", async () => {
+    const { sponsor, sends, as, pay } = await start({ pool: 2 });
+    await sponsor.refillPool();
+    // Three extra ready accounts, as after lowering SPONSOR_POOL_SIZE from 5 to 2.
+    const template = Object.values(sponsor.state.pool)[0]!;
+    for (const i of [1, 2, 3]) {
+      const account = getAddress(`0x${String(i).repeat(40)}`);
+      sponsor.state.pool[account] = { ...template, account, hashes: [] };
+    }
+    expect(sponsor.poolStatus().counts).toMatchObject({ target: 2, ready: 5 });
+    // A purchase races the trim: it must get a ready account that is not being swept.
+    const user = newUser();
+    const trimming = sponsor.trimPool();
+    expect(Object.values(sponsor.state.pool).filter((e) => e.status === "trimming")).toHaveLength(1);
+    await as(user.signed)("checkout", checkoutBody(5));
+    await pay("cs_trim_race", user.id, 500);
+    const trimmed = await trimming;
+    await sponsor.settled();
+    const assigned = sponsor.state.credits.cs_trim_race!.account!;
+    const swept = trimmed.filter((t) => t.outcome === "swept").map((t) => t.account);
+    expect(swept).not.toContain(assigned);
+    expect(sends.filter((s) => s.label.startsWith("sweep ")).map((s) => s.label.slice(6))).toEqual(swept);
+    for (const account of swept) expect(sponsor.state.pool[account]).toMatchObject({ status: "retired", error: "trimmed: pool above target" });
+    await sponsor.trimPool(); // idempotent once at target
+    expect(Object.values(sponsor.state.pool).filter((e) => e.status === "ready").length).toBeLessThanOrEqual(2);
+    expect(Object.values(sponsor.state.pool).some((e) => e.status === "trimming")).toBe(false);
+  });
+
+  it("reconciles a pool account stuck in 'assigning' from the chain", async () => {
+    const { sponsor, onChainUnassigned } = await start({ pool: 2 });
+    await sponsor.refillPool();
+    const [landed, lost] = Object.values(sponsor.state.pool);
+    const user = newUser();
+    Object.assign(landed!, { status: "assigning", assignedTo: user.id });
+    Object.assign(lost!, { status: "assigning", assignedTo: newUser().id });
+    sponsor.state.credits.cs_stuck = { identity: user.id, chargeCents: 500, feeCents: 45, netCents: 455, reserveCents: 20, setupCents: 150, creditCents: 285, usdfc: "2850000000000000000", depositUsdfc: "0", path: "pool", status: "failed", hashes: [], error: "null round" };
+    onChainUnassigned.set(landed!.account.toLowerCase(), false);
+    onChainUnassigned.set(lost!.account.toLowerCase(), true);
+    const out = await sponsor.reconcileAssigning();
+    expect(out).toHaveLength(2);
+    expect(sponsor.state.pool[landed!.account]!.status).toBe("assigned");
+    expect(sponsor.state.credits.cs_stuck).toMatchObject({ status: "done", account: landed!.account });
+    expect(sponsor.state.users[user.id]).toMatchObject({ account: landed!.account, via: "pool" });
+    expect(sponsor.state.pool[lost!.account]).toMatchObject({ status: "ready" });
+    expect(sponsor.state.pool[lost!.account]!.assignedTo).toBeUndefined();
   });
 
   it("paid while the sponsor ran dry: parked without sending, shown on /status, delivered by cron once funded", async () => {

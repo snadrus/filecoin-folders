@@ -38,6 +38,7 @@ import { waitForReceipt } from "../src/receipt.js";
 const ZERO32 = `0x${"0".repeat(64)}` as Hex;
 const ZERO_ADDRESS = getAddress(`0x${"0".repeat(40)}`);
 const ACCOUNT_TTL_SEC = 365n * 86400n;
+const poolAccountAbi = parseAbi(["function unassigned() view returns (bool)"]);
 const payAbi = parseAbi([
   "function deposit(address token, address to, uint256 amount) payable",
   "function accounts(address token, address owner) view returns (uint256 funds, uint256 lockupCurrent, uint256 lockupRate, uint256 lockupLastSettledAt)",
@@ -89,8 +90,8 @@ export interface PoolEntry {
   account: Address;
   salt: string;
   sessionExpiry: string;
-  /** "retired": a failed build whose funds were swept back (cron). */
-  status: "seeding" | "ready" | "assigning" | "assigned" | "failed" | "retired";
+  /** "retired": swept back (failed build, or trimmed above the pool target). "trimming": sweep in flight. */
+  status: "seeding" | "ready" | "assigning" | "assigned" | "failed" | "retired" | "trimming";
   dataSetId?: string;
   dataSetTx?: Hex;
   providerId?: string;
@@ -466,6 +467,8 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
   }
 
   let creditQueue: Promise<unknown> = Promise.resolve();
+  /** Pool accounts with an assign tx in flight in this process (never trimmed or reconciled). */
+  const assigningNow = new Set<string>();
 
   /** Apply one paid session, at most once. Each send is recorded before the next; a failure is never auto-resent. */
   function queueCredit(sessionId: string, credentialArg?: string): Promise<unknown> {
@@ -473,6 +476,7 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
       const credit = state.credits[sessionId];
       if (!credit || credit.status !== "pending") return;
       const credential = credentialArg ?? credit.credential;
+      let inFlight: string | undefined;
       const identity = parseIdentityId(credit.identity);
       try {
         // Pre-flight: if the sponsor is short, park the credit before sending anything (so a retry is always safe).
@@ -502,6 +506,7 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
             credit.path = "pool";
             pooled.status = "assigning";
             pooled.assignedTo = credit.identity;
+            assigningNow.add((inFlight = pooled.account));
             save();
             const topUp = poolTopUp(amount, seed);
             await ensureAllowance(config.factory, topUp);
@@ -535,6 +540,7 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
         credit.status = "failed";
         credit.error = error instanceof Error ? error.message : String(error);
       }
+      if (inFlight) assigningNow.delete(inFlight);
       save();
     });
     return creditQueue;
@@ -712,12 +718,86 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
     return out;
   }
 
+  /**
+   * Pool above target (e.g. SPONSOR_POOL_SIZE lowered): admin-sweep the excess ready accounts back to the treasury
+   * (the sponsor on Calibration, so the USDFC is reused) and retire them. An entry leaves "ready" synchronously
+   * before any await, so a concurrent purchase (which only takes "ready" entries) can never pick it.
+   */
+  async function trimPool(): Promise<{ account: Address; outcome: string; swept?: string }[]> {
+    const out: { account: Address; outcome: string; swept?: string }[] = [];
+    const ready = Object.values(state.pool).filter((entry) => entry.status === "ready");
+    const victims = ready.slice(Math.max(0, poolSize));
+    for (const entry of victims) {
+      if (entry.status !== "ready" || assigningNow.has(entry.account)) continue;
+      entry.status = "trimming";
+      save();
+      let result: SweepResult;
+      try {
+        result = await sweepAccount(pub, relayer, entry.account, config.network);
+      } catch (error) {
+        result = { account: entry.account, funds: "?", lockup: "?", outcome: `error: ${error instanceof Error ? error.message : String(error)}` };
+      }
+      state.sweeps[entry.account] = { ...result, at: new Date(now()).toISOString() };
+      if (result.outcome === "swept" || result.funds === "0") {
+        entry.status = "retired";
+        entry.error = "trimmed: pool above target";
+      } else if (result.outcome.startsWith("error")) {
+        entry.status = "failed"; // a sweep may have been sent: never hand it out again; sweepDeferred retries
+        entry.error = `trim: ${result.outcome}`;
+      } else entry.status = "ready"; // nothing moved: still a funded warm account
+      save();
+      out.push({ account: entry.account, outcome: result.outcome, ...(result.swept ? { swept: result.swept } : {}) });
+    }
+    return out;
+  }
+
+  /**
+   * "assigning" entries with no assign in flight here (a crash or an RPC error after sending): read the chain.
+   * Still unassigned → back to "ready". Assigned → "assigned", and if the buyer's pool credit failed without an
+   * account, finish it (the handover landed; only the receipt read failed).
+   */
+  async function reconcileAssigning(): Promise<{ account: Address; outcome: string }[]> {
+    const out: { account: Address; outcome: string }[] = [];
+    for (const entry of Object.values(state.pool)) {
+      if (entry.status !== "assigning" || assigningNow.has(entry.account)) continue;
+      let unassigned: boolean;
+      try {
+        unassigned = (await pub.readContract({ address: entry.account, abi: poolAccountAbi, functionName: "unassigned" })) as boolean;
+      } catch {
+        continue;
+      }
+      if (entry.status !== "assigning" || assigningNow.has(entry.account)) continue;
+      if (unassigned) {
+        entry.status = "ready";
+        delete entry.assignedTo;
+        out.push({ account: entry.account, outcome: "not assigned on chain: back to ready" });
+      } else {
+        entry.status = "assigned";
+        let outcome = "assigned on chain";
+        const identity = entry.assignedTo ? parseIdentityId(entry.assignedTo) : undefined;
+        const found = entry.assignedTo ? Object.values(state.credits).find((c) => c.identity === entry.assignedTo && c.path === "pool" && c.status === "failed" && !c.account) : undefined;
+        if (identity && found && !state.users[entry.assignedTo!]) {
+          state.users[entry.assignedTo!] = { owner: ownerOf(identity), account: entry.account, sessionExpiry: entry.sessionExpiry, dataSetId: entry.dataSetId, providerId: entry.providerId, dataSetTx: entry.dataSetTx, via: "pool", ...(found.credential ? { credentialId: found.credential } : {}) };
+          found.account = entry.account;
+          found.status = "done";
+          found.error = "reconciled: handover landed on chain";
+          outcome += "; buyer's credit completed";
+        }
+        out.push({ account: entry.account, outcome });
+      }
+      save();
+    }
+    return out;
+  }
+
   /** Background tick (Worker cron / Node interval): owed credits first, then the pool, then deferred sweeps. */
   async function cronTick() {
+    const reconciled = await reconcileAssigning();
     const credits = await retryAwaiting();
+    const trimmed = await trimPool();
     void refillPool();
     const swept = await sweepDeferred();
-    return { credits, swept, pool: poolStatus().counts };
+    return { reconciled, credits, trimmed, swept, pool: poolStatus().counts };
   }
 
   async function status() {
@@ -821,7 +901,7 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
   // Resume credits interrupted by a restart only if nothing was sent yet (never resend).
   for (const [id, credit] of Object.entries(state.credits)) if (credit.status === "pending" && !credit.hashes?.length) void queueCredit(id);
 
-  return { handle, state, relayer, pub, config, pricing, onStripeEvent, refillPool, sweepDeferred, retryAwaiting, cronTick, status, poolStatus, settled: () => creditQueue };
+  return { handle, state, relayer, pub, config, pricing, onStripeEvent, refillPool, sweepDeferred, retryAwaiting, trimPool, reconcileAssigning, cronTick, status, poolStatus, settled: () => creditQueue };
 }
 
 export type SponsorCore = ReturnType<typeof createSponsorCore>;
