@@ -41,7 +41,14 @@ for (const account of process.argv.slice(2) as Address[]) {
       amount = (amount * 9n) / 10n;
       continue;
     }
-    const receipt = await relayer.relay({ to: account, data, label: `sweep ${account}` });
+    let receipt;
+    try {
+      receipt = await relayer.relay({ to: account, data, label: `sweep ${account}` });
+    } catch {
+      // Lockup can grow between the simulation and the estimate; back off and retry.
+      amount = (amount * 9n) / 10n;
+      continue;
+    }
     console.log(`${line} swept ${formatUnits(amount, 18)} ${explorer}${receipt.transactionHash}`);
     done = true;
     break;
