@@ -48,7 +48,7 @@ export function networkEnv(env: Record<string, string | undefined>, network: "ca
     SPONSOR_RPC: env.SPONSOR_RPC_MAINNET,
     STRIPE_SECRET_KEY: env.STRIPE_LIVE_SECRET_KEY,
     STRIPE_WEBHOOK_SECRET: env.STRIPE_LIVE_WEBHOOK_SECRET,
-    ...Object.fromEntries(Object.entries(env).filter(([key]) => /^SPONSOR_(RESERVE|SETUP_FEE|MIN_|MAX_|STRIPE_FEE|USDFC_PER)/.test(key))),
+    ...Object.fromEntries(Object.entries(env).filter(([key]) => /^SPONSOR_(RESERVE|SETUP_FEE|MIN_|MAX_|STRIPE_FEE|USDFC_PER|LOW_|REFUND_)/.test(key))),
   };
 }
 
@@ -148,10 +148,10 @@ export class SponsorDO extends DurableObject<Env> {
       return new Response(JSON.stringify(body), { status: 503, headers: CORS_HEADERS });
     }
     if (url.pathname === "/__cron") {
-      const swept = await this.core.sweepDeferred();
+      const tick = await this.core.cronTick();
       await this.ctx.storage.deleteAlarm();
       await this.arm(1_000);
-      return Response.json({ swept, pool: this.core.poolStatus().counts });
+      return Response.json(tick);
     }
     const out = await this.core.handle({ method: request.method, url: url.pathname + url.search, header: (name) => request.headers.get(name) ?? undefined, body: request.method === "GET" || request.method === "HEAD" ? "" : await request.text() });
     await this.arm();

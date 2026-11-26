@@ -25,6 +25,7 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261125.1",
+    "@noble/hashes": "1.8.0",
     "@playwright/test": "^1.56.1",
     "happy-dom": "^18.0.1",
     "typescript": "^5.9.3",

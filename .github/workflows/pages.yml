@@ -50,8 +50,11 @@ jobs:
         env:
           # Gasless mode on Calibration: sponsor Worker (apps/fifolders/sponsor/worker.ts) + Stripe test mode.
           VITE_SPONSOR_URL: https://fast.scionbase.ai
-          # Add mainnet once its sponsor wallet is funded and its factory deployed (served at /mainnet).
+          # Mainnet sponsor (served at /mainnet) is deployed; add it here once its wallet holds USDFC.
           VITE_SPONSOR_NETWORKS: calibration
+          # Mainnet FolderRegistryV2 (deployments/mainnet-v2.json).
+          VITE_FOLDER_REGISTRY_MAINNET: "0x0ADf3E4fc709EAC4973Ca5D17FCfEB10eB7b01EB"
+          VITE_REGISTRY_FROM_BLOCK_MAINNET: "6580537"
           VITE_STRIPE_PUBLISHABLE_KEY_MAINNET: pk_live_51Ug71bAQKJpucjVchcZvlNbOViSWgtgYn98cVWpw7EudZ7rZQLgUJty5pb1NoWXF2jkuBv9Mwrzby3UDKBzyqaaB00UrydX8lE
           VITE_STRIPE_PUBLISHABLE_KEY: pk_test_51Ug4s1AFTWNVBowWWqiKGCzkvif6rJKZQmzCHfLHobIBYyb82eWvIUg1jmLlk3A6k83AYGPd7BomXHwvGyFlqnGS00Pz8paxAS
       - name: Build FiPen and FiGrid

@@ -11,6 +11,8 @@ export interface SweepResult {
   account: Address;
   funds: string;
   lockup: string;
+  /** Where a sweep sends the funds. */
+  treasury?: Address;
   swept?: string;
   hash?: Hex;
   /** "swept" | "skip: …" | "nothing sweepable" */
@@ -26,14 +28,16 @@ export async function sweepAccount(pub: PublicClient, relayer: Relayer, account:
   const usdfc = contracts.usdfc!.address;
   const pay = contracts.filecoinPay!.address;
   const [funds, lockup] = await pub.readContract({ address: pay, abi: payAbi, functionName: "accounts", args: [usdfc, account] });
-  const base = { account, funds: formatUnits(funds, 18), lockup: formatUnits(lockup, 18) };
+  const base: { account: Address; funds: string; lockup: string; treasury?: Address } = { account, funds: formatUnits(funds, 18), lockup: formatUnits(lockup, 18) };
   try {
     const factory = await pub.readContract({ address: account, abi: acctAbi, functionName: "FACTORY" });
     const [admin, treasury] = await Promise.all([
       pub.readContract({ address: factory, abi: factoryAbi, functionName: "admin" }),
       pub.readContract({ address: factory, abi: factoryAbi, functionName: "treasury" }),
     ]);
-    if (admin !== relayer.address || treasury !== relayer.address) return { ...base, outcome: `skip: admin ${admin} treasury ${treasury}` };
+    // Funds go to the factory treasury (the sponsor, or the operator's recovery address once set via setTreasury).
+    if (admin !== relayer.address) return { ...base, outcome: `skip: admin ${admin} treasury ${treasury}` };
+    base.treasury = treasury;
   } catch {
     return { ...base, outcome: "skip: not a LockedSignerAccount" };
   }

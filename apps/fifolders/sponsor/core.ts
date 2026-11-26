@@ -23,7 +23,7 @@
 //
 // Runtime-neutral core: `handle()` takes a plain request and returns a plain response. server.ts wraps it in node:http
 // with a JSON state file; worker.ts runs it inside a Durable Object (Cloudflare) with DO storage.
-import { encodeAbiParameters, encodeFunctionData, encodePacked, erc20Abi, getAddress, isAddress, isHex, parseAbi, parseUnits, type Address, type Hex, type PublicClient } from "viem";
+import { encodeAbiParameters, encodeFunctionData, encodePacked, erc20Abi, formatUnits, getAddress, isAddress, isHex, parseAbi, parseUnits, type Address, type Hex, type PublicClient } from "viem";
 import { createDataSetApiRequest } from "@filoz/synapse-core/sp";
 import { getPDPProvider } from "@filoz/synapse-core/sp-registry";
 import { lockedAccountAbi, lockedFactoryAbi, type SponsorOwner } from "../src/sponsored-abi.js";
@@ -32,7 +32,7 @@ import { DEFAULT_PRICING, creditFor, poolTopUp, pricingFromEnv, type Pricing } f
 import { RateLimiter } from "./ratelimit.js";
 import { SponsorWalletRelayer, chainFor, publicClient, type Relayer } from "./relayer.js";
 import { sweepAccount, type SweepResult } from "./sweeplib.js";
-import { assertStripeMode, createCheckoutSession, estimateStripeFeeCents, fakeCheckoutSession, stripeFeeCents, verifyStripeSignature, type CheckoutSession, type Network } from "./stripe.js";
+import { assertStripeMode, createCheckoutSession, estimateStripeFeeCents, fakeCheckoutSession, refundPayment, stripeFeeCents, verifyStripeSignature, type CheckoutSession, type Network } from "./stripe.js";
 import { waitForReceipt } from "../src/receipt.js";
 
 const ZERO32 = `0x${"0".repeat(64)}` as Hex;
@@ -53,6 +53,13 @@ export interface SponsorConfig {
   pricing?: Pricing;
   /** Warm pool: ready accounts to keep (0 disables) and the USDFC each holds. */
   pool?: { size: number; seedUsdfc: string };
+  /** Checkout is refused (503) unless the sponsor holds at least this much FIL, plus USDFC for the charge. */
+  minSponsorFil?: string;
+  /** /status and /health report "low" below these (warn before checkout pauses). */
+  lowFil?: string;
+  lowUsdfc?: string;
+  /** Paid credits that wait this long for sponsor funds are refunded through Stripe. */
+  refundAfterHours?: number;
   stripe: {
     secretKey?: string;
     webhookSecret?: string;
@@ -106,8 +113,13 @@ export interface CreditRecord {
   /** USDFC actually sent by the sponsor in this step (top-up above the pool seed, or the full credit). */
   depositUsdfc: string;
   path?: "pool" | "create" | "topup";
-  status: "pending" | "done" | "failed";
+  /** awaiting-funds: paid, nothing sent yet, sponsor short of USDFC/FIL; retried by cron, refunded after refundAfterHours. */
+  status: "pending" | "done" | "failed" | "awaiting-funds" | "refunded";
   hashes: Hex[];
+  paidAt?: string;
+  paymentIntent?: string;
+  credential?: string;
+  refundId?: string;
   hash?: Hex;
   error?: string;
 }
@@ -162,6 +174,10 @@ export function configFromEnv(env: Record<string, string | undefined>, opts: { s
     },
     pricing: pricingFromEnv(env),
     pool: { size: Number(env.SPONSOR_POOL_SIZE ?? 5), seedUsdfc: env.SPONSOR_POOL_SEED_USDFC ?? "1" },
+    minSponsorFil: env.SPONSOR_MIN_FIL ?? "0.005",
+    lowFil: env.SPONSOR_LOW_FIL ?? "0.05",
+    lowUsdfc: env.SPONSOR_LOW_USDFC ?? "20",
+    refundAfterHours: Number(env.SPONSOR_REFUND_AFTER_HOURS ?? 24),
     stripe: {
       secretKey: env.STRIPE_SECRET_KEY || undefined,
       webhookSecret: env.STRIPE_WEBHOOK_SECRET || undefined,
@@ -219,6 +235,8 @@ export interface SponsorDeps {
   /** Persisted state to resume from, and where to write it after every change. */
   state?: Partial<SponsorState>;
   persist?: (state: SponsorState) => void;
+  /** Clock (tests). */
+  now?: () => number;
 }
 
 function randomHex(bytes: number): string {
@@ -230,6 +248,7 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
   const pricing = config.pricing ?? DEFAULT_PRICING;
   const poolSize = config.pool?.size ?? 0;
   const seed = parseUnits(config.pool?.seedUsdfc ?? "1", 18);
+  const now = deps.now ?? (() => Date.now());
   const pub = deps.pub ?? publicClient({ network: config.network, rpc: deps.rpc });
   if (!deps.relayer && !deps.sponsorKey) throw new Error("Set SPONSOR_KEY");
   const relayer = deps.relayer ?? new SponsorWalletRelayer(deps.sponsorKey!, { network: config.network, rpc: deps.rpc });
@@ -352,6 +371,12 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
       try {
         let built = 0;
         while (poolCount("ready", "seeding") < poolSize && built < (opts.max ?? Infinity)) {
+          // Keep owed credits whole: build only with USDFC to spare for the seed, and FIL above the gas reserve.
+          const funds = await sponsorFunds();
+          if (funds.usdfc < pendingUsdfc() + seed || funds.fil < minFil() * 2n) {
+            console.warn("[sponsor] pool refill paused: sponsor wallet low");
+            break;
+          }
           await buildPooled();
           built += 1;
         }
@@ -397,6 +422,7 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
         ...(identity.kind === "passkey" && identity.credentialId ? { credential: identity.credentialId } : {}),
       },
     };
+    await assertFunded(cents);
     let session: CheckoutSession;
     if (config.stripe.secretKey) session = await createCheckoutSession(config.stripe.secretKey, input, deps.fetch);
     else if (config.stripe.fake) session = fakeCheckoutSession(input);
@@ -406,15 +432,56 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
     return { ...session, first };
   }
 
+  const minFil = () => parseUnits(config.minSponsorFil ?? "0.005", 18);
+  const pendingUsdfc = () => Object.values(state.credits).filter((c) => c.status === "pending" || c.status === "awaiting-funds").reduce((sum, c) => sum + BigInt(c.usdfc), 0n);
+
+  async function sponsorFunds(): Promise<{ fil: bigint; usdfc: bigint }> {
+    const [usdfc, fil] = await Promise.all([
+      pub.readContract({ address: config.contracts.usdfc, abi: erc20Abi, functionName: "balanceOf", args: [relayer.address] }) as Promise<bigint>,
+      pub.getBalance({ address: relayer.address }),
+    ]);
+    return { fil, usdfc };
+  }
+
+  /**
+   * Never take a card payment the sponsor cannot honor: it must hold USDFC for this charge (an upper bound on the
+   * credit) plus every credit still owed, and FIL for gas. Fails closed if the RPC fails.
+   */
+  async function assertFunded(cents: number): Promise<void> {
+    const need = parseUnits((cents / 100).toFixed(2), 18) + pendingUsdfc();
+    let funds: { fil: bigint; usdfc: bigint };
+    try {
+      funds = await sponsorFunds();
+    } catch {
+      throw new HttpError(503, "Card payments are temporarily unavailable. Please try again later.");
+    }
+    if (funds.usdfc < need || funds.fil < minFil()) {
+      console.warn(`[sponsor] checkout paused: sponsor holds ${funds.usdfc} USDFC / ${funds.fil} FIL, needs ${need} / ${minFil()}`);
+      throw new HttpError(503, "Card payments are temporarily unavailable (the service wallet is being refilled). Please try again later; you have not been charged.");
+    }
+  }
+
   let creditQueue: Promise<unknown> = Promise.resolve();
 
   /** Apply one paid session, at most once. Each send is recorded before the next; a failure is never auto-resent. */
-  function queueCredit(sessionId: string, credential?: string): Promise<unknown> {
+  function queueCredit(sessionId: string, credentialArg?: string): Promise<unknown> {
     creditQueue = creditQueue.then(async () => {
       const credit = state.credits[sessionId];
       if (!credit || credit.status !== "pending") return;
+      const credential = credentialArg ?? credit.credential;
       const identity = parseIdentityId(credit.identity);
       try {
+        // Pre-flight: if the sponsor is short, park the credit before sending anything (so a retry is always safe).
+        const amount0 = BigInt(credit.usdfc);
+        const viaPool = !state.users[credit.identity] && Object.values(state.pool).some((entry) => entry.status === "ready");
+        const needUsdfc = viaPool ? poolTopUp(amount0, seed) : amount0;
+        const funds = await sponsorFunds();
+        if (funds.usdfc < needUsdfc || funds.fil < minFil()) {
+          credit.status = "awaiting-funds";
+          credit.error = "sponsor wallet short of funds; will retry";
+          save();
+          return;
+        }
         let record = state.users[credit.identity];
         const amount = BigInt(credit.usdfc);
         if (record) {
@@ -508,7 +575,8 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
     if (raced) return { received: true, duplicate: true, credited: raced.usdfc };
     const first = !state.users[identityId]?.dataSetId;
     const { creditUsdfc, ...quote } = creditFor(pricing, { chargeCents, feeCents, first });
-    state.credits[id] = { identity: identityId, ...quote, usdfc: creditUsdfc.toString(), depositUsdfc: "0", status: "pending", hashes: [] };
+    const paymentIntent = typeof session.payment_intent === "string" ? session.payment_intent : undefined;
+    state.credits[id] = { identity: identityId, ...quote, usdfc: creditUsdfc.toString(), depositUsdfc: "0", status: "pending", hashes: [], paidAt: new Date(now()).toISOString(), ...(paymentIntent ? { paymentIntent } : {}), ...(metadata.credential ? { credential: metadata.credential } : {}) };
     save();
     void queueCredit(id, metadata.credential);
     return { received: true, credited: creditUsdfc.toString() };
@@ -595,9 +663,102 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
     return { account: state.users[id]?.account ?? null };
   }
 
-  function health() {
+  /**
+   * Cron: retry credits parked for funds (nothing was sent for them, so a retry is safe); refund through Stripe once
+   * one has waited refundAfterHours. Without a Stripe key (local fake) they just keep waiting.
+   */
+  async function retryAwaiting(): Promise<{ retried: string[]; refunded: string[]; errors: string[] }> {
+    const out = { retried: [] as string[], refunded: [] as string[], errors: [] as string[] };
+    const maxAgeMs = (config.refundAfterHours ?? 24) * 3600_000;
+    let funds: { fil: bigint; usdfc: bigint } | undefined;
+    let reserved = 0n;
+    for (const [id, credit] of Object.entries(state.credits)) {
+      if (credit.status !== "awaiting-funds") continue;
+      const age = now() - Date.parse(credit.paidAt ?? new Date(now()).toISOString());
+      if (age >= maxAgeMs && config.stripe.secretKey && credit.paymentIntent) {
+        try {
+          const refund = await refundPayment(config.stripe.secretKey, credit.paymentIntent, { session: id, reason: "sponsor could not deliver storage credits in time" }, deps.fetch);
+          credit.status = "refunded";
+          credit.refundId = refund.id;
+          credit.error = `refunded after ${config.refundAfterHours ?? 24}h without sponsor funds`;
+          out.refunded.push(id);
+        } catch (error) {
+          out.errors.push(`${id}: ${error instanceof Error ? error.message : String(error)}`);
+        }
+        save();
+        continue;
+      }
+      if (!funds) {
+        try {
+          funds = await sponsorFunds();
+        } catch {
+          continue;
+        }
+      }
+      const need = BigInt(credit.usdfc);
+      if (funds.usdfc < reserved + need || funds.fil < minFil()) continue; // still short: stay parked
+      reserved += need;
+      credit.status = "pending";
+      delete credit.error;
+      out.retried.push(id);
+      void queueCredit(id);
+    }
+    save();
+    await creditQueue;
+    return out;
+  }
+
+  /** Background tick (Worker cron / Node interval): owed credits first, then the pool, then deferred sweeps. */
+  async function cronTick() {
+    const credits = await retryAwaiting();
+    void refillPool();
+    const swept = await sweepDeferred();
+    return { credits, swept, pool: poolStatus().counts };
+  }
+
+  async function status() {
+    let funds: { fil: bigint; usdfc: bigint } | null = null;
+    try {
+      funds = await sponsorFunds();
+    } catch {
+      funds = null;
+    }
+    const lowFil = parseUnits(config.lowFil ?? "0.05", 18);
+    const lowUsdfc = parseUnits(config.lowUsdfc ?? "20", 18);
+    const owed = pendingUsdfc();
+    const level = !funds ? "unknown" : funds.fil < minFil() || funds.usdfc <= owed ? "empty" : funds.fil < lowFil || funds.usdfc - owed < lowUsdfc ? "low" : "ok";
+    const credits: Record<string, number> = {};
+    for (const credit of Object.values(state.credits)) credits[credit.status] = (credits[credit.status] ?? 0) + 1;
+    return {
+      network: config.network,
+      sponsor: relayer.address,
+      funds: {
+        level,
+        fil: funds ? formatUnits(funds.fil, 18) : null,
+        usdfc: funds ? formatUnits(funds.usdfc, 18) : null,
+        owedUsdfc: formatUnits(owed, 18),
+        thresholds: { minFil: config.minSponsorFil ?? "0.005", lowFil: config.lowFil ?? "0.05", lowUsdfc: config.lowUsdfc ?? "20" },
+      },
+      checkoutOpen: level === "ok" || level === "low",
+      pool: poolStatus().counts,
+      credits,
+      refundAfterHours: config.refundAfterHours ?? 24,
+    };
+  }
+
+  async function health() {
+    const st = await status();
+    const warnings: string[] = [];
+    if (st.funds.level === "low") warnings.push(`sponsor wallet low: ${st.funds.fil} FIL / ${st.funds.usdfc} USDFC`);
+    if (st.funds.level === "empty") warnings.push(`sponsor wallet empty: card checkout paused (${st.funds.fil} FIL / ${st.funds.usdfc} USDFC, ${st.funds.owedUsdfc} USDFC owed)`);
+    if (st.funds.level === "unknown") warnings.push("sponsor balance unreadable (RPC)");
+    if (poolSize && !st.pool.ready) warnings.push("warm pool empty: purchases use on-demand creation");
+    if (st.credits["awaiting-funds"]) warnings.push(`${st.credits["awaiting-funds"]} paid credit(s) awaiting sponsor funds`);
     return {
       ok: true,
+      funds: st.funds.level,
+      checkoutOpen: st.checkoutOpen,
+      warnings,
       network: config.network,
       chainId: config.chainId,
       sponsor: relayer.address,
@@ -623,8 +784,9 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
       const url = new URL(req.url || "/", "http://sponsor");
       const ok = (body: unknown): SponsorResponse => ({ status: 200, body });
       if (req.method === "OPTIONS") return { status: 204, body: {} };
-      if (req.method === "GET" && url.pathname === "/health") return ok(health());
+      if (req.method === "GET" && url.pathname === "/health") return ok(await health());
       if (req.method === "GET" && url.pathname === "/pool") return ok(poolStatus());
+      if (req.method === "GET" && url.pathname === "/status") return ok(await status());
       if (req.method === "GET" && url.pathname === "/pricing") {
         return ok({ minFirstUsd: pricing.minFirstCents / 100, minTopUpUsd: pricing.minTopUpCents / 100, maxUsd: pricing.maxCents / 100, setupFeeUsd: pricing.setupCents / 100, reserveUsd: pricing.reserveCents / 100, minNetUsd: pricing.minNetCents / 100, stripeFee: { pct: pricing.stripeFeeBps / 100, fixedUsd: pricing.stripeFeeFixedCents / 100 }, usdfcPerUsd: pricing.usdfcPerUsd, testMode: config.network !== "mainnet" });
       }
@@ -655,7 +817,7 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
   // Resume credits interrupted by a restart only if nothing was sent yet (never resend).
   for (const [id, credit] of Object.entries(state.credits)) if (credit.status === "pending" && !credit.hashes?.length) void queueCredit(id);
 
-  return { handle, state, relayer, pub, config, pricing, onStripeEvent, refillPool, sweepDeferred, poolStatus, settled: () => creditQueue };
+  return { handle, state, relayer, pub, config, pricing, onStripeEvent, refillPool, sweepDeferred, retryAwaiting, cronTick, status, poolStatus, settled: () => creditQueue };
 }
 
 export type SponsorCore = ReturnType<typeof createSponsorCore>;

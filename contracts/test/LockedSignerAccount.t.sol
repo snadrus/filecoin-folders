@@ -186,6 +186,23 @@ contract LockedSignerAccountTest is Test {
         vm.prank(admin); acct.sweep(60);
         assertEq(pay.bal(treasury), 60); assertEq(pay.bal(address(acct)), 40);
     }
+    /// Recovery: admin points the treasury at the operator's recovery address (here the masked-ID form of f03775120);
+    /// sweeps of unassigned pooled accounts and of user accounts' unspent funds then land there. Only admin can retarget.
+    function test_recoveryTreasuryReceivesSweeps() public {
+        address recovery = address((uint160(0xff) << 152) | 3775120); // 0xff00…00399a90
+        vm.prank(user); vm.expectRevert(LockedSignerAccountFactory.NotAdmin.selector); f.setTreasury(user);
+        vm.prank(admin); f.setTreasury(recovery);
+        assertEq(f.treasury(), recovery);
+        LockedSignerAccount p = _pooled(); // unassigned, 1 USDFC seed
+        vm.prank(admin); p.sweep(1e18);
+        vm.prank(admin); acct.sweep(100);
+        assertEq(pay.bal(recovery), 1e18 + 100, "pooled seed + unspent user funds to recovery");
+        assertEq(pay.bal(treasury), 0);
+        // handing admin to the operator too: the old sponsor can no longer sweep or retarget
+        vm.prank(admin); f.setAdmin(recovery);
+        vm.prank(admin); vm.expectRevert(LockedSignerAccountFactory.NotAdmin.selector); f.setTreasury(admin);
+        vm.prank(admin); vm.expectRevert(LockedSignerAccount.NotAdmin.selector); p.sweep(0);
+    }
     function test_userRawKeyHasNoPayerFunds() public {
         vm.prank(user); vm.expectRevert(); pay.withdraw(address(tok), 1);
         assertEq(pay.bal(address(acct)), 100);

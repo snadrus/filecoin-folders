@@ -17,10 +17,12 @@ SPONSOR_POOL_SIZE = "5"
 SPONSOR_POOL_SEED_USDFC = "1"
 SPONSOR_SWEEP_ACCOUNTS = "0x2CcbFfB44b410BDa7Fcb7708d1649bA2887370d2"
 SPONSOR_ALLOWED_ORIGINS = "https://fifolders.scionbase.ai/,http://localhost"
-# Mainnet (/mainnet): set SPONSOR_FACTORY_MAINNET after deploying the factory; SPONSOR_KEY_MAINNET is a secret.
-SPONSOR_FACTORY_MAINNET = ""
-SPONSOR_PROVIDER_ID_MAINNET = "2"
-SPONSOR_POOL_SIZE_MAINNET = "2"
+# Mainnet (/mainnet). Factory deployed 2026-11-26 (deployments/mainnet-factory.json): admin = sponsor 0xa69A…08Db,
+# treasury = recovery f03775120 (masked ID). SPONSOR_KEY_MAINNET is a secret. The pool and checkout stay idle until
+# the sponsor holds USDFC (refill and checkout both check balances first).
+SPONSOR_FACTORY_MAINNET = "0xaaA1795A150BA01F7A5894A3D1A95334B695F067"
+SPONSOR_PROVIDER_ID_MAINNET = "5"
+SPONSOR_POOL_SIZE_MAINNET = "5"
 SPONSOR_ALLOWED_ORIGINS_MAINNET = "https://fifolders.scionbase.ai/"
 
 [[durable_objects.bindings]]

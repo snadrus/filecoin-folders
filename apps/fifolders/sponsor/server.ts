@@ -44,4 +44,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const stripe = config.stripe.secretKey ? config.stripe.secretKey.slice(0, 8) + "…" : config.stripe.fake ? "fake (local webhook)" : "off";
   sponsor.server.listen(port, () => console.log(`[sponsor] ${config.network} ${sponsor.relayer.address} factory ${config.factory} stripe ${stripe} pool ${config.pool?.size ?? 0} on :${port}`));
   void sponsor.refillPool();
+  // Same background work as the Worker's cron: owed credits, pool refill, deferred sweeps.
+  setInterval(() => void sponsor.cronTick().catch((error: unknown) => console.error("[sponsor] tick:", error)), 10 * 60_000);
 }

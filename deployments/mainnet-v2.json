@@ -1,0 +1,15 @@
+{
+  "network": "filecoin-mainnet",
+  "chainId": 314,
+  "contract": "FolderRegistryV2",
+  "address": "0x0ADf3E4fc709EAC4973Ca5D17FCfEB10eB7b01EB",
+  "deployer": "0xa69A4eF204eA951976bd6bDaCbd932Bbd18B08Db",
+  "owner": "0xa69A4eF204eA951976bd6bDaCbd932Bbd18B08Db",
+  "sessionKeyRegistry": "0x74FD50525A958aF5d484601E252271f9625231aB",
+  "txHash": "0xb64b35c3ca3dbcd440c65b4f32eaf1f89294da2153f028002ef3b729b2875924",
+  "block": 6580537,
+  "gasUsed": 70358546,
+  "commit": "6c4c911",
+  "verified": { "sourcify": "exact_match", "filfox": "https://filfox.info/en/address/0x0ADf3E4fc709EAC4973Ca5D17FCfEB10eB7b01EB" },
+  "date": "2026-11-26"
+}

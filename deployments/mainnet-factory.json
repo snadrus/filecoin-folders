@@ -1,0 +1,18 @@
+{
+  "network": "filecoin-mainnet",
+  "chainId": 314,
+  "contract": "LockedSignerAccountFactory",
+  "address": "0xaaA1795A150BA01F7A5894A3D1A95334B695F067",
+  "admin": "0xa69A4eF204eA951976bd6bDaCbd932Bbd18B08Db",
+  "treasury": "0xFf00000000000000000000000000000000399a90",
+  "treasuryNote": "masked-ID form of f03775120 (f1ncgcm7zu25ouka3tnbvuscjcpl3spqg7rdl63wa), the recovery address; admin can change it with setTreasury",
+  "registry": "0x0ADf3E4fc709EAC4973Ca5D17FCfEB10eB7b01EB",
+  "fwss": "0x8408502033C418E1bbC97cE9ac48E5528F371A9f",
+  "providerId": 5,
+  "txHash": "0xe014964fb2b2610ffbc9077843901b31aec5e70c2408b97b7ffc328b78235440",
+  "block": 6580539,
+  "gasUsed": 238384167,
+  "commit": "6c4c911",
+  "verified": { "sourcify": "exact_match", "filfox": "https://filfox.info/en/address/0xaaA1795A150BA01F7A5894A3D1A95334B695F067" },
+  "date": "2026-11-26"
+}

@@ -164,6 +164,8 @@ describe("sponsor server (fake chain)", () => {
 
   async function start(opts: { pool?: number; secretKey?: string; fetch?: typeof fetch; noStripe?: boolean } = {}) {
     const sends: { label: string; to?: Address; data: Hex }[] = [];
+    const sponsorUsdfc = { value: 10n ** 24n };
+    const clock = { value: Date.now() };
     const factoryAccounts = new Set<string>();
     const predicted = (args: readonly unknown[]) => getAddress(keccak256(toHex(JSON.stringify(args, (_, v) => (typeof v === "bigint" ? v.toString() : v)))).slice(0, 42));
     const pub = {
@@ -174,7 +176,11 @@ describe("sponsor server (fake chain)", () => {
         if (functionName === "accounts") return [10n ** 18n, 0n, 0n, 0n];
         if (functionName === "sessionSigners") return 0n;
         if (functionName === "isAllowed") return true;
+        if (functionName === "balanceOf") return sponsorUsdfc.value;
         throw new Error(functionName);
+      },
+      async getBalance() {
+        return 10n ** 20n;
       },
       async getTransactionReceipt({ hash }: { hash: Hex }) {
         return { status: "success", transactionHash: hash, logs: [] };
@@ -219,6 +225,7 @@ describe("sponsor server (fake chain)", () => {
         pub: pub as never,
         relayer: relayer as never,
         fetch: opts.fetch,
+        now: () => clock.value,
         openDataset: async (account) => {
           opened.push(account);
           return { dataSetId: String(++datasets), txHash: `0x${"d".repeat(64)}` as Hex };
@@ -234,14 +241,14 @@ describe("sponsor server (fake chain)", () => {
     };
     const as = (signer: ReturnType<typeof walletSponsorSigner>) => async (action: string, body: Record<string, unknown>) => post(`/${action}`, { ...body, auth: await signer.auth(CHAIN_ID, action, body) });
     const pay = async (sessionId: string, identity: string, cents: number) => {
-      const raw = JSON.stringify({ id: `evt_${sessionId}`, type: "checkout.session.completed", livemode: false, data: { object: { id: sessionId, payment_status: "paid", currency: "usd", amount_total: cents, metadata: { identity, factory: FACTORY } } } });
+      const raw = JSON.stringify({ id: `evt_${sessionId}`, type: "checkout.session.completed", livemode: false, data: { object: { id: sessionId, payment_status: "paid", currency: "usd", amount_total: cents, payment_intent: `pi_${sessionId}`, metadata: { identity, factory: FACTORY } } } });
       return post("/stripe/webhook", raw, { "stripe-signature": stripeSignatureHeader(raw, WHSEC) });
     };
     const get = async (path: string) => {
       const response = await fetch(`${base}${path}`);
       return { status: response.status, json: (await response.json()) as Record<string, unknown> };
     };
-    return { sponsor, sends, post, get, as, pay, opened, factoryAccounts };
+    return { sponsor, sends, post, get, as, pay, opened, factoryAccounts, sponsorUsdfc, clock };
   }
 
   const newUser = () => {
@@ -260,6 +267,16 @@ describe("sponsor server (fake chain)", () => {
     const checkout = await as(user.signed)("checkout", checkoutBody(5));
     expect(checkout).toMatchObject({ status: 503, json: { error: expect.stringMatching(/^Stripe not configured/) } });
     expect((await pay("cs_x", user.id, 500)).status).toBe(503);
+  });
+
+  it("refuses card payments the sponsor wallet could not honor", async () => {
+    const { as, sponsorUsdfc, sponsor } = await start({ pool: 0 });
+    const user = newUser();
+    sponsorUsdfc.value = 4n * 10n ** 18n; // 4 USDFC < $5 charge
+    expect(await as(user.signed)("checkout", checkoutBody(5))).toMatchObject({ status: 503, json: { error: expect.stringMatching(/temporarily unavailable.*not been charged/) } });
+    expect(Object.keys(sponsor.state.checkouts)).toHaveLength(0);
+    sponsorUsdfc.value = 5n * 10n ** 18n;
+    expect((await as(user.signed)("checkout", checkoutBody(4.5))).status).toBe(200); // a fresh request (no replay)
   });
 
   it("warm pool: first purchase hands over a ready account in one assign tx; top-up above the 1 USDFC seed", async () => {
@@ -328,6 +345,62 @@ describe("sponsor server (fake chain)", () => {
     expect(opened).toHaveLength(1);
     expect(sponsor.state.users[user.id]).toMatchObject({ via: "create", dataSetId: "1001" });
     expect(sponsor.state.credits[String(checkout.json.id)]).toMatchObject({ path: "create", depositUsdfc: (285n * E).toString() });
+  });
+
+  it("paid while the sponsor ran dry: parked without sending, shown on /status, delivered by cron once funded", async () => {
+    const { sponsor, sends, as, pay, get, sponsorUsdfc } = await start({ pool: 0 });
+    const user = newUser();
+    expect((await as(user.signed)("checkout", checkoutBody(5))).status).toBe(200);
+    sponsorUsdfc.value = 10n ** 17n; // drained between checkout and payment (race)
+    await pay("cs_race", user.id, 500);
+    await sponsor.settled();
+    expect(sponsor.state.credits.cs_race).toMatchObject({ status: "awaiting-funds", paymentIntent: "pi_cs_race", hashes: [] });
+    expect(sends).toHaveLength(0);
+    const status = (await get("/status")).json as { funds: { level: string }; checkoutOpen: boolean; credits: Record<string, number>; pool: { target: number } };
+    expect(status).toMatchObject({ funds: { level: "empty" }, checkoutOpen: false, credits: { "awaiting-funds": 1 }, pool: { target: 0 } });
+    expect((await get("/health")).json).toMatchObject({ ok: true, funds: "empty", warnings: expect.arrayContaining([expect.stringMatching(/awaiting sponsor funds/)]) });
+    expect((await sponsor.retryAwaiting()).retried).toEqual([]); // still short: stays parked
+    expect(sponsor.state.credits.cs_race!.status).toBe("awaiting-funds");
+    sponsorUsdfc.value = 10n ** 21n;
+    expect((await sponsor.cronTick()).credits.retried).toEqual(["cs_race"]);
+    expect(sponsor.state.credits.cs_race).toMatchObject({ status: "done", path: "create" });
+    expect((await get("/status")).json).toMatchObject({ funds: { level: "ok" }, checkoutOpen: true, credits: { done: 1 } });
+  });
+
+  it("refunds a parked credit through Stripe after refundAfterHours (default 24h)", async () => {
+    const calls: { url: string; body?: string; key?: string | null }[] = [];
+    const fetchMock = (async (url: string, init?: RequestInit) => {
+      calls.push({ url, body: init?.body ? String(init.body) : undefined, key: new Headers(init?.headers).get("idempotency-key") });
+      if (url.endsWith("/v1/refunds")) return new Response(JSON.stringify({ id: "re_1", status: "succeeded" }));
+      if (init?.method === "POST") return new Response(JSON.stringify({ id: "cs_test_late", url: "https://checkout.stripe.com/c/pay/cs_test_late" }));
+      return new Response(JSON.stringify({ id: "cs_test_late", payment_intent: { latest_charge: { balance_transaction: { fee: 45, currency: "usd" } } } }));
+    }) as typeof fetch;
+    const { sponsor, as, pay, sponsorUsdfc, clock } = await start({ pool: 0, secretKey: "sk_test_x", fetch: fetchMock });
+    const user = newUser();
+    expect((await as(user.signed)("checkout", checkoutBody(5))).status).toBe(200);
+    sponsorUsdfc.value = 0n;
+    await pay("cs_test_late", user.id, 500);
+    await sponsor.settled();
+    expect(sponsor.state.credits.cs_test_late!.status).toBe("awaiting-funds");
+    clock.value += 23 * 3600_000;
+    expect(await sponsor.retryAwaiting()).toMatchObject({ refunded: [] });
+    clock.value += 2 * 3600_000;
+    expect(await sponsor.retryAwaiting()).toMatchObject({ refunded: ["cs_test_late"] });
+    expect(sponsor.state.credits.cs_test_late).toMatchObject({ status: "refunded", refundId: "re_1" });
+    const refund = calls.find((c) => c.url.endsWith("/v1/refunds"))!;
+    expect(refund.body).toContain("payment_intent=pi_cs_test_late");
+    expect(refund.key).toBe("refund-cs_test_late");
+    expect(await sponsor.retryAwaiting()).toMatchObject({ refunded: [], retried: [] }); // once
+  });
+
+  it("pool refill pauses rather than spending owed USDFC", async () => {
+    const { sponsor, sends, sponsorUsdfc } = await start({ pool: 3 });
+    sponsorUsdfc.value = 5n * 10n ** 17n; // 0.5 USDFC < 1 USDFC seed
+    await sponsor.refillPool();
+    expect(sends).toHaveLength(0);
+    sponsorUsdfc.value = 10n ** 21n;
+    await sponsor.refillPool();
+    expect(sponsor.poolStatus().counts).toMatchObject({ target: 3, ready: 3 });
   });
 
   it("real Stripe keys: fee comes from the charge's balance transaction", async () => {

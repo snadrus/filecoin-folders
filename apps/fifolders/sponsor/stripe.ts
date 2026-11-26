@@ -116,3 +116,16 @@ export async function stripeFeeCents(secretKey: string, sessionId: string, fetch
     await new Promise((resolve) => setTimeout(resolve, opts.delayMs ?? 5_000));
   }
 }
+
+/** Full refund of a Checkout payment (idempotent per session via Idempotency-Key). */
+export async function refundPayment(secretKey: string, paymentIntent: string, meta: { session: string; reason: string }, fetchImpl: typeof fetch = fetch): Promise<{ id: string; status: string }> {
+  const body = new URLSearchParams({ payment_intent: paymentIntent, reason: "requested_by_customer", "metadata[session]": meta.session, "metadata[note]": meta.reason.slice(0, 450) });
+  const response = await fetchImpl("https://api.stripe.com/v1/refunds", {
+    method: "POST",
+    headers: { authorization: `Bearer ${secretKey}`, "content-type": "application/x-www-form-urlencoded", "idempotency-key": `refund-${meta.session}` },
+    body,
+  });
+  const json = (await response.json()) as { id?: string; status?: string; error?: { message?: string; code?: string } };
+  if (!response.ok || !json.id) throw new Error(`Stripe refund: ${json.error?.message ?? response.status}`);
+  return { id: json.id, status: json.status ?? "unknown" };
+}

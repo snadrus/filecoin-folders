@@ -60,6 +60,10 @@ jobs:
       - name: Health
         run: |
           sleep 10
-          curl -fsS https://fast.scionbase.ai/health
-          echo
-          curl -sS https://fast.scionbase.ai/mainnet/health || true
+          for path in health mainnet/health; do
+            body=$(curl -sS "https://fast.scionbase.ai/$path" || echo '{}')
+            echo "$path: $body"
+            # Surface low/empty sponsor wallets and an empty pool as run annotations (the deploy itself succeeded).
+            echo "$body" | jq -r --arg p "$path" '(.warnings // [])[] | "::warning title=sponsor \($p)::\(.)"' || true
+          done
+          curl -fsS https://fast.scionbase.ai/health > /dev/null
