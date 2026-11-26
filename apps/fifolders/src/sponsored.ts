@@ -9,6 +9,7 @@ import { createPublicClient, custom, encodeFunctionData, getAddress, hashTypedDa
 import { privateKeyToAccount } from "viem/accounts";
 import { EXECUTE_TYPES, SPONSOR_REQUEST_TYPES, executeDomain, lockedAccountAbi, sponsorDomain, stableJson, type SponsorAuth } from "./sponsored-abi.js";
 import type { RemovalAdapters } from "./removal.js";
+import { waitForReceipt } from "./receipt.js";
 
 /**
  * Networks with a sponsor (VITE_SPONSOR_NETWORKS, comma-separated; default "calibration"). Other networks use plain
@@ -269,7 +270,7 @@ export function liveRemovalAdapters(input: { context: (datasetId: string) => Pro
       const hash = checkpoint.transactionHash as Hex | undefined;
       if (!hash) return { status: "pending" };
       try {
-        const receipt = await input.client.waitForTransactionReceipt({ hash, timeout: 10 * 60_000, pollingInterval: 5_000 });
+        const receipt = await waitForReceipt(input.client, hash);
         return { status: receipt.status === "success" ? "success" : "reverted", hash };
       } catch {
         return { status: "pending", hash };

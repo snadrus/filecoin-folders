@@ -24,8 +24,19 @@ export async function payTestCheckout(url: string, opts: { email?: string; scree
     if (await frame.locator("#payment-postalCodeInput").isVisible().catch(() => false)) await frame.locator("#payment-postalCodeInput").fill("60601");
     const optIn = frame.locator("#payment-linkOptInInput");
     if ((await optIn.count()) && (await optIn.isChecked().catch(() => false))) await optIn.uncheck({ force: true }).catch(() => undefined);
+    // Paid once Stripe navigates to the success URL; the target need not be reachable (e.g. localhost).
+    const left = () => !page.url().startsWith("https://checkout.stripe.com/");
+    const redirected = page
+      .waitForURL((next) => !next.href.startsWith("https://checkout.stripe.com/"), { timeout: 150_000, waitUntil: "commit" })
+      .then(() => true, () => left());
+    await page.waitForTimeout(1_500); // let Elements finish validating the filled fields
     await frame.getByTestId("payment-form-submit-button").click();
-    await page.waitForURL((next) => !next.href.startsWith("https://checkout.stripe.com/"), { timeout: 120_000 });
+    for (let i = 0; i < 3 && !left(); i += 1) {
+      const done = await Promise.race([redirected, page.waitForTimeout(25_000).then(() => false)]);
+      if (done || left()) break;
+      await frame.getByTestId("payment-form-submit-button").click({ timeout: 5_000 }).catch(() => undefined); // retry a stalled submit
+    }
+    if (!(await redirected) && !left()) throw new Error("Stripe Checkout did not redirect after submit");
   } catch (error) {
     if (opts.screenshot) await page.screenshot({ path: opts.screenshot, fullPage: true }).catch(() => undefined);
     throw error;

@@ -3,6 +3,7 @@
 import { createPublicClient, createWalletClient, http, type Address, type Hex, type PublicClient, type TransactionReceipt } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { calibration, mainnet } from "@filoz/synapse-core/chains";
+import { waitForReceipt } from "../src/receipt.js";
 
 export interface RelayCall {
   to?: Address;
@@ -82,7 +83,7 @@ export class SponsorWalletRelayer implements Relayer {
 
   async relay(call: RelayCall): Promise<TransactionReceipt> {
     const hash = await this.send(call);
-    const receipt = await this.pub.waitForTransactionReceipt({ hash, timeout: 10 * 60_000, pollingInterval: 5_000 });
+    const receipt = await waitForReceipt(this.pub, hash);
     if (receipt.status !== "success") throw new Error(`${call.label} reverted: ${hash}`);
     return receipt;
   }

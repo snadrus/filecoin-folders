@@ -57,6 +57,7 @@ import { REGISTRY_NOT_DEPLOYED, registryReady } from "./network.js";
 import { WALLETCONNECT_RDNS, connectWalletConnect, walletChoices, walletConnectConfig, type WalletConnectLike } from "./wallets.js";
 import { saveCheckpoint, type UploadCheckpoint } from "./copies.js";
 import type { ChainReporter, OnboardingIO } from "./onboarding-io.js";
+import { waitForReceipt } from "./receipt.js";
 import {
   PAYMENT_DEPOSIT,
   SESSION_FUND_WEI,
@@ -1127,7 +1128,7 @@ export function createLiveOnboarding(options: LiveOnboardingOptions = {}): Onboa
         .catch(() => undefined);
     }, 2000);
     try {
-      return await reader.waitForTransactionReceipt({ hash });
+      return await waitForReceipt(reader, hash, { pollMs: 3_000 });
     } finally {
       clearInterval(timer);
     }

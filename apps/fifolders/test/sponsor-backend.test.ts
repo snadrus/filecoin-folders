@@ -176,7 +176,7 @@ describe("sponsor server (fake chain)", () => {
         if (functionName === "isAllowed") return true;
         throw new Error(functionName);
       },
-      async waitForTransactionReceipt({ hash }: { hash: Hex }) {
+      async getTransactionReceipt({ hash }: { hash: Hex }) {
         return { status: "success", transactionHash: hash, logs: [] };
       },
       async call() {

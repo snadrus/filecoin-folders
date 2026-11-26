@@ -33,6 +33,7 @@ import { RateLimiter } from "./ratelimit.js";
 import { SponsorWalletRelayer, chainFor, publicClient, type Relayer } from "./relayer.js";
 import { sweepAccount, type SweepResult } from "./sweeplib.js";
 import { assertStripeMode, createCheckoutSession, estimateStripeFeeCents, fakeCheckoutSession, stripeFeeCents, verifyStripeSignature, type CheckoutSession, type Network } from "./stripe.js";
+import { waitForReceipt } from "../src/receipt.js";
 
 const ZERO32 = `0x${"0".repeat(64)}` as Hex;
 const ZERO_ADDRESS = getAddress(`0x${"0".repeat(40)}`);
@@ -283,7 +284,7 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
   async function deposit(account: Address, amount: bigint, label: string): Promise<Hex> {
     await ensureAllowance(PAY, amount);
     const hash = await relayer.send({ to: PAY, label, data: encodeFunctionData({ abi: payAbi, functionName: "deposit", args: [USDFC, account, amount] }) });
-    const receipt = await pub.waitForTransactionReceipt({ hash, timeout: 10 * 60_000, pollingInterval: 5_000 });
+    const receipt = await waitForReceipt(pub, hash);
     if (receipt.status !== "success") throw new Error(`deposit reverted: ${hash}`);
     return hash;
   }
@@ -305,7 +306,7 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
       [account, clientDataSetId, keys, values, signature],
     );
     const created = await createDataSetApiRequest({ serviceURL, recordKeeper: FWSS, extraData });
-    const receipt = await pub.waitForTransactionReceipt({ hash: created.txHash, timeout: 10 * 60_000, pollingInterval: 5_000 });
+    const receipt = await waitForReceipt(pub, created.txHash);
     if (receipt.status !== "success") throw new HttpError(502, `createDataSet reverted: ${created.txHash}`);
     const log = receipt.logs.find((entry) => getAddress(entry.address) === PDP && entry.topics[1]);
     if (!log?.topics[1]) throw new HttpError(502, "createDataSet receipt has no DataSetCreated log");
@@ -631,7 +632,7 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
       if (req.method === "GET" && url.pathname === "/credits") {
         const id = url.searchParams.get("session") ?? "";
         const credit = state.credits[id];
-        return ok(credit ? { status: credit.status, account: credit.account ?? null, usdfc: credit.usdfc, path: credit.path ?? null, hash: credit.hash ?? null, hashes: credit.hashes } : { status: state.checkouts[id] ? "awaiting-payment" : "unknown" });
+        return ok(credit ? { status: credit.status, account: credit.account ?? null, usdfc: credit.usdfc, path: credit.path ?? null, hash: credit.hash ?? null, hashes: credit.hashes, error: credit.error ?? null } : { status: state.checkouts[id] ? "awaiting-payment" : "unknown" });
       }
       if (req.method === "POST" && url.pathname === "/stripe/webhook") return ok(await onStripeEvent(req.body, req.header("stripe-signature")));
       if (req.method === "POST" && url.pathname === "/checkout") {
