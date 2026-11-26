@@ -17,7 +17,7 @@ export function isSponsored(): boolean {
   return sponsorUrl() !== "";
 }
 
-export const SPONSORED_DEPOSIT_NOTE = "Pay by card. Credits are spent only on storage. No FIL or USDFC needed.";
+export const SPONSORED_DEPOSIT_NOTE = "Pay by card. Credits pay only for storage; no FIL or USDFC needed. First purchase includes a one-time $1.50 account setup.";
 export const SPONSORED_DATASET_NOTE = "Created once for you and paid from your FiFolders credits.";
 
 async function call<T>(path: string, body?: unknown): Promise<T> {
@@ -70,31 +70,57 @@ export function sessionSponsorSigner(account: Address, sessionKey: Hex): Sponsor
 }
 
 /** Passkey owner: the WebAuthn challenge is the SponsorRequest digest. */
-export function passkeySponsorSigner(key: { x: Hex; y: Hex }, assert: (challenge: Hex) => Promise<{ authenticatorData: Hex; clientDataJSON: string; signature: Hex }>): SponsorSigner {
+export function passkeySponsorSigner(key: { x: Hex; y: Hex; credentialId?: string }, assert: (challenge: Hex) => Promise<{ authenticatorData: Hex; clientDataJSON: string; signature: Hex }>): SponsorSigner {
   return {
     async auth(chainId, action, body) {
       const typed = sponsorRequestTyped(chainId, action, body);
-      return { kind: "passkey", x: key.x, y: key.y, issuedAt: typed.message.issuedAt.toString(), ...(await assert(hashTypedData(typed))) };
+      return { kind: "passkey", x: key.x, y: key.y, ...(key.credentialId ? { credentialId: key.credentialId } : {}), issuedAt: typed.message.issuedAt.toString(), ...(await assert(hashTypedData(typed))) };
     },
   };
+}
+
+/** Passkey owner's account, or null before the first purchase. */
+export async function findPasskeyAccount(key: { x: Hex; y: Hex }): Promise<Address | null> {
+  const out = await call<{ account: Address | null }>(`/account?x=${key.x}&y=${key.y}`);
+  return out.account ? getAddress(out.account) : null;
+}
+
+export interface SponsorPricing {
+  minFirstUsd: number;
+  minTopUpUsd: number;
+  maxUsd: number;
+  setupFeeUsd: number;
+  reserveUsd: number;
+  testMode: boolean;
+}
+
+export async function sponsorPricing(): Promise<SponsorPricing> {
+  return call("/pricing");
+}
+
+/** After Stripe redirects back: wait until the sponsor has applied the payment (pool handover is one tx). */
+export async function waitForCredit(sessionId: string, opts: { timeoutMs?: number; intervalMs?: number } = {}): Promise<{ status: string; account?: Address }> {
+  const end = Date.now() + (opts.timeoutMs ?? 15 * 60_000);
+  for (;;) {
+    const status = await sponsoredCreditStatus(sessionId);
+    if (status.status === "done" || status.status === "failed" || status.status === "unknown" || Date.now() > end) return status;
+    await new Promise((resolve) => setTimeout(resolve, opts.intervalMs ?? 4_000));
+  }
 }
 
 async function signed<T>(path: string, signer: SponsorSigner, chainId: number, body: Record<string, unknown>): Promise<T> {
   return call<T>(path, { ...body, auth: await signer.auth(chainId, path.slice(1), body) });
 }
 
-/** Create the caller's account (once). Sponsor pays gas; no credits until a card payment lands. */
-export async function ensureSponsoredAccount(signer: SponsorSigner, chainId: number): Promise<{ account: Address; hash?: Hex }> {
-  const out = await signed<{ account: Address; hash?: Hex }>("/account", signer, chainId, {});
-  return { account: getAddress(out.account), hash: out.hash };
-}
-
-/** Stripe Checkout for storage credits; returns the hosted payment page URL. */
-export async function buySponsoredCredits(signer: SponsorSigner, chainId: number, input: { usd: number; successUrl: string; cancelUrl: string }): Promise<{ id: string; url: string }> {
+/**
+ * Stripe Checkout for storage credits; returns the hosted payment page URL. The first purchase also creates the
+ * storage account (one-time setup fee shown as its own line).
+ */
+export async function buySponsoredCredits(signer: SponsorSigner, chainId: number, input: { usd: number; successUrl: string; cancelUrl: string }): Promise<{ id: string; url: string; first: boolean }> {
   return signed("/checkout", signer, chainId, input);
 }
 
-export async function sponsoredCreditStatus(sessionId: string): Promise<{ status: string; account?: Address; usdfc?: string; hash?: Hex | null }> {
+export async function sponsoredCreditStatus(sessionId: string): Promise<{ status: string; account?: Address; usdfc?: string; path?: string | null; hash?: Hex | null; hashes?: Hex[] }> {
   return call(`/credits?session=${encodeURIComponent(sessionId)}`);
 }
 
@@ -103,7 +129,7 @@ export async function createSponsoredDataset(signer: SponsorSigner, chainId: num
   return signed("/dataset", signer, chainId, { metadata });
 }
 
-/** Default card purchase (whole USD). */
+/** Suggested card purchase in USD (default $5). */
 export function sponsoredCreditUsd(): number {
   return Number(import.meta.env?.VITE_SPONSOR_CREDIT_USD ?? 5) || 5;
 }

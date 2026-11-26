@@ -1,33 +1,38 @@
 // Sponsor backend ("money processor") for gasless FiFolders. Holds the gas wallet, which is also the factory admin and
-// treasury. Users never hold FIL; they pay by card (Stripe) and the sponsor deposits the matching USDFC into their
-// LockedSignerAccount, where it can only pay FWSS storage.
+// treasury. Users never hold FIL or USDFC: they pay by card (Stripe) and the sponsor deposits USDFC into their
+// LockedSignerAccount, where the fixed call policy only lets it pay FWSS storage.
 //
-//   GET  /account?user=0x… | ?x=0x…&y=0x…   → { account | null }
-//   POST /account   {auth}                    → create the caller's LockedSignerAccount (owner EOA or passkey)
-//   POST /checkout  {auth, usd, successUrl, cancelUrl} → Stripe Checkout Session for storage credits → { id, url }
-//   POST /stripe/webhook                      → Stripe-signed checkout.session.completed → USDFC deposit (once per session)
-//   GET  /credits?session=cs_…                → { status, account, usdfc, hash }
-//   POST /dataset   {auth, metadata}          → one-time dataset: admin allowDataSet + provider createDataSet
+//   GET  /pricing                             → minimums, setup fee, reserve, default purchase
+//   GET  /account?user=0x… | ?x=0x…&y=0x… | ?credential=… → { account, x?, y? } (null before the first purchase)
+//   POST /checkout  {auth, usd, successUrl, cancelUrl} → Stripe Checkout Session → { id, url, first }
+//   POST /stripe/webhook                      → Stripe-signed checkout.session.completed → credit (once per session)
+//   GET  /credits?session=cs_…                → { status, account, usdfc, path, hashes }
+//   POST /dataset   {auth, metadata}          → dataset for an account that has none (normally pre-made)
 //   POST /execute   {account, target, value, data, nonce, deadline, signature} → relay an owner/session-signed Execute
 //
-// `auth` is an EIP-712 SponsorRequest signed by the account owner, a live session key of the account, or the owner's
-// passkey (see auth.ts). /execute needs no extra auth: the Execute signature is checked by the account itself (and
-// simulated here first), the account must be one this factory deployed, and calls are rate limited per account.
+// First purchase (no account yet): a warm-pool account (pre-deployed, 1 USDFC deposited, dataset open, ownerless) is
+// handed to the buyer in ONE transaction (factory.assign: one-shot owner + top-up of credit above 1 USDFC). Empty
+// pool: create account, deposit, open dataset (slow path). The pool refills in the background.
 //
-//   SPONSOR_KEY=0x… SPONSOR_FACTORY=0x… STRIPE_SECRET_KEY=sk_test_… STRIPE_WEBHOOK_SECRET=whsec_… pnpm --filter fifolders sponsor
+// `auth` is an EIP-712 SponsorRequest signed by the owner wallet, a live session key of the account, or the owner's
+// passkey (see auth.ts). /execute needs no extra auth: the account checks the Execute signature itself (simulated
+// here first), the account must be one this factory deployed, and calls are rate limited per account.
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { encodeAbiParameters, encodeFunctionData, encodePacked, erc20Abi, getAddress, isAddress, isHex, parseAbi, parseUnits, type Address, type Hex, type PublicClient } from "viem";
 import { createDataSetApiRequest } from "@filoz/synapse-core/sp";
 import { getPDPProvider } from "@filoz/synapse-core/sp-registry";
 import { lockedAccountAbi, lockedFactoryAbi, type SponsorOwner } from "../src/sponsored-abi.js";
-import { AuthError, passkeyId, verifyAuth, type Identity } from "./auth.js";
+import { AuthError, parseIdentityId, passkeyId, verifyAuth, type Identity } from "./auth.js";
+import { DEFAULT_PRICING, creditFor, poolTopUp, pricingFromEnv, type Pricing } from "./pricing.js";
 import { RateLimiter } from "./ratelimit.js";
 import { CHAIN, NETWORK, SponsorWalletRelayer, publicClient, type Relayer } from "./relayer.js";
-import { assertStripeMode, createCheckoutSession, fakeCheckoutSession, verifyStripeSignature, type CheckoutSession, type Network } from "./stripe.js";
+import { assertStripeMode, createCheckoutSession, estimateStripeFeeCents, fakeCheckoutSession, stripeFeeCents, verifyStripeSignature, type CheckoutSession, type Network } from "./stripe.js";
 
 const ZERO32 = `0x${"0".repeat(64)}` as Hex;
+const ZERO_ADDRESS = getAddress(`0x${"0".repeat(40)}`);
 const ACCOUNT_TTL_SEC = 365n * 86400n;
 const payAbi = parseAbi([
   "function deposit(address token, address to, uint256 amount) payable",
@@ -41,15 +46,14 @@ export interface SponsorConfig {
   providerId: bigint;
   statePath?: string;
   contracts: { pay: Address; usdfc: Address; fwss: Address; pdp: Address };
+  pricing?: Pricing;
+  /** Warm pool: ready accounts to keep (0 disables) and the USDFC each holds. */
+  pool?: { size: number; seedUsdfc: string };
   stripe: {
     secretKey?: string;
     webhookSecret?: string;
     /** Calibration only, and only without a secret key: checkout returns a local session and the webhook is simulated. */
     fake?: boolean;
-    /** USDFC (decimal string) credited per USD paid. */
-    usdfcPerUsd: string;
-    minUsd: number;
-    maxUsd: number;
     /** success/cancel URLs must start with one of these (empty = any, Calibration only). */
     allowedOrigins: string[];
   };
@@ -60,24 +64,52 @@ export interface UserRecord {
   owner: SponsorOwner;
   account: Address;
   sessionExpiry: string;
+  credentialId?: string;
   dataSetId?: string;
   providerId?: string;
   dataSetTx?: Hex;
+  /** "pool" (warm handover) or "create" (slow path). */
+  via?: "pool" | "create";
+}
+
+export interface PoolEntry {
+  account: Address;
+  salt: string;
+  sessionExpiry: string;
+  status: "seeding" | "ready" | "assigning" | "assigned" | "failed";
+  dataSetId?: string;
+  dataSetTx?: Hex;
+  providerId?: string;
+  hashes: Hex[];
+  assignedTo?: string;
+  error?: string;
 }
 
 export interface CreditRecord {
-  account: Address;
-  cents: number;
+  identity: string;
+  account?: Address;
+  chargeCents: number;
+  feeCents: number;
+  netCents: number;
+  reserveCents: number;
+  setupCents: number;
+  creditCents: number;
+  /** USDFC the user ends up with from this purchase (incl. a pooled account's seed). */
   usdfc: string;
+  /** USDFC actually sent by the sponsor in this step (top-up above the pool seed, or the full credit). */
+  depositUsdfc: string;
+  path?: "pool" | "create" | "topup";
   status: "pending" | "done" | "failed";
+  hashes: Hex[];
   hash?: Hex;
   error?: string;
 }
 
 export interface SponsorState {
   users: Record<string, UserRecord>;
-  checkouts: Record<string, { account: Address; cents: number }>;
+  checkouts: Record<string, { identity: string; cents: number; first: boolean }>;
   credits: Record<string, CreditRecord>;
+  pool: Record<string, PoolEntry>;
 }
 
 export class HttpError extends Error {
@@ -90,7 +122,6 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): SponsorConf
   const factory = env.SPONSOR_FACTORY;
   if (!factory) throw new Error("Set SPONSOR_FACTORY");
   const contracts = CHAIN.contracts as unknown as Record<string, { address: Address }>;
-  const secretKey = env.STRIPE_SECRET_KEY || undefined;
   const config: SponsorConfig = {
     network: NETWORK,
     chainId: CHAIN.id,
@@ -103,13 +134,12 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): SponsorConf
       fwss: getAddress(contracts.fwss!.address),
       pdp: getAddress(contracts.pdp!.address),
     },
+    pricing: pricingFromEnv(env),
+    pool: { size: Number(env.SPONSOR_POOL_SIZE ?? 5), seedUsdfc: env.SPONSOR_POOL_SEED_USDFC ?? "1" },
     stripe: {
-      secretKey,
+      secretKey: env.STRIPE_SECRET_KEY || undefined,
       webhookSecret: env.STRIPE_WEBHOOK_SECRET || undefined,
       fake: env.SPONSOR_STRIPE_FAKE === "1",
-      usdfcPerUsd: env.SPONSOR_USDFC_PER_USD ?? "1",
-      minUsd: Number(env.SPONSOR_MIN_USD ?? 1),
-      maxUsd: Number(env.SPONSOR_MAX_USD ?? 200),
       allowedOrigins: (env.SPONSOR_ALLOWED_ORIGINS ?? "").split(",").map((value) => value.trim()).filter(Boolean),
     },
   };
@@ -125,6 +155,8 @@ export function validateConfig(config: SponsorConfig): void {
     if (!stripe.secretKey || !stripe.webhookSecret) throw new Error("Mainnet needs STRIPE_SECRET_KEY (live) and STRIPE_WEBHOOK_SECRET");
     if (!stripe.allowedOrigins.length) throw new Error("Mainnet needs SPONSOR_ALLOWED_ORIGINS for Checkout redirects");
   }
+  const pricing = config.pricing ?? DEFAULT_PRICING;
+  if (pricing.minFirstCents < pricing.setupCents || pricing.maxCents < pricing.minFirstCents) throw new Error("bad pricing bounds");
 }
 
 function asAddress(value: unknown, name: string): Address {
@@ -137,18 +169,28 @@ function asBytes32(value: unknown, name: string): Hex {
   return value.toLowerCase() as Hex;
 }
 
-/** USDFC (18 decimals) for a card payment of `cents`. */
-export function usdfcForCents(cents: number, usdfcPerUsd: string): bigint {
-  return (BigInt(cents) * parseUnits(usdfcPerUsd, 18)) / 100n;
+function ownerArgs(identity: Identity): readonly [Address, Hex, Hex] {
+  if (identity.kind === "eoa") return [identity.address, ZERO32, ZERO32];
+  if (identity.kind === "passkey") return [ZERO_ADDRESS, identity.x, identity.y];
+  throw new HttpError(403, "session keys cannot own accounts");
 }
 
-export function createSponsor(config: SponsorConfig, deps: { pub?: PublicClient; relayer?: Relayer & { sent?: { label: string; hash: Hex }[] }; fetch?: typeof fetch } = {}) {
+function ownerOf(identity: Identity): SponsorOwner {
+  if (identity.kind === "eoa") return { kind: "eoa", address: identity.address };
+  if (identity.kind === "passkey") return { kind: "passkey", x: identity.x, y: identity.y };
+  throw new HttpError(403, "session keys cannot own accounts");
+}
+
+export function createSponsor(config: SponsorConfig, deps: { pub?: PublicClient; relayer?: Relayer & { sent?: { label: string; hash: Hex }[] }; fetch?: typeof fetch; openDataset?: (account: Address, metadata: Record<string, string>) => Promise<{ dataSetId: string; txHash: Hex }> } = {}) {
   validateConfig(config);
+  const pricing = config.pricing ?? DEFAULT_PRICING;
+  const poolSize = config.pool?.size ?? 0;
+  const seed = parseUnits(config.pool?.seedUsdfc ?? "1", 18);
   const pub = deps.pub ?? publicClient();
   const relayer = deps.relayer ?? new SponsorWalletRelayer(process.env.SPONSOR_KEY as Hex);
   const { pay: PAY, usdfc: USDFC, fwss: FWSS, pdp: PDP } = config.contracts;
   const loaded = config.statePath && existsSync(config.statePath) ? (JSON.parse(readFileSync(config.statePath, "utf8")) as Partial<SponsorState>) : {};
-  const state: SponsorState = { users: loaded.users ?? {}, checkouts: loaded.checkouts ?? {}, credits: loaded.credits ?? {} };
+  const state: SponsorState = { users: loaded.users ?? {}, checkouts: loaded.checkouts ?? {}, credits: loaded.credits ?? {}, pool: loaded.pool ?? {} };
   const save = () => config.statePath && writeFileSync(config.statePath, JSON.stringify(state, null, 2));
   const seen = new Map<string, number>();
   const limits = {
@@ -159,6 +201,7 @@ export function createSponsor(config: SponsorConfig, deps: { pub?: PublicClient;
 
   const recordFor = (identity: Identity): UserRecord | undefined =>
     identity.kind === "session" ? Object.values(state.users).find((record) => record.account === identity.account) : state.users[identity.id];
+  const identityOfAccount = (account: Address) => Object.entries(state.users).find(([, record]) => record.account === account)?.[0];
 
   async function authenticate(action: string, body: Record<string, unknown>, limiter: RateLimiter): Promise<Identity> {
     let identity: Identity;
@@ -169,7 +212,7 @@ export function createSponsor(config: SponsorConfig, deps: { pub?: PublicClient;
         body,
         seen,
         sessionExpiry: async (account, key) => {
-          if (!Object.values(state.users).some((record) => record.account === account)) return 0n;
+          if (!identityOfAccount(account)) return 0n;
           return (await pub.readContract({ address: account, abi: lockedAccountAbi, functionName: "sessionSigners", args: [key] })) as bigint;
         },
       });
@@ -181,20 +224,91 @@ export function createSponsor(config: SponsorConfig, deps: { pub?: PublicClient;
     return identity;
   }
 
-  /** Create (once) the caller's account. Owner wallet or passkey only; no credit (credits come from Stripe). */
-  async function ensureAccount(identity: Identity): Promise<{ account: Address; hash?: Hex }> {
-    const existing = recordFor(identity);
-    if (existing) return { account: existing.account };
-    if (identity.kind === "session") throw new HttpError(403, "session keys cannot create accounts");
-    const owner: SponsorOwner = identity.kind === "eoa" ? { kind: "eoa", address: identity.address } : { kind: "passkey", x: identity.x, y: identity.y };
-    const args = [identity.kind === "eoa" ? identity.address : getAddress(`0x${"0".repeat(40)}`), identity.kind === "passkey" ? identity.x : ZERO32, identity.kind === "passkey" ? identity.y : ZERO32, 0n] as const;
-    const sessionExpiry = BigInt(Math.floor(Date.now() / 1000)) + ACCOUNT_TTL_SEC;
-    const account = getAddress((await pub.readContract({ address: config.factory, abi: lockedFactoryAbi, functionName: "predict", args: [...args, sessionExpiry] })) as Address);
-    const receipt = await relayer.relay({ to: config.factory, label: `create account for ${identity.id}`, data: encodeFunctionData({ abi: lockedFactoryAbi, functionName: "create", args: [...args, sessionExpiry] }) });
-    state.users[identity.id] = { owner, account, sessionExpiry: sessionExpiry.toString() };
-    save();
-    return { account, hash: receipt.transactionHash };
+  // ---------------------------------------------------------------- chain helpers (all sends go through `relayer`)
+
+  async function ensureAllowance(spender: Address, amount: bigint): Promise<void> {
+    if (amount <= 0n) return;
+    const allowance = await pub.readContract({ address: USDFC, abi: erc20Abi, functionName: "allowance", args: [relayer.address, spender] });
+    if (allowance < amount) await relayer.relay({ to: USDFC, label: `USDFC approve ${spender}`, data: encodeFunctionData({ abi: erc20Abi, functionName: "approve", args: [spender, parseUnits("1000000", 18)] }) });
   }
+
+  async function deposit(account: Address, amount: bigint, label: string): Promise<Hex> {
+    await ensureAllowance(PAY, amount);
+    const hash = await relayer.send({ to: PAY, label, data: encodeFunctionData({ abi: payAbi, functionName: "deposit", args: [USDFC, account, amount] }) });
+    const receipt = await pub.waitForTransactionReceipt({ hash, timeout: 10 * 60_000, pollingInterval: 5_000 });
+    if (receipt.status !== "success") throw new Error(`deposit reverted: ${hash}`);
+    return hash;
+  }
+
+  /** admin allowDataSet + provider createDataSet with the keyless signature (r = s = 1, v = 27). */
+  async function openDataset(account: Address, metadata: Record<string, string>): Promise<{ dataSetId: string; txHash: Hex }> {
+    if (deps.openDataset) return deps.openDataset(account, metadata);
+    const keys = Object.keys(metadata).sort();
+    const values = keys.map((key) => String(metadata[key]));
+    const clientDataSetId = BigInt(Date.now());
+    await relayer.relay({ to: account, label: `allowDataSet ${account}`, data: encodeFunctionData({ abi: lockedAccountAbi, functionName: "allowDataSet", args: [config.providerId, clientDataSetId, keys, values] }) });
+    const provider = (await getPDPProvider(pub as never, { providerId: config.providerId } as never)) as { pdp?: { serviceURL?: string }; products?: { PDP?: { data?: { serviceURL?: string } } } };
+    const serviceURL = provider.pdp?.serviceURL ?? provider.products?.PDP?.data?.serviceURL;
+    if (!serviceURL) throw new HttpError(502, `provider ${config.providerId} has no PDP service URL`);
+    const one = `0x${"0".repeat(63)}1` as Hex;
+    const signature = encodePacked(["bytes32", "bytes32", "uint8"], [one, one, 27]);
+    const extraData = encodeAbiParameters(
+      [{ type: "address" }, { type: "uint256" }, { type: "string[]" }, { type: "string[]" }, { type: "bytes" }],
+      [account, clientDataSetId, keys, values, signature],
+    );
+    const created = await createDataSetApiRequest({ serviceURL, recordKeeper: FWSS, extraData });
+    const receipt = await pub.waitForTransactionReceipt({ hash: created.txHash, timeout: 10 * 60_000, pollingInterval: 5_000 });
+    if (receipt.status !== "success") throw new HttpError(502, `createDataSet reverted: ${created.txHash}`);
+    const log = receipt.logs.find((entry) => getAddress(entry.address) === PDP && entry.topics[1]);
+    if (!log?.topics[1]) throw new HttpError(502, "createDataSet receipt has no DataSetCreated log");
+    return { dataSetId: BigInt(log.topics[1]).toString(), txHash: created.txHash };
+  }
+
+  const datasetMetadata = () => ({ app: "fifolders", volume: "FiFolders", created: new Date().toISOString() });
+
+  // ---------------------------------------------------------------- warm pool
+
+  let refilling: Promise<void> | null = null;
+  const poolCount = (...statuses: PoolEntry["status"][]) => Object.values(state.pool).filter((entry) => statuses.includes(entry.status)).length;
+
+  async function buildPooled(): Promise<void> {
+    const salt = BigInt(`0x${randomBytes(8).toString("hex")}`);
+    const sessionExpiry = BigInt(Math.floor(Date.now() / 1000)) + ACCOUNT_TTL_SEC;
+    const account = getAddress((await pub.readContract({ address: config.factory, abi: lockedFactoryAbi, functionName: "predict", args: [ZERO_ADDRESS, ZERO32, ZERO32, salt, sessionExpiry] })) as Address);
+    const entry: PoolEntry = { account, salt: salt.toString(), sessionExpiry: sessionExpiry.toString(), status: "seeding", hashes: [] };
+    state.pool[account] = entry;
+    save();
+    try {
+      entry.hashes.push((await relayer.relay({ to: config.factory, label: `pool create ${account}`, data: encodeFunctionData({ abi: lockedFactoryAbi, functionName: "createPooled", args: [salt, sessionExpiry] }) })).transactionHash);
+      entry.hashes.push(await deposit(account, seed, `pool seed ${account}`));
+      const opened = await openDataset(account, datasetMetadata());
+      Object.assign(entry, { dataSetId: opened.dataSetId, dataSetTx: opened.txHash, providerId: config.providerId.toString(), status: "ready" });
+    } catch (error) {
+      entry.status = "failed";
+      entry.error = error instanceof Error ? error.message : String(error);
+      throw error;
+    } finally {
+      save();
+    }
+  }
+
+  /** Top the pool up to `size` ready accounts (background; one at a time; stops on the first failure). */
+  function refillPool(): Promise<void> {
+    if (!poolSize) return Promise.resolve();
+    // Clear the latch in `.finally` (async) so a no-op run cannot leave it set.
+    refilling ??= (async () => {
+      try {
+        while (poolCount("ready", "seeding") < poolSize) await buildPooled();
+      } catch (error) {
+        console.error("[sponsor] pool refill stopped:", error instanceof Error ? error.message : error);
+      }
+    })().finally(() => {
+      refilling = null;
+    });
+    return refilling;
+  }
+
+  // ---------------------------------------------------------------- checkout + credits
 
   function checkRedirect(url: unknown, name: string): string {
     if (typeof url !== "string" || !/^https?:\/\//.test(url)) throw new HttpError(400, `${name} must be an http(s) URL`);
@@ -203,59 +317,113 @@ export function createSponsor(config: SponsorConfig, deps: { pub?: PublicClient;
     return url;
   }
 
-  async function checkout(identity: Identity, body: Record<string, unknown>): Promise<CheckoutSession> {
+  async function checkout(identity: Identity, body: Record<string, unknown>): Promise<CheckoutSession & { first: boolean }> {
     const record = recordFor(identity);
-    if (!record) throw new HttpError(404, "create the account first");
-    const usd = Number(body.usd);
-    if (!Number.isInteger(usd) || usd < config.stripe.minUsd || usd > config.stripe.maxUsd) throw new HttpError(400, `usd must be a whole number from ${config.stripe.minUsd} to ${config.stripe.maxUsd}`);
-    const cents = usd * 100;
+    if (!record) ownerArgs(identity); // session keys only top up existing accounts
+    const first = !record?.dataSetId;
+    const cents = Math.round(Number(body.usd) * 100);
+    const min = first ? pricing.minFirstCents : pricing.minTopUpCents;
+    if (!Number.isFinite(cents) || cents < min || cents > pricing.maxCents) throw new HttpError(400, `amount must be from $${(min / 100).toFixed(2)} to $${(pricing.maxCents / 100).toFixed(2)}`);
+    const id = record ? (identityOfAccount(record.account) ?? identity.id) : identity.id;
+    const lineItems = first
+      ? [{ name: "FiFolders storage credits", cents: cents - pricing.setupCents }, { name: "Storage account setup (one-time)", cents: pricing.setupCents }]
+      : [{ name: "FiFolders storage credits", cents }];
     const input = {
-      cents,
+      lineItems,
       successUrl: checkRedirect(body.successUrl, "successUrl"),
       cancelUrl: checkRedirect(body.cancelUrl, "cancelUrl"),
-      clientReferenceId: record.account,
-      metadata: { account: record.account, network: config.network, factory: config.factory },
+      clientReferenceId: record?.account ?? id.slice(0, 200),
+      metadata: {
+        identity: id,
+        first: first ? "1" : "0",
+        network: config.network,
+        factory: config.factory,
+        ...(identity.kind === "passkey" && identity.credentialId ? { credential: identity.credentialId } : {}),
+      },
     };
     let session: CheckoutSession;
     if (config.stripe.secretKey) session = await createCheckoutSession(config.stripe.secretKey, input, deps.fetch);
     else if (config.stripe.fake) session = fakeCheckoutSession(input);
     else throw new HttpError(503, "card payments are not configured (STRIPE_SECRET_KEY)");
-    state.checkouts[session.id] = { account: record.account, cents };
+    state.checkouts[session.id] = { identity: id, cents, first };
     save();
-    return session;
+    return { ...session, first };
   }
 
-  let depositQueue: Promise<unknown> = Promise.resolve();
+  let creditQueue: Promise<unknown> = Promise.resolve();
 
-  /** Deposit for one paid session, at most once (state.credits keyed by session id, persisted before sending). */
-  function queueDeposit(sessionId: string): Promise<unknown> {
-    depositQueue = depositQueue.then(async () => {
+  /** Apply one paid session, at most once. Each send is recorded before the next; a failure is never auto-resent. */
+  function queueCredit(sessionId: string, credential?: string): Promise<unknown> {
+    creditQueue = creditQueue.then(async () => {
       const credit = state.credits[sessionId];
-      if (!credit || credit.status === "done" || credit.hash) return;
+      if (!credit || credit.status !== "pending") return;
+      const identity = parseIdentityId(credit.identity);
       try {
-        if (!(await pub.readContract({ address: config.factory, abi: lockedFactoryAbi, functionName: "isAccount", args: [credit.account] }))) throw new Error(`not a factory account: ${credit.account}`);
+        let record = state.users[credit.identity];
         const amount = BigInt(credit.usdfc);
-        const allowance = await pub.readContract({ address: USDFC, abi: erc20Abi, functionName: "allowance", args: [relayer.address, PAY] });
-        if (allowance < amount) await relayer.relay({ to: USDFC, label: "USDFC approve", data: encodeFunctionData({ abi: erc20Abi, functionName: "approve", args: [PAY, amount * 100n] }) });
-        const hash = await relayer.send({ to: PAY, label: `credit ${credit.account} (${sessionId})`, data: encodeFunctionData({ abi: payAbi, functionName: "deposit", args: [USDFC, credit.account, amount] }) });
-        credit.hash = hash;
-        save();
-        const receipt = await pub.waitForTransactionReceipt({ hash, timeout: 10 * 60_000, pollingInterval: 5_000 });
-        if (receipt.status !== "success") throw new Error(`deposit reverted: ${hash}`);
+        if (record) {
+          credit.path = "topup";
+          credit.account = record.account;
+          if (amount > 0n) credit.hashes.push((credit.hash = await deposit(record.account, amount, `credit ${record.account} (${sessionId})`)));
+          credit.depositUsdfc = amount.toString();
+          if (!record.dataSetId) await attachDataset(record);
+        } else {
+          if (!identity) throw new Error(`bad identity ${credit.identity}`);
+          const pooled = Object.values(state.pool).find((entry) => entry.status === "ready");
+          if (pooled) {
+            // Warm path: one tx hands the account over and deposits the credit above its seed.
+            credit.path = "pool";
+            pooled.status = "assigning";
+            pooled.assignedTo = credit.identity;
+            save();
+            const topUp = poolTopUp(amount, seed);
+            await ensureAllowance(config.factory, topUp);
+            const receipt = await relayer.relay({ to: config.factory, label: `assign ${pooled.account} (${sessionId})`, data: encodeFunctionData({ abi: lockedFactoryAbi, functionName: "assign", args: [pooled.account, ...ownerArgs(identity), topUp] }) });
+            credit.hashes.push((credit.hash = receipt.transactionHash));
+            pooled.status = "assigned";
+            record = state.users[credit.identity] = { owner: ownerOf(identity), account: pooled.account, sessionExpiry: pooled.sessionExpiry, dataSetId: pooled.dataSetId, providerId: pooled.providerId, dataSetTx: pooled.dataSetTx, via: "pool", ...(credential ? { credentialId: credential } : {}) };
+            credit.account = pooled.account;
+            credit.depositUsdfc = topUp.toString();
+            credit.usdfc = (amount > seed ? amount : seed).toString();
+            void refillPool();
+          } else {
+            // Slow path: create, fund, open the dataset.
+            credit.path = "create";
+            const sessionExpiry = BigInt(Math.floor(Date.now() / 1000)) + ACCOUNT_TTL_SEC;
+            const args = ownerArgs(identity);
+            const account = getAddress((await pub.readContract({ address: config.factory, abi: lockedFactoryAbi, functionName: "predict", args: [...args, 0n, sessionExpiry] })) as Address);
+            credit.hashes.push((await relayer.relay({ to: config.factory, label: `create account for ${credit.identity}`, data: encodeFunctionData({ abi: lockedFactoryAbi, functionName: "create", args: [...args, 0n, sessionExpiry] }) })).transactionHash);
+            record = state.users[credit.identity] = { owner: ownerOf(identity), account, sessionExpiry: sessionExpiry.toString(), via: "create", ...(credential ? { credentialId: credential } : {}) };
+            credit.account = account;
+            save();
+            if (amount > 0n) credit.hashes.push((credit.hash = await deposit(account, amount, `credit ${account} (${sessionId})`)));
+            credit.depositUsdfc = amount.toString();
+            await attachDataset(record);
+            void refillPool();
+          }
+        }
         credit.status = "done";
         delete credit.error;
       } catch (error) {
         credit.status = "failed";
         credit.error = error instanceof Error ? error.message : String(error);
-        // A sent-but-unconfirmed deposit keeps its hash so it is never sent twice; an operator reconciles it.
       }
       save();
     });
-    return depositQueue;
+    return creditQueue;
   }
 
-  /** Verified Stripe event → credit record (idempotent by session id). Returns what happened. */
-  function onStripeEvent(raw: string, signature: string | undefined): { received: true; credited?: string; duplicate?: boolean; ignored?: string } {
+  async function attachDataset(record: UserRecord): Promise<void> {
+    if (record.dataSetId) return;
+    const opened = await openDataset(record.account, datasetMetadata());
+    record.dataSetId = opened.dataSetId;
+    record.dataSetTx = opened.txHash;
+    record.providerId = config.providerId.toString();
+    save();
+  }
+
+  /** Verified Stripe event → credit record (idempotent by session id). */
+  async function onStripeEvent(raw: string, signature: string | undefined): Promise<{ received: true; credited?: string; duplicate?: boolean; ignored?: string }> {
     const secret = config.stripe.webhookSecret;
     if (!secret) throw new HttpError(503, "STRIPE_WEBHOOK_SECRET not set");
     try {
@@ -274,48 +442,32 @@ export function createSponsor(config: SponsorConfig, deps: { pub?: PublicClient;
     if (state.credits[id]) return { received: true, duplicate: true, credited: state.credits[id]!.usdfc };
     const metadata = (session.metadata ?? {}) as Record<string, string>;
     if (metadata.factory && getAddress(metadata.factory) !== config.factory) return { received: true, ignored: "other factory" };
-    const account = asAddress(metadata.account ?? session.client_reference_id, "metadata.account");
-    const cents = Number(session.amount_total);
-    if (!Number.isInteger(cents) || cents <= 0) throw new HttpError(400, "bad amount_total");
-    const usdfc = usdfcForCents(cents, config.stripe.usdfcPerUsd);
-    state.credits[id] = { account, cents, usdfc: usdfc.toString(), status: "pending" };
+    const identityId = String(metadata.identity ?? "");
+    if (!parseIdentityId(identityId)) throw new HttpError(400, "metadata.identity missing");
+    const chargeCents = Number(session.amount_total);
+    if (!Number.isInteger(chargeCents) || chargeCents <= 0) throw new HttpError(400, "bad amount_total");
+    // Fee: Stripe's balance transaction (real keys) or the standard-pricing estimate (local fake only).
+    const feeCents = config.stripe.secretKey ? await stripeFeeCents(config.stripe.secretKey, id, deps.fetch) : estimateStripeFeeCents(chargeCents);
+    const raced = state.credits[id] as CreditRecord | undefined; // a duplicate delivery may have landed during the fee lookup
+    if (raced) return { received: true, duplicate: true, credited: raced.usdfc };
+    const first = !state.users[identityId]?.dataSetId;
+    const { creditUsdfc, ...quote } = creditFor(pricing, { chargeCents, feeCents, first });
+    state.credits[id] = { identity: identityId, ...quote, usdfc: creditUsdfc.toString(), depositUsdfc: "0", status: "pending", hashes: [] };
     save();
-    void queueDeposit(id);
-    return { received: true, credited: usdfc.toString() };
+    void queueCredit(id, metadata.credential);
+    return { received: true, credited: creditUsdfc.toString() };
   }
 
-  /** One dataset per account, opened by the sponsor with an FWSS-approved provider. */
-  async function ensureDataset(identity: Identity, metadata: Record<string, string>): Promise<{ dataSetId: string; providerId: string; hash?: Hex }> {
+  /** Dataset for an account that has none (normally made by the pool or the slow path). */
+  async function ensureDataset(identity: Identity): Promise<{ dataSetId: string; providerId: string; hash?: Hex }> {
     const record = recordFor(identity);
-    if (!record) throw new HttpError(404, "create the account first");
-    if (record.dataSetId) return { dataSetId: record.dataSetId, providerId: record.providerId ?? "" };
-    const [funds] = (await pub.readContract({ address: PAY, abi: payAbi, functionName: "accounts", args: [USDFC, record.account] })) as readonly bigint[];
-    if (!funds) throw new HttpError(402, "buy storage credits first");
-    const account = record.account;
-    const keys = Object.keys(metadata).sort();
-    const values = keys.map((key) => String(metadata[key]));
-    const clientDataSetId = BigInt(Date.now());
-    await relayer.relay({ to: account, label: `allowDataSet ${account}`, data: encodeFunctionData({ abi: lockedAccountAbi, functionName: "allowDataSet", args: [config.providerId, clientDataSetId, keys, values] }) });
-    const provider = (await getPDPProvider(pub as never, { providerId: config.providerId } as never)) as { pdp?: { serviceURL?: string }; products?: { PDP?: { data?: { serviceURL?: string } } } };
-    const serviceURL = provider.pdp?.serviceURL ?? provider.products?.PDP?.data?.serviceURL;
-    if (!serviceURL) throw new HttpError(502, `provider ${config.providerId} has no PDP service URL`);
-    // Keyless "Nick's method" signature (r = s = 1, v = 27): its signer was authorized for exactly this message.
-    const one = `0x${"0".repeat(63)}1` as Hex;
-    const signature = encodePacked(["bytes32", "bytes32", "uint8"], [one, one, 27]);
-    const extraData = encodeAbiParameters(
-      [{ type: "address" }, { type: "uint256" }, { type: "string[]" }, { type: "string[]" }, { type: "bytes" }],
-      [account, clientDataSetId, keys, values, signature],
-    );
-    const created = await createDataSetApiRequest({ serviceURL, recordKeeper: FWSS, extraData });
-    const receipt = await pub.waitForTransactionReceipt({ hash: created.txHash, timeout: 10 * 60_000, pollingInterval: 5_000 });
-    if (receipt.status !== "success") throw new HttpError(502, `createDataSet reverted: ${created.txHash}`);
-    const log = receipt.logs.find((entry) => getAddress(entry.address) === PDP && entry.topics[1]);
-    if (!log?.topics[1]) throw new HttpError(502, "createDataSet receipt has no DataSetCreated log");
-    record.dataSetId = BigInt(log.topics[1]).toString();
-    record.providerId = config.providerId.toString();
-    record.dataSetTx = created.txHash;
-    save();
-    return { dataSetId: record.dataSetId, providerId: record.providerId, hash: created.txHash };
+    if (!record) throw new HttpError(402, "buy storage credits first");
+    if (!record.dataSetId) {
+      const [funds] = (await pub.readContract({ address: PAY, abi: payAbi, functionName: "accounts", args: [USDFC, record.account] })) as readonly bigint[];
+      if (!funds) throw new HttpError(402, "buy storage credits first");
+      await attachDataset(record);
+    }
+    return { dataSetId: record.dataSetId!, providerId: record.providerId ?? "", hash: record.dataSetTx };
   }
 
   /** Relay a signed Execute, only to accounts this factory deployed (checked on chain), within the fixed policy. */
@@ -342,6 +494,8 @@ export function createSponsor(config: SponsorConfig, deps: { pub?: PublicClient;
     return { hash: await relayer.send({ to: account, data: call, label: `execute ${target} ${data.slice(0, 10)}` }) };
   }
 
+  // ---------------------------------------------------------------- HTTP
+
   async function readRaw(req: IncomingMessage): Promise<string> {
     let raw = "";
     for await (const chunk of req) {
@@ -365,26 +519,32 @@ export function createSponsor(config: SponsorConfig, deps: { pub?: PublicClient;
     res.end(JSON.stringify(body));
   }
 
+  function lookup(url: URL): { account: Address | null; x?: Hex; y?: Hex } {
+    const credential = url.searchParams.get("credential");
+    if (credential) {
+      const found = Object.values(state.users).find((record) => record.credentialId === credential && record.owner.kind === "passkey");
+      return found && found.owner.kind === "passkey" ? { account: found.account, x: found.owner.x, y: found.owner.y } : { account: null };
+    }
+    const user = url.searchParams.get("user");
+    const id = user ? `eoa:${asAddress(user, "user").toLowerCase()}` : passkeyId(asBytes32(url.searchParams.get("x"), "x"), asBytes32(url.searchParams.get("y"), "y"));
+    return { account: state.users[id]?.account ?? null };
+  }
+
   const server: Server = createServer(async (req, res) => {
     try {
       const url = new URL(req.url ?? "/", "http://sponsor");
       if (req.method === "OPTIONS") return send(res, 204, {});
-      if (req.method === "GET" && url.pathname === "/account") {
-        const user = url.searchParams.get("user");
-        const id = user ? `eoa:${asAddress(user, "user").toLowerCase()}` : passkeyId(asBytes32(url.searchParams.get("x"), "x"), asBytes32(url.searchParams.get("y"), "y"));
-        return send(res, 200, { account: state.users[id]?.account ?? null });
+      if (req.method === "GET" && url.pathname === "/pricing") {
+        return send(res, 200, { minFirstUsd: pricing.minFirstCents / 100, minTopUpUsd: pricing.minTopUpCents / 100, maxUsd: pricing.maxCents / 100, setupFeeUsd: pricing.setupCents / 100, reserveUsd: pricing.reserveCents / 100, usdfcPerUsd: pricing.usdfcPerUsd, testMode: config.network !== "mainnet" });
       }
+      if (req.method === "GET" && url.pathname === "/account") return send(res, 200, lookup(url));
       if (req.method === "GET" && url.pathname === "/credits") {
         const id = url.searchParams.get("session") ?? "";
         const credit = state.credits[id];
-        return send(res, 200, credit ? { status: credit.status, account: credit.account, usdfc: credit.usdfc, hash: credit.hash ?? null } : { status: state.checkouts[id] ? "awaiting-payment" : "unknown" });
+        return send(res, 200, credit ? { status: credit.status, account: credit.account ?? null, usdfc: credit.usdfc, path: credit.path ?? null, hash: credit.hash ?? null, hashes: credit.hashes } : { status: state.checkouts[id] ? "awaiting-payment" : "unknown" });
       }
       if (req.method === "POST" && url.pathname === "/stripe/webhook") {
-        return send(res, 200, onStripeEvent(await readRaw(req), req.headers["stripe-signature"] as string | undefined));
-      }
-      if (req.method === "POST" && url.pathname === "/account") {
-        const body = await readJson(req);
-        return send(res, 200, await ensureAccount(await authenticate("account", body, limits.setup)));
+        return send(res, 200, await onStripeEvent(await readRaw(req), req.headers["stripe-signature"] as string | undefined));
       }
       if (req.method === "POST" && url.pathname === "/checkout") {
         const body = await readJson(req);
@@ -392,9 +552,7 @@ export function createSponsor(config: SponsorConfig, deps: { pub?: PublicClient;
       }
       if (req.method === "POST" && url.pathname === "/dataset") {
         const body = await readJson(req);
-        const identity = await authenticate("dataset", body, limits.setup);
-        const metadata = (body.metadata && typeof body.metadata === "object" ? body.metadata : {}) as Record<string, string>;
-        return send(res, 200, await ensureDataset(identity, metadata));
+        return send(res, 200, await ensureDataset(await authenticate("dataset", body, limits.setup)));
       }
       if (req.method === "POST" && url.pathname === "/execute") return send(res, 200, await relayExecute(await readJson(req)));
       send(res, 404, { error: "not found" });
@@ -405,10 +563,10 @@ export function createSponsor(config: SponsorConfig, deps: { pub?: PublicClient;
     }
   });
 
-  // Resume deposits interrupted by a restart (pending without a hash only; never resend a sent one).
-  for (const [id, credit] of Object.entries(state.credits)) if (credit.status !== "done" && !credit.hash) void queueDeposit(id);
+  // Resume credits interrupted by a restart only if nothing was sent yet (never resend).
+  for (const [id, credit] of Object.entries(state.credits)) if (credit.status === "pending" && !credit.hashes?.length) void queueCredit(id);
 
-  return { server, state, relayer, config, onStripeEvent, settled: () => depositQueue };
+  return { server, state, relayer, config, pricing, onStripeEvent, refillPool, settled: () => creditQueue };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
@@ -416,5 +574,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const sponsor = createSponsor(config);
   const port = Number(process.env.SPONSOR_PORT ?? 8787);
   const stripe = config.stripe.secretKey ? config.stripe.secretKey.slice(0, 8) + "…" : config.stripe.fake ? "fake (local webhook)" : "off";
-  sponsor.server.listen(port, () => console.log(`[sponsor] ${config.network} ${sponsor.relayer.address} factory ${config.factory} stripe ${stripe} on :${port}`));
+  sponsor.server.listen(port, () => console.log(`[sponsor] ${config.network} ${sponsor.relayer.address} factory ${config.factory} stripe ${stripe} pool ${config.pool?.size ?? 0} on :${port}`));
+  void sponsor.refillPool();
 }

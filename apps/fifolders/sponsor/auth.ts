@@ -8,7 +8,7 @@ export const AUTH_MAX_AGE_SEC = 300;
 
 export type Identity =
   | { kind: "eoa"; id: string; address: Address }
-  | { kind: "passkey"; id: string; x: Hex; y: Hex }
+  | { kind: "passkey"; id: string; x: Hex; y: Hex; credentialId?: string }
   | { kind: "session"; id: string; account: Address; key: Address };
 
 export function bodyHash(body: Record<string, unknown>): Hex {
@@ -68,7 +68,7 @@ export async function verifyAuth(input: {
   let identity: Identity;
   if (auth.kind === "passkey") {
     if (!(await verifyPasskeyAssertion(digest, auth.x, auth.y, auth.authenticatorData, auth.clientDataJSON, auth.signature))) throw new AuthError("bad passkey signature");
-    identity = { kind: "passkey", id: passkeyId(auth.x, auth.y), x: auth.x, y: auth.y };
+    identity = { kind: "passkey", id: passkeyId(auth.x, auth.y), x: auth.x, y: auth.y, ...(typeof auth.credentialId === "string" && /^[A-Za-z0-9_-]{8,512}$/.test(auth.credentialId) ? { credentialId: auth.credentialId } : {}) };
   } else {
     const typed = { domain: sponsorDomain(input.chainId), types: SPONSOR_REQUEST_TYPES, primaryType: "SponsorRequest" as const, message: { action: input.action, bodyHash: bodyHash(input.body), issuedAt } };
     const signer = await recoverTypedDataAddress({ ...typed, signature: auth.signature });
@@ -85,4 +85,13 @@ export async function verifyAuth(input: {
   }
   input.seen.set(auth.signature, now);
   return identity;
+}
+
+/** Owner identity from its id string (`eoa:0x…` or `passkey:0x…:0x…`). */
+export function parseIdentityId(id: string): Identity | null {
+  const eoa = /^eoa:(0x[0-9a-f]{40})$/.exec(id);
+  if (eoa) return { kind: "eoa", id, address: getAddress(eoa[1]!) };
+  const passkey = /^passkey:(0x[0-9a-f]{64}):(0x[0-9a-f]{64})$/.exec(id);
+  if (passkey) return { kind: "passkey", id, x: passkey[1] as Hex, y: passkey[2] as Hex };
+  return null;
 }

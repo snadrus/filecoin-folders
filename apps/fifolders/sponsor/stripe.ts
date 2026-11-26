@@ -34,7 +34,8 @@ export function verifyStripeSignature(payload: string, header: string | undefine
 }
 
 export interface CheckoutInput {
-  cents: number;
+  /** Shown as separate lines on the Stripe page (e.g. credits + one-time account setup). */
+  lineItems: { name: string; cents: number }[];
   successUrl: string;
   cancelUrl: string;
   metadata: Record<string, string>;
@@ -59,11 +60,13 @@ export async function createCheckoutSession(secretKey: string, input: CheckoutIn
     success_url: input.successUrl,
     cancel_url: input.cancelUrl,
     client_reference_id: input.clientReferenceId,
-    "line_items[0][quantity]": 1,
-    "line_items[0][price_data][currency]": "usd",
-    "line_items[0][price_data][unit_amount]": input.cents,
-    "line_items[0][price_data][product_data][name]": "FiFolders storage credits",
   };
+  input.lineItems.forEach((item, i) => {
+    body[`line_items[${i}][quantity]`] = 1;
+    body[`line_items[${i}][price_data][currency]`] = "usd";
+    body[`line_items[${i}][price_data][unit_amount]`] = item.cents;
+    body[`line_items[${i}][price_data][product_data][name]`] = item.name;
+  });
   for (const [key, value] of Object.entries(input.metadata)) {
     body[`metadata[${key}]`] = value;
     body[`payment_intent_data[metadata][${key}]`] = value;
@@ -84,4 +87,29 @@ export function fakeCheckoutSession(input: CheckoutInput): CheckoutSession {
   const url = new URL(input.successUrl);
   url.searchParams.set("session_id", id);
   return { id, url: url.toString() };
+}
+
+/** Stripe's standard US card pricing (2.9% + 30¢); only for the local fake, where there is no balance transaction. */
+export function estimateStripeFeeCents(cents: number): number {
+  return Math.round(cents * 0.029) + 30;
+}
+
+/**
+ * Stripe's actual fee for a paid Checkout Session, from its charge's balance transaction (in cents, USD balance).
+ * The balance transaction can lag the webhook slightly, so retry a few times.
+ */
+export async function stripeFeeCents(secretKey: string, sessionId: string, fetchImpl: typeof fetch = fetch, opts: { attempts?: number; delayMs?: number } = {}): Promise<number> {
+  const url = `https://api.stripe.com/v1/checkout/sessions/${encodeURIComponent(sessionId)}?expand[]=payment_intent.latest_charge.balance_transaction`;
+  for (let attempt = 1; ; attempt += 1) {
+    const response = await fetchImpl(url, { headers: { authorization: `Bearer ${secretKey}` } });
+    const json = (await response.json()) as { payment_intent?: { latest_charge?: { balance_transaction?: { fee?: number; currency?: string } | string | null } }; error?: { message?: string } };
+    if (!response.ok) throw new Error(`Stripe: ${json.error?.message ?? response.status}`);
+    const bt = json.payment_intent?.latest_charge?.balance_transaction;
+    if (bt && typeof bt === "object" && typeof bt.fee === "number") {
+      if (bt.currency && bt.currency !== "usd") throw new Error(`Stripe balance currency ${bt.currency} (expected usd)`);
+      return bt.fee;
+    }
+    if (attempt >= (opts.attempts ?? 6)) throw new Error("Stripe balance transaction not available yet");
+    await new Promise((resolve) => setTimeout(resolve, opts.delayMs ?? 5_000));
+  }
 }

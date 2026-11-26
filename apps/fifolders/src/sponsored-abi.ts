@@ -5,6 +5,7 @@ export const lockedAccountAbi = parseAbi([
   "function owner() view returns (address)",
   "function passkeyX() view returns (bytes32)",
   "function passkeyY() view returns (bytes32)",
+  "function unassigned() view returns (bool)",
   "function nonce() view returns (uint256)",
   "function sessionExpiry() view returns (uint256)",
   "function sessionSigners(address) view returns (uint256)",
@@ -28,6 +29,8 @@ export const lockedFactoryAbi = parseAbi([
   "function predict(address owner, bytes32 qx, bytes32 qy, uint256 salt, uint256 sessionExpiry) view returns (address)",
   "function create(address owner, bytes32 qx, bytes32 qy, uint256 salt, uint256 sessionExpiry) returns (address)",
   "function isAccount(address account) view returns (bool)",
+  "function createPooled(uint256 salt, uint256 sessionExpiry) returns (address)",
+  "function assign(address account, address owner, bytes32 qx, bytes32 qy, uint256 topUp)",
   "function admin() view returns (address)",
   "function REGISTRY() view returns (address)",
 ]);
@@ -78,5 +81,5 @@ export type SponsorOwner = { kind: "eoa"; address: `0x${string}` } | { kind: "pa
 export type SponsorAuth = { issuedAt: string } & (
   | { kind: "eoa"; address: `0x${string}`; signature: `0x${string}` }
   | { kind: "session"; account: `0x${string}`; key: `0x${string}`; signature: `0x${string}` }
-  | { kind: "passkey"; x: `0x${string}`; y: `0x${string}`; authenticatorData: `0x${string}`; clientDataJSON: string; signature: `0x${string}` }
+  | { kind: "passkey"; x: `0x${string}`; y: `0x${string}`; credentialId?: string; authenticatorData: `0x${string}`; clientDataJSON: string; signature: `0x${string}` }
 );

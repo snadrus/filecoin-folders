@@ -46,7 +46,9 @@ export class SponsorWalletRelayer implements Relayer {
 
   send(call: RelayCall): Promise<Hex> {
     const next = this.queue.then(async () => {
-      const hash = (await this.wallet.sendTransaction({ to: call.to ?? null, data: call.data, value: call.value ?? 0n } as never)) as Hex;
+      // FEVM estimates run tight (a relayed terminateService ran out of gas at the estimate): add 30%.
+      const estimate = await this.pub.estimateGas({ account: this.address, to: call.to ?? undefined, data: call.data, value: call.value ?? 0n } as never);
+      const hash = (await this.wallet.sendTransaction({ to: call.to ?? null, data: call.data, value: call.value ?? 0n, gas: (estimate * 13n) / 10n } as never)) as Hex;
       console.log(`[relay:${this.name}] ${call.label}: ${hash}`);
       this.sent.push({ label: call.label, hash });
       // FEVM: wait until the node has the tx so the next nonce read is fresh.

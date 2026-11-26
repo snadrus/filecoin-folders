@@ -15,6 +15,7 @@ contract LPay {
     function withdrawTo(address, address to, uint256 a) external { bal[msg.sender] -= a; bal[to] += a; }
     function settleRail(uint256, uint256) external { settled++; }
     function terminateRail(uint256) external {}
+    function deposit(address, address to, uint256 a) external payable { bal[to] += a; }
 }
 contract LToken {
     function transfer(address, uint256) external pure returns (bool) { return true; }
@@ -256,5 +257,71 @@ contract LockedSignerAccountTest is Test {
     }
     function test_factoryRequiresOwner() public {
         vm.expectRevert(LockedSignerAccountFactory.NoOwner.selector); f.create(address(0), 0, 0, 0, EXP);
+    }
+
+    // ---- warm pool: ownerless account, one-shot assignment
+    function _pooled() internal returns (LockedSignerAccount p) {
+        vm.prank(admin); p = f.createPooled(7, EXP);
+        pay.credit(address(p), 1e18);
+    }
+    function test_poolCreateAdminOnly() public {
+        vm.expectRevert(LockedSignerAccountFactory.NotAdmin.selector); f.createPooled(7, EXP);
+        LockedSignerAccount p = _pooled();
+        assertTrue(f.isAccount(address(p))); assertTrue(p.unassigned()); assertEq(p.owner(), address(0));
+        assertEq(pay.opOwner(), address(p));
+    }
+    function test_poolUnassignedNobodyCanExecute() public {
+        LockedSignerAccount p = _pooled();
+        bytes memory d = abi.encodeWithSignature("terminateService(uint256)", uint256(1));
+        uint256 dl = block.timestamp + 60;
+        (uint8 v, bytes32 r, bytes32 s_) = vm.sign(userPk, p.executeDigest(address(fwss), 0, d, 0, dl));
+        vm.expectRevert(abi.encodeWithSelector(LockedSignerAccount.BadSigner.selector, user));
+        p.execute(address(fwss), 0, d, 0, dl, abi.encodePacked(r, s_, v));
+        // ecrecover failure (address 0) must not match the zero owner
+        vm.expectRevert();
+        p.execute(address(fwss), 0, d, 0, dl, new bytes(65));
+        vm.expectRevert(LockedSignerAccount.BadPasskeySignature.selector);
+        p.execute(address(fwss), 0, d, 0, dl, new bytes(300));
+    }
+    function test_poolAssignOneShot() public {
+        LockedSignerAccount p = _pooled();
+        vm.expectRevert(LockedSignerAccountFactory.NotAdmin.selector); f.assign(p, user, 0, 0, 0);
+        vm.prank(admin); vm.expectRevert(LockedSignerAccount.NotFactory.selector); p.assignOwner(admin, 0, 0);
+        vm.prank(admin); vm.expectRevert(LockedSignerAccount.NoOwner.selector); f.assign(p, address(0), 0, 0, 0);
+        vm.prank(admin); vm.expectRevert(abi.encodeWithSelector(LockedSignerAccountFactory.NotAccount.selector, address(0x1234))); f.assign(LockedSignerAccount(address(0x1234)), user, 0, 0, 0);
+        vm.prank(admin); f.assign(p, user, 0, 0, 5e17);
+        assertEq(p.owner(), user); assertFalse(p.unassigned());
+        assertEq(pay.bal(address(p)), 15e17, "top-up deposited in the same tx");
+        assertEq(skr.authorizationExpiry(address(p), user, p.ADD_PIECES()), EXP);
+        // never again: not to the admin, not to anyone
+        vm.prank(admin); vm.expectRevert(LockedSignerAccount.NotUnassigned.selector); f.assign(p, admin, 0, 0, 0);
+        vm.prank(address(f)); vm.expectRevert(LockedSignerAccount.NotUnassigned.selector); p.assignOwner(admin, 0, 0);
+        // an owner-created account was never assignable
+        vm.prank(admin); vm.expectRevert(LockedSignerAccount.NotUnassigned.selector); f.assign(acct, admin, 0, 0, 0);
+    }
+    function test_poolAssignedNoExtraction() public {
+        LockedSignerAccount p = _pooled();
+        vm.prank(admin); f.assign(p, user, 0, 0, 0);
+        acct = p; // reuse the policy helpers on the assigned pool account
+        _expectBlocked(address(pay), abi.encodeCall(LPay.withdraw, (address(tok), 1)));
+        _expectBlocked(address(pay), abi.encodeCall(LPay.withdrawTo, (address(tok), user, 1)));
+        _expectBlocked(address(pay), abi.encodeCall(LPay.setOperatorApproval, (address(tok), user, true, 1, 1, 1)));
+        _expectBlocked(address(tok), abi.encodeCall(LToken.transfer, (user, 1)));
+        _expectBlocked(address(tok), abi.encodeCall(LToken.approve, (user, 1)));
+        _expectBlocked(address(p), abi.encodeCall(LockedSignerAccount.sweep, (1)));
+        _expectBlocked(address(p), abi.encodeCall(LockedSignerAccount.assignOwner, (user, 0, 0)));
+        _expectBlocked(address(f), abi.encodeCall(LockedSignerAccountFactory.assign, (p, user, 0, 0, 0)));
+        _exec(address(fwss), abi.encodeWithSignature("terminateService(uint256)", uint256(1)));
+        assertEq(fwss.terminated(), 1);
+        vm.prank(user); vm.expectRevert(LockedSignerAccount.NotAdmin.selector); p.sweep(1);
+        vm.prank(admin); p.sweep(1e17);
+        assertEq(pay.bal(treasury), 1e17, "sweep only to treasury");
+    }
+    function test_poolAssignPasskey() public {
+        LockedSignerAccount p = _pooled();
+        (uint256 qxU, uint256 qyU) = vm.publicKeyP256(0xC0FFEE);
+        vm.prank(admin); f.assign(p, address(0), bytes32(qxU), bytes32(qyU), 0);
+        assertEq(p.passkeyX(), bytes32(qxU)); assertEq(p.owner(), address(0)); assertFalse(p.unassigned());
+        vm.prank(admin); vm.expectRevert(LockedSignerAccount.NotUnassigned.selector); f.assign(p, admin, 0, 0, 0);
     }
 }

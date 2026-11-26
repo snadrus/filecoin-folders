@@ -25,14 +25,17 @@ import {
   type Hex,
   type PublicClient,
   type WalletClient,
+  hashTypedData,
 } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import {
   addSessionKeyData,
   buySponsoredCredits,
   createSponsoredDataset,
-  ensureSponsoredAccount,
+  findPasskeyAccount,
   findSponsoredAccount,
+  passkeySponsorSigner,
+  waitForCredit,
   isSponsored,
   sessionSponsorSigner,
   sponsoredCreditUsd,
@@ -44,6 +47,7 @@ import {
   sponsoredTransport,
 } from "./sponsored.js";
 import { discoverWallets, safeOn, type AnnouncedWallet } from "./eip6963.js";
+import { createPasskey, encodeContractAssertion, passkeyAssert, type PasskeyPublicKey } from "./passkey.js";
 import { activeProviderUrls } from "./filecoin-api.js";
 import { FILECOIN_DRIVE_SOURCE, isDriveSource, loadPieceDetails, setPieceDetailSource, type PieceDetail } from "./drive-pieces.js";
 import { REGISTRY_NOT_DEPLOYED, registryReady } from "./network.js";
@@ -116,6 +120,23 @@ interface StoredWallet {
  */
 const FRESH_LOGIN_MS = 10 * 60 * 1000;
 
+/** Gasless mode's default sign-in: a passkey owns the storage account (no wallet app). */
+export const PASSKEY_RDNS = "passkey";
+const PASSKEY_KEY = "fifolders:passkey";
+
+function loadPasskey(): PasskeyPublicKey | null {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(PASSKEY_KEY) ?? "null") as PasskeyPublicKey | null;
+    return parsed?.credentialId && parsed.x && parsed.y ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function passkeyAvailable(): boolean {
+  return typeof navigator !== "undefined" && Boolean(navigator.credentials) && typeof globalThis.PublicKeyCredential !== "undefined";
+}
+
 export interface LiveOnboardingOptions {
   /** Gasless mode: open the Stripe Checkout page (default: navigate the tab there). */
   openCheckout?: (url: string) => void | Promise<void>;
@@ -128,6 +149,9 @@ export function createLiveOnboarding(options: LiveOnboardingOptions = {}): Onboa
   let root: Address | null = null;
   /** Gasless mode: the sponsor-created LockedSignerAccount that pays and owns the volume. `root` only signs. */
   let payer: Address | null = null;
+  /** Gasless mode, passkey sign-in: the P-256 owner (no wallet, `root` stays null). */
+  let passkey: PasskeyPublicKey | null = null;
+  let checkoutSettled = false;
   let signatures = 0;
   let connectPrompts = 0;
   let selectedDataset = "";
@@ -150,10 +174,29 @@ export function createLiveOnboarding(options: LiveOnboardingOptions = {}): Onboa
     return payer ?? requireRoot();
   }
 
+  /** Back from Stripe (`?checkout=success&session_id=…`): wait for the sponsor to apply the payment, once. */
+  async function settleReturnedCheckout(): Promise<void> {
+    if (checkoutSettled || typeof window === "undefined" || !window.location?.search) return;
+    checkoutSettled = true;
+    const params = new URLSearchParams(window.location.search);
+    const sessionId = params.get("session_id");
+    if (params.get("checkout") !== "success" || !sessionId) return;
+    await waitForCredit(sessionId).catch(() => undefined);
+    params.delete("checkout");
+    params.delete("session_id");
+    const query = params.toString();
+    window.history?.replaceState?.(null, "", `${window.location.pathname ?? "/"}${query ? `?${query}` : ""}${window.location.hash ?? ""}`);
+  }
+
   async function resolvePayer(): Promise<Address | null> {
     if (!isSponsored()) return null;
-    if (!payer) payer = await findSponsoredAccount(requireRoot());
+    await settleReturnedCheckout();
+    if (!payer) payer = passkey ? await findPasskeyAccount(passkey) : await findSponsoredAccount(requireRoot());
     return payer;
+  }
+
+  function passkeySigner(key: PasskeyPublicKey) {
+    return passkeySponsorSigner(key, (challenge) => withWalletIntent(INTENTS.sponsoredRequest, () => passkeyAssert(key.credentialId, challenge)));
   }
 
   /** Sponsor request signer: the account's live session key (no prompt) if there is one, else the owner wallet. */
@@ -161,18 +204,16 @@ export function createLiveOnboarding(options: LiveOnboardingOptions = {}): Onboa
     const chain = chainOf(choice);
     const stored = payer && preferSession ? loadSession(chain.id, payer) : null;
     if (payer && stored && BigInt(stored.expiry) > BigInt(Math.floor(Date.now() / 1000) + 300)) return sessionSponsorSigner(payer, stored.privateKey as Hex);
+    if (passkey) return passkeySigner(passkey);
     const client = await walletClient(choice);
     return walletSponsorSigner(requireRoot(), (typed) => withWalletIntent(INTENTS.sponsoredRequest, () => client.signTypedData({ account: requireRoot(), ...typed })));
   }
 
-  /** Gasless: the caller's account, created by the sponsor on first use (one free signature). */
-  async function ensurePayer(choice: ChainChoice, report?: ChainReporter): Promise<Address> {
-    if (await resolvePayer()) return payer!;
-    report?.({ flow: "session", phase: "signing", label: intentText(INTENTS.sponsoredRequest) });
-    const made = await ensureSponsoredAccount(await sponsorSigner(choice, false), chainOf(choice).id);
-    payer = made.account;
-    if (made.hash) report?.({ flow: "session", phase: "done", hash: made.hash });
-    return payer;
+  /** Gasless: the caller's account. The first card purchase creates it (warm-pool handover or a fresh account). */
+  async function ensurePayer(): Promise<Address> {
+    const account = await resolvePayer();
+    if (!account) throw new Error("Add credits first: your first purchase sets up your storage account.");
+    return account;
   }
 
   function permissions(): Hex[] {
@@ -451,10 +492,25 @@ export function createLiveOnboarding(options: LiveOnboardingOptions = {}): Onboa
   return {
     async discover() {
       wallets = await discoverWallets();
-      return walletChoices(wallets.map((wallet) => ({ rdns: wallet.rdns, name: wallet.name })));
+      const choices = walletChoices(wallets.map((wallet) => ({ rdns: wallet.rdns, name: wallet.name })));
+      // Gasless mode: passkey first (default), wallets second.
+      return isSponsored() && passkeyAvailable() ? [{ rdns: PASSKEY_RDNS, name: "Passkey (recommended, no wallet needed)" }, ...choices] : choices;
     },
     async connect(input) {
       if (!registryReady(input.chain)) throw new Error(REGISTRY_NOT_DEPLOYED);
+      if (input.rdns === PASSKEY_RDNS) {
+        if (!isSponsored()) throw new Error("Passkeys need the FiFolders sponsor (VITE_SPONSOR_URL).");
+        passkey = loadPasskey() ?? (await createPasskey("FiFolders"));
+        localStorage.setItem(PASSKEY_KEY, JSON.stringify(passkey));
+        root = null;
+        payer = null;
+        provider = null;
+        connectPrompts += 1;
+        localStorage.setItem(walletStorageKey(), JSON.stringify({ rdns: PASSKEY_RDNS, address: `0x${"0".repeat(40)}`, chain: input.chain }));
+        localStorage.setItem("fifolders:wallet-permitted", "1");
+        return;
+      }
+      passkey = null;
       if (input.rdns === WALLETCONNECT_RDNS) {
         const connected = await connectWalletConnect({
           network: input.chain,
@@ -487,6 +543,12 @@ export function createLiveOnboarding(options: LiveOnboardingOptions = {}): Onboa
       if (localStorage.getItem("fifolders:wallet-permitted") !== "1") return false;
       const stored = readStoredWallet();
       if (!stored || stored.chain !== chain) return false;
+      if (stored.rdns === PASSKEY_RDNS) {
+        passkey = isSponsored() ? loadPasskey() : null;
+        root = null;
+        payer = null;
+        return Boolean(passkey);
+      }
       await bindProvider(stored.rdns);
       const accounts = (await requireProvider().request({ method: "eth_accounts" })) as string[];
       const match = accounts.find((account) => account.toLowerCase() === stored.address.toLowerCase());
@@ -557,7 +619,7 @@ export function createLiveOnboarding(options: LiveOnboardingOptions = {}): Onboa
       };
     },
     async authorize(choice, force = false, report?: ChainReporter) {
-      if (isSponsored()) await ensurePayer(choice, report);
+      if (isSponsored()) await ensurePayer();
       const address = owner();
       const chain = chainOf(choice);
       const now = BigInt(Math.floor(Date.now() / 1000));
@@ -648,9 +710,11 @@ export function createLiveOnboarding(options: LiveOnboardingOptions = {}): Onboa
     async fixPayments(choice, report?: ChainReporter, force = false) {
       if (isSponsored()) {
         // Card payment: Stripe Checkout; the sponsor deposits USDFC after the signed webhook (FWSS is approved at init).
-        const account = await ensurePayer(choice, report);
-        const before = await readPayments(choice, account);
-        if (!force && paymentsReady(before.deposited, before.approved)) return;
+        const account = await resolvePayer();
+        if (account && !force) {
+          const before = await readPayments(choice, account);
+          if (paymentsReady(before.deposited, before.approved)) return;
+        }
         stripeModeNote(choice);
         report?.({ flow: "payment", phase: "signing", label: intentText(INTENTS.sponsoredCredits(sponsoredCreditUsd())) });
         const here = typeof window !== "undefined" && window.location ? `${window.location.origin}${window.location.pathname ?? "/"}` : "http://localhost/";
@@ -685,7 +749,7 @@ export function createLiveOnboarding(options: LiveOnboardingOptions = {}): Onboa
     },
     async createDataset(input) {
       if (isSponsored()) {
-        const account = await ensurePayer(input.chain);
+        const account = await ensurePayer();
         const createdAt = new Date().toISOString();
         const made = await createSponsoredDataset(await sponsorSigner(input.chain), chainOf(input.chain).id, { app: "fifolders", volume: input.volumeName, created: createdAt });
         saveLastDataset(chainOf(input.chain).id, account, made.dataSetId);
@@ -792,7 +856,9 @@ export function createLiveOnboarding(options: LiveOnboardingOptions = {}): Onboa
         }),
       );
       const cacheKey = `fifolders:volume-sig:${chain.id}:${address.toLowerCase()}:${config.address.toLowerCase()}:${input.volumeName}`;
-      const wallet = await walletClient(input.chain);
+      // Passkey sign-in has no secp256k1 wallet for the EIP-712 volume key; encryption stays wallet-only for now.
+      if (passkey && input.encrypt) throw new Error("Encrypted volumes need a wallet signature. Sign in with a wallet to encrypt, or turn encryption off.");
+      const wallet = passkey ? null : await walletClient(input.chain);
       reportLoadStep("Reading your folders from Filecoin…");
       const volume = await openVolume({
         storage,
@@ -805,7 +871,7 @@ export function createLiveOnboarding(options: LiveOnboardingOptions = {}): Onboa
                 signTypedData: async (parameters) => {
                   const cached = localStorage.getItem(cacheKey) as Hex | null;
                   if (cached) return cached;
-                  const signature = await withWalletIntent(INTENTS.unlock, () => wallet.signTypedData(parameters as never));
+                  const signature = await withWalletIntent(INTENTS.unlock, () => wallet!.signTypedData(parameters as never));
                   localStorage.setItem(cacheKey, signature);
                   signatures += SIGNATURES.encryptSign;
                   return signature;
@@ -892,6 +958,7 @@ export function createLiveOnboarding(options: LiveOnboardingOptions = {}): Onboa
     disconnect() {
       root = null;
       payer = null;
+      passkey = null;
       provider = null;
       localStorage.removeItem("fifolders:wallet-permitted");
       localStorage.removeItem(walletStorageKey());
@@ -940,7 +1007,8 @@ export function createLiveOnboarding(options: LiveOnboardingOptions = {}): Onboa
   async function authorizeSponsored(choice: ChainChoice, account: Address, privateKey: Hex, expiresAt: bigint, report?: ChainReporter): Promise<void> {
     const chain = chainOf(choice);
     const sessionAddress = privateKeyToAccount(privateKey).address;
-    const client = await walletClient(choice);
+    const owner = passkey;
+    const client = owner ? null : await walletClient(choice);
     report?.({ flow: "session", phase: "signing", label: intentText(INTENTS.sponsoredSession) });
     const hash = await withWalletIntent(INTENTS.sponsoredSession, () =>
       relayExecute({
@@ -949,7 +1017,8 @@ export function createLiveOnboarding(options: LiveOnboardingOptions = {}): Onboa
         account,
         target: account,
         data: addSessionKeyData(sessionAddress, expiresAt),
-        sign: (typed) => client.signTypedData({ account: requireRoot(), ...typed }),
+        sign: async (typed) =>
+          owner ? encodeContractAssertion(await passkeyAssert(owner.credentialId, hashTypedData(typed))) : client!.signTypedData({ account: requireRoot(), ...typed }),
       }),
     );
     signatures += SIGNATURES.sessionLogin;
@@ -991,7 +1060,7 @@ export function createLiveOnboarding(options: LiveOnboardingOptions = {}): Onboa
   function sponsorPending(choice: ChainChoice): WalletPanel {
     void choice;
     return {
-      address: requireRoot(),
+      address: root ?? (passkey ? `Passkey ${passkey.x.slice(0, 10)}…` : requireRoot()),
       fil: "0",
       usdfc: "0",
       deposit: "0",
@@ -1046,7 +1115,8 @@ export function createLiveOnboarding(options: LiveOnboardingOptions = {}): Onboa
       client: createWalletClient({
         account: address,
         chain: chainOf(choice),
-        transport: walletWithPublicReads(requireProvider(), rpcOf(choice)),
+        // Gasless: the payer is a contract and there may be no wallet at all (passkey); reads only.
+        transport: payer || passkey ? publicTransport(choice) : walletWithPublicReads(requireProvider(), rpcOf(choice)),
       }) as never,
       source: "fifolders",
     });

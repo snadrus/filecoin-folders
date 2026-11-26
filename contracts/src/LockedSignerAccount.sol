@@ -71,6 +71,15 @@ interface IFilecoinPayL {
     function withdrawTo(address token, address to, uint256 amount) external;
 }
 
+interface IERC20L {
+    function transferFrom(address from, address to, uint256 amount) external returns (bool);
+    function approve(address spender, uint256 amount) external returns (bool);
+}
+
+interface IFilecoinPayDepositL {
+    function deposit(address token, address to, uint256 amount) external payable;
+}
+
 interface ISessionKeyRegistryL {
     function login(address signer, uint256 expiry, bytes32[] calldata permissions, string calldata origin) external;
     function revoke(address signer, bytes32[] calldata permissions, string calldata origin) external;
@@ -119,11 +128,14 @@ contract LockedSignerAccount {
     error ValueNotAllowed();
     error ProviderNotApproved(uint256 providerId);
     error CallFailed(bytes returndata);
+    error NotUnassigned();
+    error NoOwner();
 
     event Executed(uint256 indexed nonce, address indexed target, bytes4 selector);
     event DataSetAllowed(uint256 indexed providerId, address payee, uint256 clientDataSetId, address createSigner);
     event Swept(address to, uint256 amount);
     event SessionKey(address indexed key, uint256 expiry);
+    event OwnerAssigned(address indexed owner, bytes32 passkeyX, bytes32 passkeyY);
 
     bytes32 public constant EXECUTE_TYPEHASH =
         keccak256("Execute(address target,uint256 value,bytes data,uint256 nonce,uint256 deadline)");
@@ -161,6 +173,9 @@ contract LockedSignerAccount {
     uint256 public sessionExpiry;
     /// @notice Browser session keys allowed to sign `execute` (expiry, unix seconds).
     mapping(address => uint256) public sessionSigners;
+    /// @notice Warm-pool account created without an owner; `assignOwner` sets one exactly once. Nobody can sign
+    ///         `execute` while this is true.
+    bool public unassigned;
     bool private _initialized;
 
     constructor() {
@@ -176,11 +191,26 @@ contract LockedSignerAccount {
         passkeyX = qx;
         passkeyY = qy;
         sessionExpiry = sessionExpiry_;
+        unassigned = owner_ == address(0) && qx == bytes32(0);
         IFilecoinPayL(FACTORY.PAY()).setOperatorApproval(
             FACTORY.TOKEN(), FACTORY.FWSS(), true, type(uint256).max, type(uint256).max, type(uint256).max
         );
         // An EOA owner may sign FWSS piece ops directly; a passkey cannot (FWSS verifies secp256k1 only).
         if (owner_ != address(0)) ISessionKeyRegistryL(FACTORY.SKR()).login(owner_, sessionExpiry_, _fwssScopes(), "fifolders");
+    }
+
+    /// @notice One-shot handover of a warm-pool account to its buyer. Factory only (its `assign` is admin-only), only
+    ///         while unassigned, never again afterwards. The call policy is unchanged by assignment.
+    function assignOwner(address owner_, bytes32 qx, bytes32 qy) external {
+        if (msg.sender != address(FACTORY)) revert NotFactory();
+        if (!unassigned) revert NotUnassigned();
+        if (owner_ == address(0) && qx == bytes32(0)) revert NoOwner();
+        unassigned = false;
+        owner = owner_;
+        passkeyX = qx;
+        passkeyY = qy;
+        if (owner_ != address(0)) ISessionKeyRegistryL(FACTORY.SKR()).login(owner_, sessionExpiry, _fwssScopes(), "fifolders");
+        emit OwnerAssigned(owner_, qx, qy);
     }
 
     function domainSeparator() public view returns (bytes32) {
@@ -316,6 +346,8 @@ contract LockedSignerAccountFactory {
     error NoOwner();
 
     event AccountCreated(address indexed account, address indexed owner, bytes32 passkeyX, uint256 salt);
+    event AccountAssigned(address indexed account, address indexed owner, bytes32 passkeyX, uint256 topUp);
+    error NotAccount(address account);
 
     LockedSignerAccount public immutable IMPLEMENTATION;
     address public immutable FWSS;
@@ -372,5 +404,27 @@ contract LockedSignerAccountFactory {
         isAccount[address(account)] = true;
         account.initialize(owner, qx, qy, sessionExpiry);
         emit AccountCreated(address(account), owner, qx, salt);
+    }
+
+    /// @notice Warm pool: an ownerless account the admin pre-funds and opens a data set for, then hands to a buyer.
+    function createPooled(uint256 salt, uint256 sessionExpiry) external onlyAdmin returns (LockedSignerAccount account) {
+        bytes32 key = _salt(address(0), bytes32(0), bytes32(0), salt, sessionExpiry);
+        account = LockedSignerAccount(LockedLib.clone(address(IMPLEMENTATION), key));
+        isAccount[address(account)] = true;
+        account.initialize(address(0), bytes32(0), bytes32(0), sessionExpiry);
+        emit AccountCreated(address(account), address(0), bytes32(0), salt);
+    }
+
+    /// @notice One transaction: assign a pooled account's owner (once) and deposit `topUp` of the admin's tokens into
+    ///         it in Filecoin Pay (admin must have approved this factory for `topUp`).
+    function assign(LockedSignerAccount account, address owner, bytes32 qx, bytes32 qy, uint256 topUp) external onlyAdmin {
+        if (!isAccount[address(account)]) revert NotAccount(address(account));
+        account.assignOwner(owner, qx, qy);
+        if (topUp > 0) {
+            require(IERC20L(TOKEN).transferFrom(msg.sender, address(this), topUp), "transferFrom");
+            IERC20L(TOKEN).approve(PAY, topUp);
+            IFilecoinPayDepositL(PAY).deposit(TOKEN, address(account), topUp);
+        }
+        emit AccountAssigned(address(account), owner, qx, topUp);
     }
 }

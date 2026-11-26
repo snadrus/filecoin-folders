@@ -255,11 +255,22 @@ function renderConnect(model: ViewModel): string {
       </label>
       ${walletPicker(model)}
       <label class="check"><input data-testid="encrypt" name="encrypt" type="checkbox" ${model.encrypt ? "checked" : ""}/> Encrypt this volume</label>
-      <button class="primary" data-testid="connect-wallet" type="submit">Connect wallet</button>
+      <button class="primary" data-testid="connect-wallet" type="submit">${isSponsored() ? "Continue" : "Connect wallet"}</button>
       <p class="note" data-testid="mainnet-note" ${model.mainnetBlocked ? "" : "hidden"}>Registry not deployed</p>
       ${model.connectError ? `<p class="error" data-testid="connect-error">${escapeHtml(friendlyError(model.connectError))}</p>` : ""}
     </form>
   </div>`;
+}
+
+/** Gasless mode: available USDFC credit and a card top-up (Stripe Checkout). */
+function sponsoredCredits(model: ViewModel, buttonClass: string): string {
+  const panel = model.panel;
+  if (!panel) return "";
+  const ready = panel.paymentsReady;
+  const balance = ready ? `<p class="account-line status ok" data-testid="credit-balance">Storage credits: ${escapeHtml(panel.deposit)} USDFC available</p>` : "";
+  return `${balance}
+    <button type="button" class="${ready ? "" : buttonClass}" data-action="${ready ? "add-funds" : "fix-payments"}" data-testid="${ready ? "add-credits" : "fix-payments"}">${ready ? "Add credits" : "Buy storage credits"}</button>
+    <p class="note">${escapeHtml(model.costs.depositNote)}</p>`;
 }
 
 function walletPicker(model: ViewModel): string {
@@ -270,7 +281,7 @@ function walletPicker(model: ViewModel): string {
         `<option value="${escapeHtml(wallet.rdns)}" ${wallet.rdns === model.walletRdns ? "selected" : ""}>${escapeHtml(wallet.name)}</option>`,
     )
     .join("");
-  return `<label class="field">Wallet
+  return `<label class="field">${isSponsored() ? "Sign in with" : "Wallet"}
     <select name="wallet" data-testid="wallet-pick">${options}</select>
   </label>`;
 }
@@ -305,7 +316,9 @@ function renderSetupShell(model: ViewModel): string {
 function renderSetup(model: ViewModel): string {
   const panel = model.panel;
   if (!panel) return "";
-  const payment = panel.paymentsReady
+  const payment = isSponsored()
+    ? sponsoredCredits(model, "primary")
+    : panel.paymentsReady
     ? `<p class="status ok" data-testid="payment-status">Storage payment ready</p>`
     : `<button class="primary" type="button" data-testid="fix-payments" data-action="fix-payments">Enable storage payment</button>
        <p class="note">${escapeHtml(model.costs.depositNote)}</p>`;
@@ -870,7 +883,9 @@ function renderAccount(model: ViewModel): string {
     ? `<section class="account-section" data-testid="wallet-setup">
       <p class="section-title">Wallet &amp; setup</p>
       ${isSponsored() ? "" : `<p class="account-line">${escapeHtml(panel.fil)} FIL · ${escapeHtml(panel.usdfc)} USDFC</p>`}
-      ${panel.paymentsReady
+      ${isSponsored()
+        ? sponsoredCredits(model, "primary slim")
+        : panel.paymentsReady
         ? `<p class="account-line status ok" data-testid="payment-status">Storage payment approved</p>`
         : `<button type="button" class="primary slim" data-action="fix-payments" data-testid="fix-payments">${escapeHtml(step?.action === "fix-payments" ? step.label : "Enable storage payment")}</button>
            <p class="note">${escapeHtml(model.costs.depositNote)}</p>`}
