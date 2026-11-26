@@ -13,7 +13,7 @@ routes = [{ pattern = "fast.scionbase.ai", custom_domain = true }]
 SPONSOR_NETWORK = "calibration"
 SPONSOR_FACTORY = "0xCBb99E41C173B06D15212A135ba9F46AAB19DEE5"
 SPONSOR_PROVIDER_ID = "2"
-SPONSOR_POOL_SIZE = "5"
+SPONSOR_POOL_SIZE = "2"
 SPONSOR_POOL_SEED_USDFC = "1"
 SPONSOR_SWEEP_ACCOUNTS = "0x2CcbFfB44b410BDa7Fcb7708d1649bA2887370d2"
 SPONSOR_ALLOWED_ORIGINS = "https://fifolders.scionbase.ai/,http://localhost"
