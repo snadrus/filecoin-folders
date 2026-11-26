@@ -1,6 +1,7 @@
 import { isDriveSource } from "./drive-pieces.js";
 import { LEGACY_NAME_KEY, SESSION_NAME_KEYS, avatarHtml, cachedIdentity, pickDisplayName, type ResolvedIdentity } from "fiperson/view";
 import { friendlyError } from "./friendly-error.js";
+import { isSponsored } from "./sponsored.js";
 import type { HistoryEntry, Stat } from "fil-folders";
 import type { ChainStepView } from "./chain-step.js";
 import { felanumioSvg, felarumiSvg, logoSvg } from "./icons.js";
@@ -252,13 +253,51 @@ function renderConnect(model: ViewModel): string {
       <label class="field">Volume name
         <input data-testid="volume-name" name="volume" value="${escapeHtml(model.volumeName)}" autocomplete="off" />
       </label>
-      ${walletPicker(model)}
+      ${isSponsored() ? sponsoredSignIn(model) : `${walletPicker(model)}
       <label class="check"><input data-testid="encrypt" name="encrypt" type="checkbox" ${model.encrypt ? "checked" : ""}/> Encrypt this volume</label>
-      <button class="primary" data-testid="connect-wallet" type="submit">Connect wallet</button>
+      <button class="primary" data-testid="connect-wallet" type="submit">Connect wallet</button>`}
       <p class="note" data-testid="mainnet-note" ${model.mainnetBlocked ? "" : "hidden"}>Registry not deployed</p>
       ${model.connectError ? `<p class="error" data-testid="connect-error">${escapeHtml(friendlyError(model.connectError))}</p>` : ""}
     </form>
   </div>`;
+}
+
+const isPasskeyRdns = (rdns: string) => rdns === "passkey" || rdns.startsWith("passkey:");
+
+/**
+ * Gasless sign-in: a passkey is the default (saved on this device → continue; else create one, or pick an existing
+ * one synced from another device). Wallets (and wallet-only options like encryption) sit in a collapsed Advanced section.
+ */
+function sponsoredSignIn(model: ViewModel): string {
+  const passkeys = model.wallets.filter((wallet) => isPasskeyRdns(wallet.rdns));
+  const wallets = model.wallets.filter((wallet) => !isPasskeyRdns(wallet.rdns));
+  const saved = passkeys.some((wallet) => wallet.rdns === "passkey");
+  const button = (rdns: string, label: string, primary: boolean, testid: string) =>
+    passkeys.some((wallet) => wallet.rdns === rdns) ? `<button class="${primary ? "primary" : ""}" type="submit" name="wallet" value="${rdns}" data-testid="${testid}">${label}</button>` : "";
+  const walletOptions = wallets.map((wallet) => `<option value="${escapeHtml(wallet.rdns)}" ${wallet.rdns === model.walletRdns ? "selected" : ""}>${escapeHtml(wallet.name)}</option>`).join("");
+  return `<div class="passkey-signin" data-testid="passkey-signin">
+      ${button("passkey", "Continue with your passkey", true, "passkey-continue")}
+      ${button("passkey:new", "Create a passkey", !saved, "passkey-new")}
+      ${button("passkey:existing", "Use an existing passkey", false, "passkey-existing")}
+      ${passkeys.length ? `<p class="note">No wallet or crypto needed: a passkey (Face ID, Touch ID, Windows Hello or a security key) owns your storage account.</p>` : `<p class="note" data-testid="passkey-unavailable">This browser has no passkey support. Use a wallet under Advanced.</p>`}
+    </div>
+    <details class="advanced" data-testid="advanced" ${passkeys.length ? "" : "open"}>
+      <summary>Advanced: use a wallet</summary>
+      ${wallets.length ? `<label class="field">Wallet <select name="wallet-pick" data-testid="wallet-pick">${walletOptions}</select></label>` : `<p class="note">No browser wallet found.</p>`}
+      <label class="check"><input data-testid="encrypt" name="encrypt" type="checkbox" ${model.encrypt ? "checked" : ""}/> Encrypt this volume (wallet only)</label>
+      <button type="submit" name="wallet" value="" data-testid="connect-wallet">Connect wallet</button>
+    </details>`;
+}
+
+/** Gasless mode: available USDFC credit and a card top-up (Stripe Checkout). */
+function sponsoredCredits(model: ViewModel, buttonClass: string): string {
+  const panel = model.panel;
+  if (!panel) return "";
+  const ready = panel.paymentsReady;
+  const balance = ready ? `<p class="account-line status ok" data-testid="credit-balance">Storage credits: ${escapeHtml(panel.deposit)} USDFC available</p>` : "";
+  return `${balance}
+    <button type="button" class="${ready ? "" : buttonClass}" data-action="${ready ? "add-funds" : "fix-payments"}" data-testid="${ready ? "add-credits" : "fix-payments"}">${ready ? "Add credits" : "Buy storage credits"}</button>
+    <p class="note">${escapeHtml(model.costs.depositNote)}</p>`;
 }
 
 function walletPicker(model: ViewModel): string {
@@ -269,7 +308,7 @@ function walletPicker(model: ViewModel): string {
         `<option value="${escapeHtml(wallet.rdns)}" ${wallet.rdns === model.walletRdns ? "selected" : ""}>${escapeHtml(wallet.name)}</option>`,
     )
     .join("");
-  return `<label class="field">Wallet
+  return `<label class="field">${isSponsored() ? "Sign in with" : "Wallet"}
     <select name="wallet" data-testid="wallet-pick">${options}</select>
   </label>`;
 }
@@ -304,7 +343,9 @@ function renderSetupShell(model: ViewModel): string {
 function renderSetup(model: ViewModel): string {
   const panel = model.panel;
   if (!panel) return "";
-  const payment = panel.paymentsReady
+  const payment = isSponsored()
+    ? sponsoredCredits(model, "primary")
+    : panel.paymentsReady
     ? `<p class="status ok" data-testid="payment-status">Storage payment ready</p>`
     : `<button class="primary" type="button" data-testid="fix-payments" data-action="fix-payments">Enable storage payment</button>
        <p class="note">${escapeHtml(model.costs.depositNote)}</p>`;
@@ -334,7 +375,7 @@ function renderSetup(model: ViewModel): string {
       ${logoSvg(56)}
       <h1>FiFolders</h1>
       <p class="account-line" data-testid="setup-address">${escapeHtml(panel.address)}</p>
-      <p class="balances" data-testid="balances"><span>${escapeHtml(panel.fil)} FIL</span><span>${escapeHtml(panel.usdfc)} USDFC</span></p>
+      ${isSponsored() ? "" : `<p class="balances" data-testid="balances"><span>${escapeHtml(panel.fil)} FIL</span><span>${escapeHtml(panel.usdfc)} USDFC</span></p>`}
       ${legacy}
       ${failed ? renderChainSteps(model.chainSteps) : ""}
       ${payment}
@@ -868,15 +909,17 @@ function renderAccount(model: ViewModel): string {
   const setup = panel
     ? `<section class="account-section" data-testid="wallet-setup">
       <p class="section-title">Wallet &amp; setup</p>
-      <p class="account-line">${escapeHtml(panel.fil)} FIL · ${escapeHtml(panel.usdfc)} USDFC</p>
-      ${panel.paymentsReady
+      ${isSponsored() ? "" : `<p class="account-line">${escapeHtml(panel.fil)} FIL · ${escapeHtml(panel.usdfc)} USDFC</p>`}
+      ${isSponsored()
+        ? sponsoredCredits(model, "primary slim")
+        : panel.paymentsReady
         ? `<p class="account-line status ok" data-testid="payment-status">Storage payment approved</p>`
         : `<button type="button" class="primary slim" data-action="fix-payments" data-testid="fix-payments">${escapeHtml(step?.action === "fix-payments" ? step.label : "Enable storage payment")}</button>
            <p class="note">${escapeHtml(model.costs.depositNote)}</p>`}
       <p class="account-line" data-testid="session-status">${panel.sessionReady ? `Session key until ${escapeHtml(panel.sessionExpiry || "soon")}` : "Session key missing"}</p>
       ${panel.sessionReady
         ? `<button type="button" data-action="refresh-session" data-testid="session-refresh">Refresh session key</button>
-           <button type="button" data-action="refund-session" data-testid="refund-session" title="Send the session key's leftover tFIL/FIL back to your wallet and forget the key in this browser">Disconnect session and refund</button>`
+           <button type="button" data-action="refund-session" data-testid="refund-session" title="Send the session key's leftover tFIL/FIL back to your wallet and forget the key in this browser">${isSponsored() ? "Disconnect session" : "Disconnect session and refund"}</button>`
         : `<button type="button" class="primary slim" data-action="authorize" data-testid="authorize-session">${escapeHtml(step?.action === "authorize" ? step.label : "Authorize session key")}</button>
            <p class="note" data-testid="session-lazy-note">Not needed to browse. Your first save asks for it (1 signature).</p>`}
       ${step && step.action !== "fix-payments" && step.action !== "authorize" ? `<button type="button" class="primary slim" data-action="${step.action}" data-testid="setup-step">${escapeHtml(step.label)}</button>` : ""}

@@ -273,6 +273,7 @@ function sessionToOptions(app: DriveApp, session: Session, panel: WalletPanel) {
     encrypted: session.encrypted,
     volumeName: session.volumeName,
     cas: session.cas,
+    removalAdapters: session.removalAdapters,
     felarumiUrl: app.felarumiUrl,
     felanumioUrl: app.felanumioUrl,
     encryptPref: session.encrypted,

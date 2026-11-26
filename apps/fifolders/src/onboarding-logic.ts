@@ -1,5 +1,5 @@
 import { folderCommitPermission } from "fil-folders";
-import { DefaultFwssPermissions } from "@filoz/synapse-core/session-key";
+import { AddPiecesPermission, DefaultFwssPermissions, SchedulePieceRemovalsPermission } from "@filoz/synapse-core/session-key";
 import type { Address, Hex } from "viem";
 
 /**
@@ -120,6 +120,11 @@ export interface WalletPanel {
 
 export function fifoldersPermissions(): Hex[] {
   return [...DefaultFwssPermissions, folderCommitPermission()];
+}
+
+/** Gasless mode: scopes LockedSignerAccount.addSessionKey grants (the sponsor creates datasets; commits go through Execute). */
+export function sponsoredPermissions(): Hex[] {
+  return [AddPiecesPermission, SchedulePieceRemovalsPermission];
 }
 
 export function sessionStorageKey(chainId: number, root: string): string {

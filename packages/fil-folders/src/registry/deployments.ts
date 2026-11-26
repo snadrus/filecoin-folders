@@ -6,6 +6,9 @@ export const CALIBRATION_REGISTRY_V1_FROM_BLOCK = 4207373n;
 /** FolderRegistry v2 on Filecoin Calibration (deployments/calibration-v2.json): minimal events, version CAS. */
 export const CALIBRATION_REGISTRY_V2 = "0x9C06335D7DE588Caa104ee4FC3bb7cd8Aba62443" as const;
 export const CALIBRATION_REGISTRY_V2_FROM_BLOCK = 4211744n;
+/** FolderRegistry v2 on Filecoin mainnet (deployments/mainnet-v2.json). */
+export const MAINNET_REGISTRY_V2 = "0x0ADf3E4fc709EAC4973Ca5D17FCfEB10eB7b01EB" as const;
+export const MAINNET_REGISTRY_V2_FROM_BLOCK = 6580537n;
 
 /** v1 address → its v2 successor. `createViemRegistry` on a v1 address reads v2 first and migrates on the next commit. */
 export const REGISTRY_SUCCESSORS: Record<string, { address: Address; fromBlock: bigint }> = {

@@ -24,6 +24,7 @@ function optionsFrom(session: Session, previous: DriveApp): DriveAppOptions {
     encrypted: session.encrypted,
     volumeName: session.volumeName,
     cas: session.cas,
+    removalAdapters: session.removalAdapters,
     felarumiUrl: previous.felarumiUrl,
     felanumioUrl: previous.felanumioUrl,
     encryptPref: session.encrypted,

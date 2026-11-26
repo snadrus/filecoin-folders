@@ -45,7 +45,8 @@ export function versionsEligibleForRemoval(
 }
 
 export interface RemovalAdapters {
-  listPieceIds: (datasetId: string) => Promise<string[]>;
+  /** Active piece ids for `pieceCid` in the dataset. */
+  listPieceIds: (datasetId: string, pieceCid?: string) => Promise<string[]>;
   scheduled: (datasetId: string) => Promise<Set<string>>;
   submit: (datasetId: string, pieceIds: string[]) => Promise<{ hash: string }>;
   resolve: (
@@ -74,7 +75,7 @@ export async function schedulePieceRemovals(
       let messageCid = previous?.messageCid;
       if (!hash) {
         const queued = await adapters.scheduled(datasetId);
-        const ids = await adapters.listPieceIds(datasetId);
+        const ids = await adapters.listPieceIds(datasetId, file.pieceCid);
         const unscheduled = ids.filter((id) => !queued.has(id));
         if (!ids.length && !previous?.confirmed) {
           throw new Error(`Piece is no longer active in dataset ${datasetId}. Its removal status needs checking on the explorer.`);

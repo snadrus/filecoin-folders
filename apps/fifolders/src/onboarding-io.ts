@@ -37,5 +37,7 @@ export interface OnboardingIO {
    * (signed locally by the key, no wallet prompt) and forget the key in this browser.
    */
   refundSession?(chain: ChainChoice, report?: ChainReporter): Promise<{ refunded: bigint }>;
+  /** End a dataset's storage service (FWSS terminateService). Gasless mode: session-key signed, sponsor-relayed. */
+  terminateDataset?(chain: ChainChoice, datasetId: string): Promise<`0x${string}`>;
   disconnect(): void;
 }

@@ -1,4 +1,4 @@
-import { isCar, unpadPiece } from "fil-folders";
+import { isCar, isCommitPiece, unpadPiece } from "fil-folders";
 import { driveInfo, type PieceDetail } from "./drive-pieces.js";
 import { entryKind, listDirectory, looksLikeCar, parseCar, readFile, type UnixfsEntry } from "./unixfs.js";
 
@@ -86,12 +86,14 @@ export function loosePieces(pieces: readonly PieceBlob[], referenced: ReadonlySe
     const detail = details?.get(piece.pieceCid);
     const drive = driveInfo(detail?.metadata);
     // A FiFolders/FiPen/FiGrid version piece no longer in the live tree is an older version, not a loose upload.
+    // New commits carry only Drive's keys, so they are recognised by content (legacy ones also had `version`).
     if (drive?.version !== undefined) continue;
+    const bytes = unpadPiece(piece.bytes);
+    if (isCommitPiece(bytes)) continue;
     if (drive) {
       rows.push(driveRow({ ...piece, uploaded: piece.uploaded || detail?.addedAt || 0 }, drive, detail?.pieceId));
       continue;
     }
-    const bytes = unpadPiece(piece.bytes);
     if (looksLikeManifest(bytes)) continue;
     const known = catalog.get(piece.pieceCid);
     const name = piece.name || known?.name || piece.pieceCid;

@@ -12,6 +12,7 @@ import {
   type Volume,
 } from "fil-folders";
 import { mainnetRegistryAddress } from "./network.js";
+import type { RemovalAdapters } from "./removal.js";
 import { restoreMemoryVolume } from "./volume-persist.js";
 import { createPublicClient, createWalletClient, custom, http, type Address, type Hex } from "viem";
 import { filecoinCalibration } from "viem/chains";
@@ -38,6 +39,8 @@ export interface Session {
   encrypted: boolean;
   volumeName: string;
   cas: CasObserver;
+  /** Live piece-removal adapters (gasless mode); the drive falls back to local bookkeeping without them. */
+  removalAdapters?: RemovalAdapters;
 }
 
 export function observeRegistry(inner: Registry): { registry: Registry; cas: CasObserver } {
