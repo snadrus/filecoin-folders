@@ -83,6 +83,13 @@ export const INTENTS = {
     purpose: `reference ${files} Filecoin Drive ${files === 1 ? "file" : "files"} in your folders without re-uploading`,
     cost: "one manifest commit; gas ~0.01 FIL + a penny for the manifest piece",
   }),
+  sponsoredSession: {
+    title: "Authorize session key",
+    purpose: "lets FiFolders save without asking each time; the sponsor pays all fees",
+    cost: "free (signature only)",
+    logged: true,
+  },
+  sponsoredCredits: { title: "Set up storage credits", purpose: "your storage account is funded from your FiFolders credits", cost: "free" },
   unlock: { title: "Unlock encrypted folder", purpose: "your signature derives the folder key", cost: "free" },
   migrateDrive: { title: "Move folders pointer to new registry", purpose: "one-time move to FolderRegistry v2 (smaller chain data); history stays linked", cost: "gas ~0.01 FIL" },
   migrateIdentity: { title: "Move identity pointer to new registry", purpose: "one-time move to FolderRegistry v2", cost: "gas ~0.01 FIL" },

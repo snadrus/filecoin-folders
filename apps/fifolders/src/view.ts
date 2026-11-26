@@ -1,6 +1,7 @@
 import { isDriveSource } from "./drive-pieces.js";
 import { LEGACY_NAME_KEY, SESSION_NAME_KEYS, avatarHtml, cachedIdentity, pickDisplayName, type ResolvedIdentity } from "fiperson/view";
 import { friendlyError } from "./friendly-error.js";
+import { isSponsored } from "./sponsored.js";
 import type { HistoryEntry, Stat } from "fil-folders";
 import type { ChainStepView } from "./chain-step.js";
 import { felanumioSvg, felarumiSvg, logoSvg } from "./icons.js";
@@ -334,7 +335,7 @@ function renderSetup(model: ViewModel): string {
       ${logoSvg(56)}
       <h1>FiFolders</h1>
       <p class="account-line" data-testid="setup-address">${escapeHtml(panel.address)}</p>
-      <p class="balances" data-testid="balances"><span>${escapeHtml(panel.fil)} FIL</span><span>${escapeHtml(panel.usdfc)} USDFC</span></p>
+      ${isSponsored() ? "" : `<p class="balances" data-testid="balances"><span>${escapeHtml(panel.fil)} FIL</span><span>${escapeHtml(panel.usdfc)} USDFC</span></p>`}
       ${legacy}
       ${failed ? renderChainSteps(model.chainSteps) : ""}
       ${payment}
@@ -868,7 +869,7 @@ function renderAccount(model: ViewModel): string {
   const setup = panel
     ? `<section class="account-section" data-testid="wallet-setup">
       <p class="section-title">Wallet &amp; setup</p>
-      <p class="account-line">${escapeHtml(panel.fil)} FIL · ${escapeHtml(panel.usdfc)} USDFC</p>
+      ${isSponsored() ? "" : `<p class="account-line">${escapeHtml(panel.fil)} FIL · ${escapeHtml(panel.usdfc)} USDFC</p>`}
       ${panel.paymentsReady
         ? `<p class="account-line status ok" data-testid="payment-status">Storage payment approved</p>`
         : `<button type="button" class="primary slim" data-action="fix-payments" data-testid="fix-payments">${escapeHtml(step?.action === "fix-payments" ? step.label : "Enable storage payment")}</button>
@@ -876,7 +877,7 @@ function renderAccount(model: ViewModel): string {
       <p class="account-line" data-testid="session-status">${panel.sessionReady ? `Session key until ${escapeHtml(panel.sessionExpiry || "soon")}` : "Session key missing"}</p>
       ${panel.sessionReady
         ? `<button type="button" data-action="refresh-session" data-testid="session-refresh">Refresh session key</button>
-           <button type="button" data-action="refund-session" data-testid="refund-session" title="Send the session key's leftover tFIL/FIL back to your wallet and forget the key in this browser">Disconnect session and refund</button>`
+           <button type="button" data-action="refund-session" data-testid="refund-session" title="Send the session key's leftover tFIL/FIL back to your wallet and forget the key in this browser">${isSponsored() ? "Disconnect session" : "Disconnect session and refund"}</button>`
         : `<button type="button" class="primary slim" data-action="authorize" data-testid="authorize-session">${escapeHtml(step?.action === "authorize" ? step.label : "Authorize session key")}</button>
            <p class="note" data-testid="session-lazy-note">Not needed to browse. Your first save asks for it (1 signature).</p>`}
       ${step && step.action !== "fix-payments" && step.action !== "authorize" ? `<button type="button" class="primary slim" data-action="${step.action}" data-testid="setup-step">${escapeHtml(step.label)}</button>` : ""}

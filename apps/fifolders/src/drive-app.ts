@@ -23,6 +23,7 @@ import { canPreviewName, fileShareLink } from "./links.js";
 import { REGISTRY_NOT_DEPLOYED, registryReady, saveNetworkPreference } from "./network.js";
 import { qrSvg } from "./qr.js";
 import { loadRemovals, versionsEligibleForRemoval, saveRemovals, schedulePieceRemovals, type RemovalAdapters } from "./removal.js";
+import { SPONSORED_DATASET_NOTE, SPONSORED_DEPOSIT_NOTE, isSponsored } from "./sponsored.js";
 import { chainStepTitle, explorerHref, stepDetail, type ChainReport, type ChainStepView } from "./chain-step.js";
 import { INTENTS, cleanOpLabel, intentText, purposeText, onWalletPrompts, sessionIntent, withWalletIntent, type WalletPrompt, walletPrompts } from "./wallet-prompts.js";
 import { ACTIVITY_DISMISS_MS, dismissActivity, loadDismissed } from "./activity.js";
@@ -2756,8 +2757,8 @@ export class DriveApp {
         cdnReserve: formatUsd(this.quote.cdnReserve),
         createFee: formatUsd(this.quote.createFee),
         addPieces: `${formatUsd(this.quote.addPiecesBase)} + ${formatUsd(this.quote.addPiecesEach)} per piece`,
-        datasetNote: datasetBlurb(this.quote),
-        depositNote: depositBlurb(this.quote, "5"),
+        datasetNote: isSponsored() ? SPONSORED_DATASET_NOTE : datasetBlurb(this.quote),
+        depositNote: isSponsored() ? SPONSORED_DEPOSIT_NOTE : depositBlurb(this.quote, "5"),
       },
       chainSteps: this.chainSteps,
       activity,

@@ -18,6 +18,7 @@ import {
   createPublicClient,
   createWalletClient,
   custom,
+  encodeFunctionData,
   getAddress,
   http,
   type Address,
@@ -26,6 +27,16 @@ import {
   type WalletClient,
 } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
+import {
+  addSessionKeyData,
+  createSponsoredDataset,
+  findSponsoredAccount,
+  fundSponsoredAccount,
+  isSponsored,
+  liveRemovalAdapters,
+  relayExecute,
+  sponsoredTransport,
+} from "./sponsored.js";
 import { discoverWallets, safeOn, type AnnouncedWallet } from "./eip6963.js";
 import { activeProviderUrls } from "./filecoin-api.js";
 import { FILECOIN_DRIVE_SOURCE, isDriveSource, loadPieceDetails, setPieceDetailSource, type PieceDetail } from "./drive-pieces.js";
@@ -41,6 +52,7 @@ import {
   SIGNATURES,
   chooseDataset,
   fifoldersPermissions,
+  sponsoredPermissions,
   formatExpiry,
   formatToken,
   loadLastDataset,
@@ -103,6 +115,8 @@ export function createLiveOnboarding(): OnboardingIO {
   let wallets: AnnouncedWallet[] = [];
   let provider: Eip1193Provider | null = null;
   let root: Address | null = null;
+  /** Gasless mode: the sponsor-created LockedSignerAccount that pays and owns the volume. `root` only signs. */
+  let payer: Address | null = null;
   let signatures = 0;
   let connectPrompts = 0;
   let selectedDataset = "";
@@ -118,6 +132,21 @@ export function createLiveOnboarding(): OnboardingIO {
   function requireRoot(): Address {
     if (!root) throw new Error("Connect a wallet first.");
     return root;
+  }
+
+  /** Payer and volume owner: the sponsored account in gasless mode, else the wallet. */
+  function owner(): Address {
+    return payer ?? requireRoot();
+  }
+
+  async function resolvePayer(): Promise<Address | null> {
+    if (!isSponsored()) return null;
+    if (!payer) payer = await findSponsoredAccount(requireRoot());
+    return payer;
+  }
+
+  function permissions(): Hex[] {
+    return isSponsored() ? sponsoredPermissions() : fifoldersPermissions();
   }
 
   function requireProvider(): Eip1193Provider {
@@ -201,14 +230,14 @@ export function createLiveOnboarding(): OnboardingIO {
 
 
   async function onchainExpiries(choice: ChainChoice, sessionAddress: Address): Promise<bigint[]> {
-    const permissions = fifoldersPermissions();
+    const wanted = permissions();
     // viem types the public client's chain as optional; this client was created with one.
     const expirations = await getExpirations(publicClient(choice) as never, {
-      address: requireRoot(),
+      address: owner(),
       sessionKeyAddress: sessionAddress,
-      permissions,
+      permissions: wanted,
     });
-    return permissions.map((permission) => expirations[permission] ?? 0n);
+    return wanted.map((permission) => expirations[permission] ?? 0n);
   }
 
   function rememberSoonest(stored: StoredSession, expiries: readonly bigint[]): void {
@@ -220,7 +249,7 @@ export function createLiveOnboarding(): OnboardingIO {
 
   async function gateFor(choice: ChainChoice): Promise<SessionGate> {
     const chain = chainOf(choice);
-    const stored = loadSession(chain.id, requireRoot());
+    const stored = loadSession(chain.id, owner());
     if (!stored) return "expired";
     const now = BigInt(Math.floor(Date.now() / 1000));
     try {
@@ -282,15 +311,15 @@ export function createLiveOnboarding(): OnboardingIO {
   async function listDatasets(choice: ChainChoice): Promise<DatasetRecord[]> {
     const { Synapse } = await import("@filoz/synapse-sdk");
     const synapse = Synapse.create({
-      account: requireRoot(),
+      account: owner(),
       chain: chainOf(choice),
       // Reads go to public RPC, never through the wallet.
       transport: publicTransport(choice),
       source: "fifolders",
     });
-    const found = await synapse.storage.findDataSets({ address: requireRoot() });
+    const found = await synapse.storage.findDataSets({ address: owner() });
     const remote = found.filter((dataset) => dataset.isLive !== false).map((dataset) => toDataset(choice, dataset));
-    const pending = loadPending(choice, requireRoot());
+    const pending = loadPending(choice, owner());
     const ids = new Set(remote.map((dataset) => dataset.id));
     return [...remote, ...pending.filter((dataset) => !ids.has(dataset.id))];
   }
@@ -331,7 +360,7 @@ export function createLiveOnboarding(): OnboardingIO {
   }
 
   async function detectDrives(choice: ChainChoice, volumeName: string, datasets: DatasetRecord[], owner?: Address): Promise<DatasetRecord[]> {
-    const address = owner ?? requireRoot();
+    const address = owner ?? payer ?? requireRoot();
     const chainId = chainOf(choice).id;
     const cached = datasets.map((dataset) => loadDriveMark(chainId, address, dataset.id, dataset.pieceCount));
     const missing = datasets.filter((dataset, index) => !cached[index] && /^\d+$/.test(dataset.id) && dataset.pieceCount !== "0");
@@ -404,6 +433,7 @@ export function createLiveOnboarding(): OnboardingIO {
         });
         provider = watchWalletPrompts(connected.provider as Eip1193Provider);
         root = getAddress(connected.address);
+        payer = null;
         await ensureChain(provider, input.chain);
         rememberWallet(input.chain, WALLETCONNECT_RDNS);
         return;
@@ -415,6 +445,7 @@ export function createLiveOnboarding(): OnboardingIO {
       const account = accounts[0];
       if (!account) throw new Error("The wallet did not return an account.");
       root = getAddress(account);
+      payer = null;
       await ensureChain(ethereum, input.chain);
       rememberWallet(input.chain, input.rdns || readStoredWallet()?.rdns || wallets[0]?.rdns || "window.ethereum");
       registryConfig(input.chain);
@@ -431,6 +462,7 @@ export function createLiveOnboarding(): OnboardingIO {
       const match = accounts.find((account) => account.toLowerCase() === stored.address.toLowerCase());
       if (!match) return false;
       root = getAddress(match);
+      payer = null;
       const ethereum = requireProvider();
       const current = (await ethereum.request({ method: "eth_chainId" })) as string;
       const want = inputChainId(chain);
@@ -438,7 +470,8 @@ export function createLiveOnboarding(): OnboardingIO {
       return true;
     },
     async snapshot(input) {
-      const address = requireRoot();
+      if (isSponsored() && !(await resolvePayer())) return sponsorPending(input.chain);
+      const address = owner();
       const client = publicClient(input.chain);
       const chain = chainOf(input.chain);
       const [fil, usdfc, legacy, datasets] = await Promise.all([
@@ -494,11 +527,13 @@ export function createLiveOnboarding(): OnboardingIO {
       };
     },
     async authorize(choice, force = false, report?: ChainReporter) {
-      const address = requireRoot();
+      if (isSponsored()) await resolvePayer();
+      const address = owner();
       const chain = chainOf(choice);
       const now = BigInt(Math.floor(Date.now() / 1000));
       const existing = loadSession(chain.id, address);
       if (!force && existing && (await gateFor(choice)) !== "expired") return;
+      if (payer) return authorizeSponsored(choice, payer, existing?.privateKey ?? generatePrivateKey(), now + BigInt(SESSION_TTL_SEC), report);
       const privateKey = existing?.privateKey ?? generatePrivateKey();
       const sessionKey = fromSecp256k1({
         privateKey,
@@ -552,7 +587,7 @@ export function createLiveOnboarding(): OnboardingIO {
       return gateFor(choice);
     },
     async refundSession(choice, report?: ChainReporter) {
-      const address = requireRoot();
+      const address = owner();
       const chain = chainOf(choice);
       const stored = loadSession(chain.id, address);
       if (!stored) return { refunded: 0n };
@@ -560,7 +595,8 @@ export function createLiveOnboarding(): OnboardingIO {
       const reader = publicClient(choice);
       const balance = await reader.getBalance({ address: account.address });
       let refunded = 0n;
-      if (balance > 0n) {
+      // Gasless mode: the session key never holds FIL, so there is nothing to refund; just forget it.
+      if (balance > 0n && !payer) {
         const fees = await reader.estimateFeesPerGas();
         const maxFee = fees.maxFeePerGas ?? (await reader.getGasPrice());
         const gas = await reader.estimateGas({ account, to: address, value: 1n }).catch(() => 3_000_000n);
@@ -580,6 +616,13 @@ export function createLiveOnboarding(): OnboardingIO {
       return { refunded };
     },
     async fixPayments(choice, report?: ChainReporter, force = false) {
+      if (isSponsored()) {
+        report?.({ flow: "payment", phase: "signing", label: intentText(INTENTS.sponsoredCredits) });
+        const funded = await fundSponsoredAccount(requireRoot());
+        payer = funded.account;
+        for (const hash of funded.hashes) report?.({ flow: "payment", phase: "done", hash });
+        return;
+      }
       const address = requireRoot();
       const { Synapse } = await import("@filoz/synapse-sdk");
       const synapse = new Synapse({
@@ -602,6 +645,15 @@ export function createLiveOnboarding(): OnboardingIO {
       report?.({ flow: "payment", phase: "done", hash });
     },
     async createDataset(input) {
+      if (isSponsored()) {
+        const account = (await resolvePayer()) ?? (await fundSponsoredAccount(requireRoot())).account;
+        payer = account;
+        const createdAt = new Date().toISOString();
+        const made = await createSponsoredDataset(requireRoot(), { app: "fifolders", volume: input.volumeName, created: createdAt });
+        saveLastDataset(chainOf(input.chain).id, account, made.dataSetId);
+        selectedDataset = made.dataSetId;
+        return;
+      }
       const address = requireRoot();
       const session = await sessionFor(input.chain, address);
       const { Synapse } = await import("@filoz/synapse-sdk");
@@ -633,11 +685,12 @@ export function createLiveOnboarding(): OnboardingIO {
     },
     selectDataset(id, choice) {
       selectedDataset = id;
-      if (root) saveLastDataset(chainOf(choice).id, root, id);
+      if (root) saveLastDataset(chainOf(choice).id, owner(), id);
     },
     async enter(input) {
       reportLoadStep("Finding your folders…");
-      const address = requireRoot();
+      if (isSponsored()) await resolvePayer();
+      const address = owner();
       const chain = chainOf(input.chain);
       const config = registryConfig(input.chain);
       const client = publicClient(input.chain);
@@ -649,7 +702,8 @@ export function createLiveOnboarding(): OnboardingIO {
       const synapse = Synapse.create({
         account: address,
         chain,
-        transport: walletWithPublicReads(requireProvider(), rpcOf(input.chain)),
+        // Gasless: the payer is a contract, so nothing may go through the wallet; the session key signs.
+        transport: payer ? publicTransport(input.chain) : walletWithPublicReads(requireProvider(), rpcOf(input.chain)),
         source: "fifolders",
         sessionKey: session,
       });
@@ -664,7 +718,8 @@ export function createLiveOnboarding(): OnboardingIO {
       installPieceDetails(input.chain, datasetId, synapse);
       const storage = withProviderFallback(createSynapseStorage(synapse, {
         ...storageOptions,
-        copies: 2,
+        // Gasless: the sponsor opened one dataset; a second copy would need a second sponsored dataset.
+        copies: payer ? 1 : 2,
         onReplication: (notice) => {
           const checkpoint: UploadCheckpoint = {
             phase: notice.phase,
@@ -677,7 +732,10 @@ export function createLiveOnboarding(): OnboardingIO {
           saveCheckpoint(`${address.toLowerCase()}:${input.volumeName}`, checkpoint);
         },
       }), input.chain);
-      const registryWallet = legacy
+      const stored = loadSession(chain.id, address);
+      const registryWallet = payer && stored
+        ? createWalletClient({ account: payer, chain, transport: sponsoredTransport({ rpc: rpcOf(input.chain), chainId: chain.id, account: payer, sessionKey: stored.privateKey }) })
+        : legacy
         ? await walletClient(input.chain)
         : createWalletClient({
             account: privateKeyToAccount(loadSession(chain.id, address)!.privateKey),
@@ -691,7 +749,8 @@ export function createLiveOnboarding(): OnboardingIO {
           publicClient: client,
           walletClient: registryWallet,
           fromBlock: config.fromBlock,
-          signer: legacy ? "auto" : "session-key",
+          // Gasless: the account itself is the owner, so commits go to `commit` (allowlisted), not `commitFor`.
+          signer: legacy || payer ? "auto" : "session-key",
         }),
       );
       const cacheKey = `fifolders:volume-sig:${chain.id}:${address.toLowerCase()}:${config.address.toLowerCase()}:${input.volumeName}`;
@@ -727,12 +786,20 @@ export function createLiveOnboarding(): OnboardingIO {
         encrypted: input.encrypt,
         volumeName: input.volumeName,
         cas: observed.cas,
+        ...(payer
+          ? {
+              removalAdapters: liveRemovalAdapters({
+                client,
+                context: (id) => synapse.storage.createContext({ dataSetId: BigInt(id), withCDN: false }) as never,
+              }),
+            }
+          : {}),
       };
       return opened;
     },
     async peek(input) {
       reportLoadStep("Finding your folders…");
-      const owner = input.owner ?? root ?? readStoredWallet()?.address;
+      const owner = input.owner ?? payer ?? root ?? readStoredWallet()?.address;
       if (!owner) return null;
       const address = getAddress(owner);
       const chain = chainOf(input.chain);
@@ -767,8 +834,26 @@ export function createLiveOnboarding(): OnboardingIO {
     async reopen(input) {
       return this.enter(input);
     },
+    async terminateDataset(choice, datasetId) {
+      const address = owner();
+      const chain = chainOf(choice);
+      const data = encodeFunctionData({
+        abi: [{ type: "function", name: "terminateService", stateMutability: "nonpayable", inputs: [{ name: "dataSetId", type: "uint256" }], outputs: [] }],
+        functionName: "terminateService",
+        args: [BigInt(datasetId)],
+      });
+      if (payer) {
+        const stored = loadSession(chain.id, address);
+        if (!stored) throw new Error("Authorize the session key first.");
+        const key = privateKeyToAccount(stored.privateKey);
+        return relayExecute({ client: publicClient(choice), chainId: chain.id, account: payer, target: chain.contracts.fwss.address, data, sign: (typed) => key.signTypedData(typed) });
+      }
+      const client = await walletClient(choice);
+      return client.sendTransaction({ account: address, chain, to: chain.contracts.fwss.address, data });
+    },
     disconnect() {
       root = null;
+      payer = null;
       provider = null;
       localStorage.removeItem("fifolders:wallet-permitted");
       localStorage.removeItem(walletStorageKey());
@@ -786,6 +871,7 @@ export function createLiveOnboarding(): OnboardingIO {
     const stored = loadSession(chain.id, address);
     if (!stored) throw new Error("Authorize the session key first.");
     const expiry = BigInt(stored.expiry);
+    if (payer) return sponsoredSessionKey(choice, stored);
     const sessionKey = fromSecp256k1({
       privateKey: stored.privateKey,
       root: address,
@@ -810,6 +896,80 @@ export function createLiveOnboarding(): OnboardingIO {
     const expiries = fifoldersPermissions().map((permission) => sessionKey.expirations[permission] ?? 0n);
     if (sessionGateFromExpiries(expiries, now) === "expired") throw new Error(SESSION_PERMISSION_ERROR);
     return sessionKey;
+  }
+
+  /** Gasless login: the wallet signs one Execute(addSessionKey) (free); the sponsor submits it. */
+  async function authorizeSponsored(choice: ChainChoice, account: Address, privateKey: Hex, expiresAt: bigint, report?: ChainReporter): Promise<void> {
+    const chain = chainOf(choice);
+    const sessionAddress = privateKeyToAccount(privateKey).address;
+    const client = await walletClient(choice);
+    report?.({ flow: "session", phase: "signing", label: intentText(INTENTS.sponsoredSession) });
+    const hash = await withWalletIntent(INTENTS.sponsoredSession, () =>
+      relayExecute({
+        client: publicClient(choice),
+        chainId: chain.id,
+        account,
+        target: account,
+        data: addSessionKeyData(sessionAddress, expiresAt),
+        sign: (typed) => client.signTypedData({ account: requireRoot(), ...typed }),
+      }),
+    );
+    signatures += SIGNATURES.sessionLogin;
+    const receipt = await watchReceipt(choice, hash, "session", report);
+    if (receipt.status !== "success") throw new Error("Session key login failed.");
+    report?.({ flow: "session", phase: "done", hash });
+    saveSession({ v: 1, chainId: chain.id, root: account, privateKey, sessionAddress, expiry: expiresAt.toString() });
+    confirmedLogins.set(sessionAddress.toLowerCase(), Date.now());
+  }
+
+  /**
+   * Session key under the sponsored account. It holds AddPieces + SchedulePieceRemovals on chain, never CreateDataSet
+   * (the sponsor opens datasets). synapse-sdk 0.40 refuses keys without its default scopes, so the unused
+   * CreateDataSet / DeleteDataSet entries are set locally only; a provider would reject any such signature.
+   */
+  async function sponsoredSessionKey(choice: ChainChoice, stored: StoredSession) {
+    const now = BigInt(Math.floor(Date.now() / 1000));
+    let expiry = BigInt(stored.expiry);
+    if (!justAuthorized(stored, now)) {
+      const expiries = await onchainExpiries(choice, stored.sessionAddress).catch(() => [expiry]);
+      if (sessionGateFromExpiries(expiries, now) === "expired") throw new Error(SESSION_PERMISSION_ERROR);
+      expiry = expiries.reduce((min, value) => (value < min ? value : min));
+    }
+    return fromSecp256k1({
+      privateKey: stored.privateKey,
+      root: stored.root,
+      chain: chainOf(choice),
+      transport: withTransientRetry(http(rpcOf(choice))),
+      expirations: {
+        [CreateDataSetPermission]: expiry,
+        [AddPiecesPermission]: expiry,
+        [SchedulePieceRemovalsPermission]: expiry,
+        [DeleteDataSetPermission]: expiry,
+      },
+    });
+  }
+
+  /** Gasless mode before the sponsor created the account: nothing to show yet, payment step pending. */
+  function sponsorPending(choice: ChainChoice): WalletPanel {
+    void choice;
+    return {
+      address: requireRoot(),
+      fil: "0",
+      usdfc: "0",
+      deposit: "0",
+      availableFunds: "0",
+      lockupRate: "0",
+      paymentsReady: false,
+      sessionReady: false,
+      sessionExpiry: "",
+      datasets: [],
+      selectedDatasetId: "",
+      createPrimary: true,
+      autoPicked: false,
+      legacyRegistry: false,
+      signatures,
+      connectPrompts,
+    };
   }
 
   async function watchReceipt(choice: ChainChoice, hash: Hex, flow: "session" | "payment", report?: ChainReporter) {

@@ -12,3 +12,4 @@ coverage/
 apps/fifolders/test-results/
 apps/fifolders/playwright-report/
 apps/fifolders/blob-report/
+apps/fifolders/sponsor/sponsor-state*.json
