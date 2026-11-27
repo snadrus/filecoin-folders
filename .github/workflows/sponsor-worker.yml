@@ -32,8 +32,8 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Build sponsored-client
-        run: pnpm --filter @fifolders/sponsored-client build
+      - name: Build workspace packages the worker imports
+        run: pnpm --filter fil-folders build && pnpm --filter @fifolders/sponsored-client build
       - name: Typecheck worker
         working-directory: apps/fifolders/sponsor
         run: npx tsc -p tsconfig.worker.json
