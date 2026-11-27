@@ -31,16 +31,41 @@ export async function sponsoredCreditStatus(
   return sponsorCall(`/credits?session=${encodeURIComponent(sessionId)}`, undefined, chain ?? readNetworkPreference());
 }
 
+export function creditLooksReady(status: { status?: string; account?: Address | string | null }): boolean {
+  return Boolean(status.account && (status.status === "done" || status.status === "included"));
+}
+
+/** The sponsor flipped a previously-ready credit back to pending (revert, drop, or reorg). */
+export function creditReturnedToPending(status: { status?: string }): boolean {
+  return status.status === "pending" || status.status === "failed";
+}
+
+export const CHECKOUT_SESSION_KEY = "fifolders.sponsoredCheckout";
+
+export function rememberCheckoutSession(sessionId: string): void {
+  try {
+    if (typeof sessionStorage !== "undefined") sessionStorage.setItem(CHECKOUT_SESSION_KEY, sessionId);
+  } catch { /* private mode */ }
+}
+
+export function rememberedCheckoutSession(): string | null {
+  try {
+    if (typeof sessionStorage !== "undefined") return sessionStorage.getItem(CHECKOUT_SESSION_KEY);
+  } catch { /* private mode */ }
+  return null;
+}
+
 /** After Stripe redirects back: wait until the sponsor has applied the payment (pool handover is one tx). */
 export async function waitForCredit(
+
   sessionId: string,
   opts: { timeoutMs?: number; intervalMs?: number; chain?: ChainChoice } = {},
 ): Promise<{ status: string; account?: Address }> {
   const end = Date.now() + (opts.timeoutMs ?? 15 * 60_000);
   for (;;) {
     const status = await sponsoredCreditStatus(sessionId, opts.chain);
-    // Ready on inclusion: the sponsor sets `account` as soon as assign is in a block (not F3 finality).
-    if (status.account && (status.status === "done" || status.status === "included")) return status;
+    // Ready when assign appears in a new head (optimistic; a later pending means revert/drop/reorg).
+    if (creditLooksReady(status)) return status;
     if (status.status === "failed" || status.status === "unknown" || status.status === "refunded" || Date.now() > end) return status;
     await new Promise((resolve) => setTimeout(resolve, opts.intervalMs ?? 1_000));
   }
@@ -62,6 +87,7 @@ export async function settleReturnedCheckout(opts: { chain?: ChainChoice; timeou
   const params = new URLSearchParams(window.location.search);
   const sessionId = params.get("session_id");
   if (params.get("checkout") !== "success" || !sessionId) return null;
+  rememberCheckoutSession(sessionId);
   const status = await waitForCredit(sessionId, { timeoutMs: opts.timeoutMs, chain: opts.chain }).catch(() => null);
   params.delete("checkout");
   params.delete("session_id");

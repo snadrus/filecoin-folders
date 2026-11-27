@@ -37,6 +37,12 @@ import {
   findSponsoredAccount,
   passkeySponsorSigner,
   waitForCredit,
+  sponsoredCreditStatus,
+  creditLooksReady,
+  creditReturnedToPending,
+  CHECKOUT_SESSION_KEY,
+  rememberCheckoutSession,
+  rememberedCheckoutSession,
   isSponsored,
   sessionSponsorSigner,
   DEFAULT_SPONSOR_LIMITS,
@@ -161,6 +167,21 @@ export function createLiveOnboarding(options: LiveOnboardingOptions = {}): Onboa
   let root: Address | null = null;
   /** Gasless mode: the sponsor-created LockedSignerAccount that pays and owns the volume. `root` only signs. */
   let payer: Address | null = null;
+  let checkoutSessionId: string | null = rememberedCheckoutSession();
+  let sponsoredCreditReady = false;
+
+  async function refreshSponsoredCredit(): Promise<void> {
+    if (!checkoutSessionId) return;
+    const status = await sponsoredCreditStatus(checkoutSessionId).catch(() => undefined);
+    if (!status) return;
+    if (creditLooksReady(status) && status.account) {
+      sponsoredCreditReady = true;
+      payer = getAddress(status.account);
+    } else if (creditReturnedToPending(status)) {
+      sponsoredCreditReady = false;
+    }
+  }
+
   /** Gasless mode, passkey sign-in: the P-256 owner (no wallet, `root` stays null). */
   let passkey: PasskeyPublicKey | null = null;
   let signatures = 0;
@@ -194,12 +215,17 @@ export function createLiveOnboarding(options: LiveOnboardingOptions = {}): Onboa
       const params = new URLSearchParams(window.location.search);
       const sessionId = params.get("session_id");
       if (params.get("checkout") !== "success" || !sessionId) return;
+      checkoutSessionId = sessionId;
+      rememberCheckoutSession(sessionId);
       const status = await waitForCredit(sessionId).catch(() => undefined);
-      if (status?.account) {
+      if (status && creditLooksReady(status) && status.account) {
+        sponsoredCreditReady = true;
         payer = getAddress(status.account);
         for (const chainId of [calibration.id, mainnet.id]) {
           if (loadPendingSession(chainId)) bindPendingSession(chainId, payer);
         }
+      } else if (status && creditReturnedToPending(status)) {
+        sponsoredCreditReady = false;
       }
       params.delete("checkout");
       params.delete("session_id");
@@ -637,6 +663,7 @@ export function createLiveOnboarding(options: LiveOnboardingOptions = {}): Onboa
       const autoPicked = wasAutoPicked(datasets, remembered, chosen.selectedId);
       selectedDataset = chosen.selectedId ?? "";
       const pay = await readPayments(input.chain, address);
+      if (isSponsored()) await refreshSponsoredCredit();
       return {
         address,
         fil: formatToken(fil),
@@ -644,7 +671,7 @@ export function createLiveOnboarding(options: LiveOnboardingOptions = {}): Onboa
         deposit: formatToken(pay.deposited),
         availableFunds: pay.availableFunds.toString(),
         lockupRate: pay.lockupRate.toString(),
-        paymentsReady: paymentsReady(pay.deposited, pay.approved),
+        paymentsReady: paymentsReady(pay.deposited, pay.approved) || (isSponsored() && sponsoredCreditReady),
         sessionReady,
         sessionExpiry: sessionReady ? formatExpiry(soonest) : "",
         datasets,

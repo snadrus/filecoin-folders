@@ -2,8 +2,9 @@
 // viem's waitForTransactionReceipt walks blocks by number to detect replacements; on Filecoin an epoch can be a
 // null round ("requested epoch was a null round"), which makes that walk throw even though the tx is fine.
 //
-// Glif's eth_getTransactionReceipt can lag a full epoch after a block is produced. We also poll new heads via
-// eth_getBlockReceipts("latest") / eth_getBlockByNumber (and optional extra RPCs) so ready can track block time.
+// Glif's eth_getTransactionReceipt can lag a full epoch after a block is produced. Ready is marked when our tx
+// appears in a new head's transactions (eth_getBlockByNumber with txs), before an execution receipt is required.
+// Receipt status is confirmed in the background; a revert, drop, or reorg unwinds the credit.
 import type { Hex, Log, PublicClient, TransactionReceipt } from "viem";
 
 export async function jsonRpc<T>(
@@ -172,10 +173,150 @@ export async function waitForReceipt(
   }
 }
 
+export function txHashesInBlock(transactions: unknown[] | undefined): string[] {
+  if (!Array.isArray(transactions)) return [];
+  return transactions
+    .map((tx) => {
+      if (typeof tx === "string") return tx.toLowerCase();
+      if (tx && typeof tx === "object" && "hash" in (tx as { hash?: unknown })) return String((tx as { hash: string }).hash).toLowerCase();
+      return "";
+    })
+    .filter(Boolean);
+}
+
+export interface HeadInclusion {
+  hash: Hex;
+  blockNumber: bigint;
+  blockHash: Hex;
+}
+
+async function lookupTxInHeadOnRpc(url: string, hash: Hex, opts: ReceiptLookupOpts): Promise<HeadInclusion | undefined> {
+  const want = hash.toLowerCase();
+  const head = await jsonRpc<string>(url, "eth_blockNumber", [], opts).catch(() => undefined);
+  const tags = new Set<string>(["latest"]);
+  if (head) {
+    const n = BigInt(head);
+    for (let i = 0; i <= 2; i += 1) {
+      if (n >= BigInt(i)) tags.add(`0x${(n - BigInt(i)).toString(16)}`);
+    }
+  }
+  const jobs = [...tags].map(async (tag) => {
+    const block = await jsonRpc<{ hash?: string; number?: string; transactions?: unknown[] } | null>(
+      url,
+      "eth_getBlockByNumber",
+      [tag, true],
+      opts,
+    ).catch(() => null);
+    if (!block?.hash || block.number == null) return undefined;
+    if (!txHashesInBlock(block.transactions).includes(want)) return undefined;
+    return { hash, blockNumber: BigInt(block.number), blockHash: block.hash as Hex };
+  });
+  return await new Promise((resolve) => {
+    let left = jobs.length;
+    if (!left) { resolve(undefined); return; }
+    for (const job of jobs) {
+      void job.then((row) => { if (row) resolve(row); }, () => undefined).finally(() => {
+        left -= 1;
+        if (left === 0) resolve(undefined);
+      });
+    }
+  });
+}
+
+/**
+ * Resolve when `hash` appears in a new head's transaction list (no execution receipt required).
+ * A successful receipt is also accepted, so callers can share this with the receipt fallback.
+ * A reverted receipt is returned as inclusion plus `reverted: true` so the caller can refuse to mark ready.
+ */
+type HeadClient = {
+  // viem PublicClient is not assignable to a narrow getBlock signature.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  getTransactionReceipt?: (args: { hash: Hex }) => Promise<any>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  getBlock?: (...args: any[]) => Promise<any>;
+  getBlockNumber?: () => Promise<bigint>;
+};
+
+export async function waitForTxInHead(
+  client: HeadClient,
+  hash: Hex,
+  opts: { timeoutMs?: number; pollMs?: number; rpcUrls?: string[]; fetch?: typeof fetch } = {},
+): Promise<HeadInclusion & { reverted?: boolean }> {
+  const deadline = Date.now() + (opts.timeoutMs ?? 10 * 60_000);
+  const poll = opts.pollMs ?? 1_000;
+  const urls = [...new Set(opts.rpcUrls ?? [])];
+  const want = hash.toLowerCase();
+  let last: unknown;
+  for (;;) {
+    const jobs: Promise<(HeadInclusion & { reverted?: boolean }) | undefined>[] = [];
+    if (client.getBlock) {
+      jobs.push((async () => {
+        const tags: Array<{ blockTag?: "latest"; blockNumber?: bigint }> = [{ blockTag: "latest" }];
+        if (client.getBlockNumber) {
+          try {
+            const n = await client.getBlockNumber();
+            for (let i = 0; i <= 2; i += 1) if (n >= BigInt(i)) tags.push({ blockNumber: n - BigInt(i) });
+          } catch (error) {
+            last = error;
+          }
+        }
+        for (const tag of tags) {
+          try {
+            const block = await client.getBlock!({ ...tag, includeTransactions: true } as never);
+            if (!block?.hash || block.number == null) continue;
+            if (txHashesInBlock(block.transactions).includes(want)) {
+              return { hash, blockNumber: BigInt(block.number), blockHash: block.hash as Hex };
+            }
+          } catch (error) {
+            last = error;
+          }
+        }
+        return undefined;
+      })());
+    }
+    for (const url of urls) {
+      jobs.push(lookupTxInHeadOnRpc(url, hash, { timeoutMs: Math.min(poll + 1_000, 4_000), fetch: opts.fetch }));
+    }
+    if (client.getTransactionReceipt) {
+      jobs.push((async () => {
+        try {
+          const receipt = await Promise.race([
+            client.getTransactionReceipt!({ hash }),
+            new Promise<never>((_, reject) => setTimeout(() => reject(new Error("receipt poll timeout")), Math.min(poll, 1_500))),
+          ]);
+          if (!receipt?.blockHash) return undefined;
+          return {
+            hash,
+            blockNumber: BigInt(receipt.blockNumber ?? 0),
+            blockHash: receipt.blockHash as Hex,
+            reverted: receipt.status === "reverted",
+          };
+        } catch (error) {
+          last = error;
+          return undefined;
+        }
+      })());
+    }
+    const found = await new Promise<(HeadInclusion & { reverted?: boolean }) | undefined>((resolve) => {
+      let left = jobs.length;
+      if (!left) { resolve(undefined); return; }
+      for (const job of jobs) {
+        void job.then((row) => { if (row) resolve(row); }, () => undefined).finally(() => {
+          left -= 1;
+          if (left === 0) resolve(undefined);
+        });
+      }
+    });
+    if (found) return found;
+    if (Date.now() >= deadline) throw new Error(`timed out waiting for ${hash} in a new head: ${last instanceof Error ? last.message.split("\n")[0] : String(last)}`);
+    await new Promise((resolve) => setTimeout(resolve, poll));
+  }
+}
+
 /** Filecoin fallback when `finalized` / F3 is unavailable (~30s epochs). */
 export const FINALITY_EPOCHS = 900;
 
-export type ReceiptFate = "included" | "finalized" | "dropped";
+export type ReceiptFate = "included" | "finalized" | "dropped" | "reverted";
 
 export interface RecordedInclusion {
   hash: Hex;
@@ -184,30 +325,52 @@ export interface RecordedInclusion {
 }
 
 /**
- * Re-check a previously included receipt until F3/`finalized` or head is >= block+900.
- * A missing receipt or a different block hash at the recorded number means the tx was dropped or reorged out.
- * If the same hash was re-included in a new block, returns "included" (caller should update the recorded hash/number).
+ * Re-check a previously included tx until F3/`finalized` or head is >= block+900.
+ * A reverted execution receipt is "reverted". A missing receipt is not a drop if the tx is still in the
+ * recorded head (RPC receipt lag). A missing receipt plus a changed block hash or a block that no longer
+ * lists the tx is "dropped". If the same hash was re-included in a new block, returns "included".
  */
 export async function receiptFate(
-  client: {
-    getTransactionReceipt: (args: { hash: Hex }) => Promise<TransactionReceipt>;
-    getBlockNumber?: () => Promise<bigint>;
-    getBlock?: (args: never) => Promise<{ number?: bigint | null; hash?: Hex | null }>;
-  },
+  client: HeadClient & { getTransactionReceipt: NonNullable<HeadClient["getTransactionReceipt"]> },
   recorded: RecordedInclusion,
   opts: { finalityEpochs?: number } = {},
 ): Promise<{ fate: ReceiptFate; blockNumber?: bigint; blockHash?: Hex }> {
   const wantNumber = BigInt(recorded.blockNumber);
   const wantHash = recorded.blockHash.toLowerCase();
-  let receipt: TransactionReceipt | undefined;
+  let receipt: Awaited<ReturnType<NonNullable<HeadClient["getTransactionReceipt"]>>> | undefined;
   try {
     receipt = await client.getTransactionReceipt({ hash: recorded.hash });
   } catch {
     receipt = undefined;
   }
-  if (!receipt?.blockHash) return { fate: "dropped" };
+
+  const stillInRecordedBlock = async (): Promise<"present" | "absent" | "unknown"> => {
+    if (!client.getBlock) return "unknown";
+    try {
+      let at: { number?: bigint | null; hash?: Hex | null; transactions?: unknown[] } | undefined;
+      try {
+        at = await client.getBlock({ blockHash: recorded.blockHash, includeTransactions: true } as never);
+      } catch {
+        at = await client.getBlock({ blockNumber: wantNumber, includeTransactions: true } as never);
+      }
+      if (!at?.hash) return "unknown";
+      if (at.hash.toLowerCase() !== wantHash) return "absent";
+      if (at.transactions == null) return "unknown";
+      return txHashesInBlock(at.transactions).includes(recorded.hash.toLowerCase()) ? "present" : "absent";
+    } catch {
+      return "unknown";
+    }
+  };
+
+  if (!receipt?.blockHash) {
+    const inBlock = await stillInRecordedBlock();
+    if (inBlock === "absent") return { fate: "dropped" };
+    return { fate: "included", blockNumber: wantNumber, blockHash: recorded.blockHash };
+  }
+
   const blockNumber = BigInt(receipt.blockNumber);
   const blockHash = receipt.blockHash as Hex;
+  if (receipt.status === "reverted") return { fate: "reverted", blockNumber, blockHash };
   if (blockNumber === wantNumber && blockHash.toLowerCase() !== wantHash) return { fate: "dropped" };
   if (client.getBlock) {
     try {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { receiptFromRpc, receiptRpcUrls, waitForReceipt } from "../src/receipt.js";
+import { receiptFate, receiptFromRpc, receiptRpcUrls, waitForReceipt, waitForTxInHead } from "../src/receipt.js";
 
 describe("waitForReceipt", () => {
   it("keeps polling through not-found and null-round errors", async () => {
@@ -137,5 +137,53 @@ describe("receiptRpcUrls", () => {
     expect(urls.some((url) => url.includes("ankr.com"))).toBe(true);
     expect(urls.some((url) => url.includes("drpc.org"))).toBe(true);
     expect(new Set(urls).size).toBe(urls.length);
+  });
+});
+
+describe("waitForTxInHead", () => {
+  it("resolves when the tx is in the latest block even if getTransactionReceipt is still missing", async () => {
+    const hash = "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
+    const blockHash = "0x" + "11".repeat(32);
+    const client = {
+      getTransactionReceipt: async () => { throw new Error("not found"); },
+      getBlock: async () => ({ number: 50n, hash: blockHash, transactions: [hash] }),
+      getBlockNumber: async () => 50n,
+    };
+    const found = await waitForTxInHead(client, hash, { pollMs: 1, timeoutMs: 500 });
+    expect(found.blockNumber).toBe(50n);
+    expect(found.blockHash).toBe(blockHash);
+    expect(found.reverted).toBeFalsy();
+  });
+});
+
+describe("receiptFate", () => {
+  const hash = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" as const;
+  const blockHash = ("0x" + "22".repeat(32)) as `0x${string}`;
+  const recorded = { hash, blockNumber: 50n, blockHash };
+
+  it("treats a missing receipt as included while the tx is still in the recorded head", async () => {
+    const client = {
+      getTransactionReceipt: async () => { throw new Error("not found"); },
+      getBlock: async () => ({ number: 50n, hash: blockHash, transactions: [hash] }),
+      getBlockNumber: async () => 50n,
+    };
+    expect((await receiptFate(client, recorded)).fate).toBe("included");
+  });
+
+  it("returns reverted when the execution receipt status is reverted", async () => {
+    const client = {
+      getTransactionReceipt: async () => ({ status: "reverted", blockNumber: 50n, blockHash, transactionHash: hash }),
+      getBlock: async () => ({ number: 50n, hash: blockHash, transactions: [hash] }),
+    };
+    expect((await receiptFate(client, recorded)).fate).toBe("reverted");
+  });
+
+  it("returns dropped when the recorded block no longer lists the tx", async () => {
+    const client = {
+      getTransactionReceipt: async () => { throw new Error("not found"); },
+      getBlock: async () => ({ number: 50n, hash: blockHash, transactions: [] }),
+      getBlockNumber: async () => 50n,
+    };
+    expect((await receiptFate(client, recorded)).fate).toBe("dropped");
   });
 });

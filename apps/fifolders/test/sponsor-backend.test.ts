@@ -172,6 +172,9 @@ describe("sponsor server (fake chain)", () => {
     const clock = { value: Date.now() };
     const onChainUnassigned = new Map<string, boolean>();
     const droppedReceipts = new Set<string>();
+    const revertedReceipts = new Set<string>();
+    const blockTxs: string[] = [];
+    const receiptsHidden = { value: false };
     const factoryAccounts = new Set<string>();
     const block = { number: 1000n, hash: (`0x${"ab".repeat(32)}`) as Hex };
     const predicted = (args: readonly unknown[]) => getAddress(keccak256(toHex(JSON.stringify(args, (_, v) => (typeof v === "bigint" ? v.toString() : v)))).slice(0, 42));
@@ -193,14 +196,15 @@ describe("sponsor server (fake chain)", () => {
         return 10n ** 20n;
       },
       async getTransactionReceipt({ hash }: { hash: Hex }) {
-        if (droppedReceipts.has(hash.toLowerCase())) throw new Error("not found");
+        if (receiptsHidden.value || droppedReceipts.has(hash.toLowerCase())) throw new Error("not found");
+        if (revertedReceipts.has(hash.toLowerCase())) return { status: "reverted", transactionHash: hash, logs: [], blockNumber: block.number, blockHash: block.hash };
         return { status: "success", transactionHash: hash, logs: [], blockNumber: block.number, blockHash: block.hash };
       },
       async getBlockNumber() {
         return block.number;
       },
       async getBlock() {
-        return { number: block.number, hash: block.hash };
+        return { number: block.number, hash: block.hash, transactions: blockTxs.slice() };
       },
       async call() {
         return { data: "0x" };
@@ -224,7 +228,9 @@ describe("sponsor server (fake chain)", () => {
           if (decoded.functionName === "createPooled") factoryAccounts.add(predicted([getAddress(`0x${"0".repeat(40)}`), `0x${"0".repeat(64)}`, `0x${"0".repeat(64)}`, ...(decoded.args as readonly unknown[])]).toLowerCase());
           if (decoded.functionName === "create") factoryAccounts.add(predicted(decoded.args as readonly unknown[]).toLowerCase());
         }
-        return `0x${(++n).toString(16).padStart(64, "0")}` as Hex;
+        const sentHash = `0x${(++n).toString(16).padStart(64, "0")}` as Hex;
+        blockTxs.push(sentHash);
+        return sentHash;
       },
       async relay(call: { label: string; to?: Address; data: Hex }) {
         const hash = await this.send(call);
@@ -271,7 +277,7 @@ describe("sponsor server (fake chain)", () => {
       const response = await fetch(`${base}${path}`);
       return { status: response.status, json: (await response.json()) as Record<string, unknown> };
     };
-    return { sponsor, sends, post, get, as, pay, opened, factoryAccounts, sponsorUsdfc, clock, onChainUnassigned, droppedReceipts, block };
+    return { sponsor, sends, post, get, as, pay, opened, factoryAccounts, sponsorUsdfc, clock, onChainUnassigned, droppedReceipts, revertedReceipts, receiptsHidden, blockTxs, block };
   }
 
   const newUser = () => {
@@ -557,7 +563,7 @@ describe("sponsor server (fake chain)", () => {
   });
 
   it("flips a credit back to pending when its handover receipt was dropped", async () => {
-    const { sponsor, as, pay, get, droppedReceipts, onChainUnassigned } = await start({ pool: 1 });
+    const { sponsor, as, pay, get, droppedReceipts, onChainUnassigned, blockTxs, block } = await start({ pool: 1 });
     await sponsor.refillPool();
     const user = newUser();
     expect((await as(user.signed)("checkout", checkoutBody(5))).status).toBe(200);
@@ -570,6 +576,9 @@ describe("sponsor server (fake chain)", () => {
     const account = credit.account!;
     const hash = credit.inclusion![0]!.hash;
     droppedReceipts.add(hash.toLowerCase());
+    const idx = blockTxs.indexOf(hash);
+    if (idx >= 0) blockTxs.splice(idx, 1);
+    block.hash = `0x${"cd".repeat(32)}` as typeof block.hash;
     onChainUnassigned.set(account.toLowerCase(), true);
     const tick = await sponsor.cronTick();
     expect(tick.finality.dropped).toContain("cs_drop");
@@ -581,6 +590,56 @@ describe("sponsor server (fake chain)", () => {
       expect(after.status).toBe("pending");
       expect(after.account).toBeUndefined();
       expect((await get("/credits?session=cs_drop")).json).toMatchObject({ status: "pending" });
+    }
+  });
+
+  it("marks a credit ready when the assign tx is in a new head before a receipt exists", async () => {
+    const { sponsor, as, pay, get, receiptsHidden, blockTxs } = await start({ pool: 1 });
+    await sponsor.refillPool();
+    const user = newUser();
+    expect((await as(user.signed)("checkout", checkoutBody(5))).status).toBe(200);
+    receiptsHidden.value = true;
+    await pay("cs_head", user.id, 500);
+    await sponsor.settled();
+    const credit = sponsor.state.credits.cs_head!;
+    expect(credit.status).toBe("done");
+    expect(credit.finality).toBe("included");
+    expect(credit.inclusion?.length).toBeGreaterThan(0);
+    expect(blockTxs.length).toBeGreaterThan(0);
+    expect((await get("/credits?session=cs_head")).json).toMatchObject({ status: "done", account: expect.any(String), finality: "included" });
+    receiptsHidden.value = false;
+  });
+
+  it("flips a credit back to pending when the assign receipt reverts after optimistic ready", async () => {
+    const { sponsor, as, pay, get, receiptsHidden, revertedReceipts, onChainUnassigned } = await start({ pool: 1 });
+    await sponsor.refillPool();
+    const user = newUser();
+    expect((await as(user.signed)("checkout", checkoutBody(5))).status).toBe(200);
+    receiptsHidden.value = true;
+    await pay("cs_revert", user.id, 500);
+    await sponsor.settled();
+    const credit = sponsor.state.credits.cs_revert!;
+    expect(credit.status).toBe("done");
+    const account = credit.account!;
+    const hash = credit.inclusion![0]!.hash;
+    receiptsHidden.value = false;
+    revertedReceipts.add(hash.toLowerCase());
+    onChainUnassigned.set(account.toLowerCase(), true);
+    // Background confirmer may unwind first; cron still catches it if not.
+    await new Promise((r) => setTimeout(r, 20));
+    let tick = { finality: { reverted: [] as string[], dropped: [] as string[], resubmitted: [] as string[] } };
+    const mid = sponsor.state.credits.cs_revert!;
+    if (mid.status === "done") tick = await sponsor.cronTick();
+    const after = sponsor.state.credits.cs_revert!;
+    const caught = tick.finality.reverted.includes("cs_revert") || /reverted/i.test(after.error ?? "");
+    expect(caught).toBe(true);
+    if (tick.finality.resubmitted.includes("cs_revert") || (after.status === "done" && after.hash !== hash)) {
+      expect(after.status).toBe("done");
+      expect(after.hash).not.toBe(hash);
+    } else {
+      expect(after.status).toBe("pending");
+      expect(after.account).toBeUndefined();
+      expect((await get("/credits?session=cs_revert")).json).toMatchObject({ status: "pending" });
     }
   });
 });

@@ -33,7 +33,7 @@ import { RateLimiter } from "./ratelimit.js";
 import { SponsorWalletRelayer, chainFor, publicClient, type Relayer } from "./relayer.js";
 import { sweepAccount, type SweepResult } from "./sweeplib.js";
 import { assertStripeMode, checkoutSessionIdForPaymentIntent, createCheckoutSession, estimateStripeFeeCents, fakeCheckoutSession, refundPayment, retrieveCheckoutSession, stripeFeeCents, verifyStripeSignature, type CheckoutSession, type Network } from "./stripe.js";
-import { FINALITY_EPOCHS, receiptFate, receiptRpcUrls, waitForReceipt, type RecordedInclusion } from "../src/receipt.js";
+import { FINALITY_EPOCHS, receiptFate, receiptRpcUrls, waitForReceipt, waitForTxInHead, type RecordedInclusion } from "../src/receipt.js";
 import { emptyGasState, gasStatus, lifetimeCapWei, limitsFromEnv, releaseGas, reserveGas, reservedCostWei, settleGas, GasBudgetError, type GasBudgetLimits, type GasBudgetState } from "./gas-budget.js";
 
 const ZERO32 = `0x${"0".repeat(64)}` as Hex;
@@ -551,10 +551,27 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
   }
 
   async function waitAndRecord(credit: CreditRecord, kind: string, hash: Hex): Promise<{ transactionHash: Hex; status: string; blockNumber?: bigint; blockHash?: Hex }> {
-    const receipt = await receiptWait(hash);
-    if (receipt.status !== "success") throw new Error(`${kind} reverted: ${hash}`);
-    recordInclusion(credit, kind, receipt);
-    return receipt;
+    const included = await waitForTxInHead(pub, hash, { rpcUrls: deps.pub ? undefined : receiptRpcUrls(config.network, deps.rpc) });
+    if (included.reverted) throw new Error(`${kind} reverted: ${hash}`);
+    recordInclusion(credit, kind, { transactionHash: hash, blockNumber: included.blockNumber, blockHash: included.blockHash });
+    // Cron is every 10 minutes; confirm the execution receipt in the background and unwind on revert/drop.
+    void confirmOptimisticReceipt(credit, kind, hash);
+    return { transactionHash: hash, status: "success", blockNumber: included.blockNumber, blockHash: included.blockHash };
+  }
+
+  async function confirmOptimisticReceipt(credit: CreditRecord, kind: string, hash: Hex): Promise<void> {
+    try {
+      const receipt = await receiptWait(hash);
+      if (receipt.status !== "success") {
+        await checkHandoverFinality();
+        return;
+      }
+      recordInclusion(credit, kind, receipt);
+      save();
+    } catch (error) {
+      console.warn("[sponsor] optimistic receipt confirm", kind, error);
+      try { await checkHandoverFinality(); } catch { /* cron will retry */ }
+    }
   }
 
   async function maybeInstallSession(credit: CreditRecord, account: Address): Promise<void> {
@@ -577,7 +594,7 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
     }
   }
 
-  /** Apply one paid session, at most once. Handover txs are sent back-to-back (nonce-ordered) and marked ready on inclusion. */
+  /** Apply one paid session, at most once. Handover txs are sent back-to-back (nonce-ordered) and marked ready once the assign tx appears in a new head, before an execution receipt. */
   function queueCredit(sessionId: string, credentialArg?: string): Promise<unknown> {
     creditQueue = creditQueue.then(async () => {
       const credit = state.credits[sessionId];
@@ -1112,21 +1129,21 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
 
   /**
    * Re-check included handover txs until F3/`finalized` or head >= block+900.
-   * Dropped or reorged receipts are resubmitted (if the account is still unassigned) or unwound, and the credit
+   * Dropped, reorged, or reverted execution receipts are resubmitted (if the account is still unassigned) or unwound, and the credit
    * is flipped back to pending so /status and the client stop showing it as ready.
    */
-  async function checkHandoverFinality(): Promise<{ finalized: string[]; dropped: string[]; resubmitted: string[]; unwound: string[] }> {
-    const out = { finalized: [] as string[], dropped: [] as string[], resubmitted: [] as string[], unwound: [] as string[] };
+  async function checkHandoverFinality(): Promise<{ finalized: string[]; dropped: string[]; reverted: string[]; resubmitted: string[]; unwound: string[] }> {
+    const out = { finalized: [] as string[], dropped: [] as string[], reverted: [] as string[], resubmitted: [] as string[], unwound: [] as string[] };
     for (const [id, credit] of Object.entries(state.credits)) {
       if (!credit.inclusion?.length) continue;
       if (credit.finality === "finalized") continue;
       if (credit.status !== "done" && credit.finality !== "included") continue;
-      let worst: "finalized" | "included" | "dropped" = "finalized";
+      let worst: "finalized" | "included" | "dropped" | "reverted" = "finalized";
       for (const row of credit.inclusion) {
         const recorded: RecordedInclusion = { hash: row.hash, blockNumber: row.blockNumber, blockHash: row.blockHash };
         const result = await receiptFate(pub, recorded, { finalityEpochs: FINALITY_EPOCHS });
-        if (result.fate === "dropped") {
-          worst = "dropped";
+        if (result.fate === "dropped" || result.fate === "reverted") {
+          worst = result.fate;
           break;
         }
         if (result.blockHash && result.blockNumber != null && (result.blockHash.toLowerCase() !== row.blockHash.toLowerCase() || result.blockNumber.toString() !== row.blockNumber)) {
@@ -1141,17 +1158,18 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
         save();
         continue;
       }
-      if (worst !== "dropped") {
+      if (worst === "included") {
         credit.finality = "included";
         save();
         continue;
       }
       credit.finality = "dropped";
       credit.status = "pending";
-      credit.error = "handover tx dropped or reorged; retrying";
+      credit.error = worst === "reverted" ? "handover tx reverted; retrying" : "handover tx dropped or reorged; retrying";
       const account = credit.account;
       delete credit.account;
       out.dropped.push(id);
+      if (worst === "reverted") out.reverted.push(id);
       save();
       if (credit.path === "pool" && account) {
         let unassigned = true;
