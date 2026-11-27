@@ -61,7 +61,8 @@ async function estimateDeployGas(): Promise<bigint> {
       if (i < 2) await new Promise((r) => setTimeout(r, 2_000));
     }
   }
-  throw last instanceof Error ? last : new Error(String(last));
+  const msg = last instanceof Error ? last.message : String(last);
+  throw new Error(`estimateGas failed after 3 attempts: ${msg.slice(0, 400)}`);
 }
 
 const gas = await estimateDeployGas();
@@ -99,7 +100,7 @@ if (NETWORK === "mainnet" && !report.enough) {
   process.exit(2);
 }
 
-const deployed = await relayer.relay({ label: "deploy LockedSignerAccountBeaconFactory", data });
+const deployed = await relayer.relay({ label: "deploy LockedSignerAccountBeaconFactory", data, gas: (gas * 13n) / 10n });
 const address = getAddress(deployed.contractAddress!);
 const [beacon, implementation] = await Promise.all([
   pub.readContract({ address, abi: artifact.abi, functionName: "beacon" }) as Promise<Address>,

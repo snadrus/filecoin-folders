@@ -38,7 +38,9 @@ export function chainFor(network: SponsorNetwork = NETWORK) {
 }
 
 export function rpcFor(network: SponsorNetwork = NETWORK, override?: string): string {
-  return override ?? ENV.SPONSOR_RPC ?? ENV.CALIBRATION_RPC ?? (network === "mainnet" ? "https://api.node.glif.io/rpc/v1" : "https://api.calibration.node.glif.io/rpc/v1");
+  if (override) return override;
+  if (network === "mainnet") return ENV.SPONSOR_RPC ?? ENV.MAINNET_RPC ?? "https://api.node.glif.io/rpc/v1";
+  return ENV.SPONSOR_RPC ?? ENV.CALIBRATION_RPC ?? "https://api.calibration.node.glif.io/rpc/v1";
 }
 
 export const CHAIN = chainFor(NETWORK);
