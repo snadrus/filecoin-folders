@@ -102,7 +102,22 @@ jobs:
             tail -c 4000 "$RUNNER_TEMP/deploy-v2.err" || true
             exit "$status"
           fi
-          python3 -c "import json,sys; from pathlib import Path; raw=Path(sys.argv[1]).read_text(); s,e=raw.find('{'), raw.rfind('}'); assert s>=0 and e>s, 'deploy-v2 produced no JSON'; Path(sys.argv[2]).write_text(raw[s:e+1]+chr(10)); json.loads(raw[s:e+1])" "$RUNNER_TEMP/deploy-v2.out" "$RUNNER_TEMP/deploy-v2.json"
+          python3 -c "
+import json,sys
+from pathlib import Path
+raw=Path(sys.argv[1]).read_text()
+dec=json.JSONDecoder(); objs=[]; i=0
+while True:
+    s=raw.find('{', i)
+    if s<0: break
+    try:
+        obj, end=dec.raw_decode(raw, s); objs.append(obj); i=end
+    except json.JSONDecodeError:
+        i=s+1
+recs=[o for o in objs if isinstance(o, dict) and o.get('address') and o.get('beacon')]
+assert recs, 'deploy-v2 produced no factory JSON'
+Path(sys.argv[2]).write_text(json.dumps(recs[-1], indent=2)+chr(10))
+" "$RUNNER_TEMP/deploy-v2.out" "$RUNNER_TEMP/deploy-v2.json"
           mkdir -p deployments
           cp "$RUNNER_TEMP/deploy-v2.json" "$RECORD"
           publish "$RUNNER_TEMP/deploy-v2.json"

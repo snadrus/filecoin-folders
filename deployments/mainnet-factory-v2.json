@@ -1,0 +1,27 @@
+{
+  "network": "mainnet",
+  "chainId": 314,
+  "contract": "LockedSignerAccountBeaconFactory",
+  "address": "0xA06109D9cdA71e1691d910B2DE44839F4723c83e",
+  "beacon": "0xcF97b581b8e6045173eeA187AbBAF87547e19EC1",
+  "implementation": "0xba3d86201E6BA12267de3059dBD25544DAc00627",
+  "admin": "0xa69A4eF204eA951976bd6bDaCbd932Bbd18B08Db",
+  "treasury": "0xFf00000000000000000000000000000000399a90",
+  "registry": "0x0ADf3E4fc709EAC4973Ca5D17FCfEB10eB7b01EB",
+  "fwss": "0x8408502033C418E1bbC97cE9ac48E5528F371A9f",
+  "txHash": "0x5de5264bf3b3f171ac2a9698c736a48b8ace2b6c916309af3aba4359a1ab0882",
+  "block": 6582936,
+  "gasUsed": 327661923,
+  "date": "2026-11-27",
+  "intendedBeaconOwner": "0xD62bD538bcEaB1284950E513f6Da796dD790642a",
+  "beaconOwner": "0xD62bD538bcEaB1284950E513f6Da796dD790642a",
+  "handBeaconTx": "0xdbc79ffa50bcfdfe9832607d5c797827f66bcb98cbf4ab9a7f589835a5e81ec4",
+  "handBeaconBlock": 6582938,
+  "commit": "0590270",
+  "treasuryNote": "treasury may be the recovery masked-ID; beacon ownership is transferred to Andy's Ledger 0xD62bD538bcEaB1284950E513f6Da796dD790642a immediately after deploy (not the f1 masked-ID)",
+  "verified": {
+    "filfoxFactory": "https://filfox.info/en/address/0xa06109d9cda71e1691d910b2de44839f4723c83e",
+    "filfoxDeploy": "https://filfox.info/en/message/0x5de5264bf3b3f171ac2a9698c736a48b8ace2b6c916309af3aba4359a1ab0882",
+    "filfoxHand": "https://filfox.info/en/message/0xdbc79ffa50bcfdfe9832607d5c797827f66bcb98cbf4ab9a7f589835a5e81ec4"
+  }
+}

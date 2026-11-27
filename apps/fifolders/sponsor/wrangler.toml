@@ -32,15 +32,17 @@ SPONSOR_GAS_TX_MAX_FEE_FIL = "0.01"
 SPONSOR_GAS_SESSION_DAILY_FIL = "0.02"
 SPONSOR_GAS_IP_HOURLY_FIL = "0.03"
 SPONSOR_GAS_FIL_FLOOR_FIL = "0.05"
-# Mainnet (/mainnet). Factory deployed 2026-11-26 (deployments/mainnet-factory.json): admin = sponsor 0xa69A…08Db,
-# treasury = recovery f03775120 (masked ID). SPONSOR_KEY_MAINNET is a secret. The pool and checkout stay idle until
-# the sponsor holds USDFC (refill and checkout both check balances first).
-SPONSOR_FACTORY_MAINNET = "0xaaA1795A150BA01F7A5894A3D1A95334B695F067"
+# Mainnet (/mainnet). v2 beacon factory deployed 2026-11-27 (deployments/mainnet-factory-v2.json):
+# admin = sponsor 0xa69A…08Db, treasury = recovery f03775120 (masked ID), beacon owner = Andy's Ledger 0xD62b…642a.
+# SPONSOR_KEY_MAINNET is a secret. The pool and checkout stay idle until the sponsor holds USDFC
+# (refill and checkout both check balances first). Do not add mainnet to VITE_SPONSOR_NETWORKS until then.
+SPONSOR_FACTORY_MAINNET = "0xA06109D9cdA71e1691d910B2DE44839F4723c83e"
+SPONSOR_FACTORY_LEGACY_MAINNET = "0xaaA1795A150BA01F7A5894A3D1A95334B695F067"
+SPONSOR_BEACON_MAINNET = "0xcF97b581b8e6045173eeA187AbBAF87547e19EC1"
 SPONSOR_PROVIDER_ID_MAINNET = "5"
 SPONSOR_POOL_SIZE_MAINNET = "2"
 SPONSOR_ALLOWED_ORIGINS_MAINNET = "https://fifolders.scionbase.ai/"
 SPONSOR_REGISTRY_MAINNET = "0x0ADf3E4fc709EAC4973Ca5D17FCfEB10eB7b01EB"
-# SPONSOR_FACTORY_LEGACY_MAINNET / SPONSOR_BEACON_MAINNET filled after a mainnet v2 deploy.
 
 [[durable_objects.bindings]]
 name = "SPONSOR"
