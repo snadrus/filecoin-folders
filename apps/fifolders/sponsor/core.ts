@@ -33,7 +33,7 @@ import { RateLimiter } from "./ratelimit.js";
 import { SponsorWalletRelayer, chainFor, publicClient, type Relayer } from "./relayer.js";
 import { sweepAccount, type SweepResult } from "./sweeplib.js";
 import { assertStripeMode, checkoutSessionIdForPaymentIntent, createCheckoutSession, estimateStripeFeeCents, fakeCheckoutSession, refundPayment, retrieveCheckoutSession, stripeFeeCents, verifyStripeSignature, type CheckoutSession, type Network } from "./stripe.js";
-import { FINALITY_EPOCHS, receiptFate, waitForReceipt, type RecordedInclusion } from "../src/receipt.js";
+import { FINALITY_EPOCHS, receiptFate, receiptRpcUrls, waitForReceipt, type RecordedInclusion } from "../src/receipt.js";
 import { emptyGasState, gasStatus, lifetimeCapWei, limitsFromEnv, releaseGas, reserveGas, reservedCostWei, settleGas, GasBudgetError, type GasBudgetLimits, type GasBudgetState } from "./gas-budget.js";
 
 const ZERO32 = `0x${"0".repeat(64)}` as Hex;
@@ -287,6 +287,7 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
   const pub = deps.pub ?? publicClient({ network: config.network, rpc: deps.rpc });
   if (!deps.relayer && !deps.sponsorKey) throw new Error("Set SPONSOR_KEY");
   const relayer = deps.relayer ?? new SponsorWalletRelayer(deps.sponsorKey!, { network: config.network, rpc: deps.rpc });
+  const receiptWait = (hash: Hex) => waitForReceipt(pub, hash, { rpcUrls: deps.pub ? undefined : receiptRpcUrls(config.network, deps.rpc) });
   const { pay: PAY, usdfc: USDFC, fwss: FWSS, pdp: PDP } = config.contracts;
   const loaded = deps.state ?? {};
   const state: SponsorState = {
@@ -346,7 +347,7 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
   async function deposit(account: Address, amount: bigint, label: string): Promise<Hex> {
     await ensureAllowance(PAY, amount);
     const hash = await relayer.send({ to: PAY, label, data: encodeFunctionData({ abi: payAbi, functionName: "deposit", args: [USDFC, account, amount] }) });
-    const receipt = await waitForReceipt(pub, hash);
+    const receipt = await receiptWait(hash);
     if (receipt.status !== "success") throw new Error(`deposit reverted: ${hash}`);
     return hash;
   }
@@ -368,7 +369,7 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
       [account, clientDataSetId, keys, values, signature],
     );
     const created = await createDataSetApiRequest({ serviceURL, recordKeeper: FWSS, extraData });
-    const receipt = await waitForReceipt(pub, created.txHash);
+    const receipt = await receiptWait(created.txHash);
     if (receipt.status !== "success") throw new HttpError(502, `createDataSet reverted: ${created.txHash}`);
     const log = receipt.logs.find((entry) => getAddress(entry.address) === PDP && entry.topics[1]);
     if (!log?.topics[1]) throw new HttpError(502, "createDataSet receipt has no DataSetCreated log");
@@ -550,7 +551,7 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
   }
 
   async function waitAndRecord(credit: CreditRecord, kind: string, hash: Hex): Promise<{ transactionHash: Hex; status: string; blockNumber?: bigint; blockHash?: Hex }> {
-    const receipt = await waitForReceipt(pub, hash);
+    const receipt = await receiptWait(hash);
     if (receipt.status !== "success") throw new Error(`${kind} reverted: ${hash}`);
     recordInclusion(credit, kind, receipt);
     return receipt;

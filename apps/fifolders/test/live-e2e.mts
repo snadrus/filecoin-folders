@@ -87,7 +87,7 @@ async function loadSavedPasskey(authenticatorId: string, cdp: { send: (method: n
 }
 
 async function continuePasskey(p: Page, preferExisting = false) {
-  if (Date.now() - lastPasskeyClick < (preferExisting ? 2_000 : 8_000)) return null;
+  if (Date.now() - lastPasskeyClick < 8_000) return null;
   const kind = preferExisting
     ? ((await clickIf(p, "passkey-existing")) ? "existing" : (await clickIf(p, "passkey-continue")) ? "continue" : null)
     : ((await clickIf(p, "passkey-continue")) ? "continue" : (await clickIf(p, "passkey-existing")) ? "existing" : null);
@@ -152,11 +152,11 @@ async function isAccount(factory: string, account: string) {
   return BigInt(result) === 1n;
 }
 
-async function waitUntil(ms: number, label: string, fn: () => Promise<boolean>) {
+async function waitUntil(ms: number, label: string, fn: () => Promise<boolean>, intervalMs = 2_000) {
   const t0 = Date.now();
   while (Date.now() - t0 < ms) {
     if (await fn()) return true;
-    await page.waitForTimeout(2000);
+    await page.waitForTimeout(intervalMs);
   }
   throw new Error(`timeout waiting for ${label}`);
 }
@@ -288,13 +288,20 @@ try {
   const paymentsReady = async () =>
     (await visible(page, "payment-status")) || (await visible(page, "credit-balance")) || (await visible(page, "add-credits"));
   await waitUntil(12 * 60_000, "payments ready after passkey resume", async () => {
-    if (await paymentsReady()) return true;
+    if (await paymentsReady()) {
+      if (!log.tPasskeyIn) {
+        log.tPasskeyIn = new Date().toISOString();
+        say(`passkey accepted ${Math.round((Date.now() - tPayment) / 1000)}s after return`);
+      }
+      return true;
+    }
     const clicked = await continuePasskey(page, true);
     if (clicked) say(`clicked passkey ${clicked} after redirect`);
-    if (!log.tPasskeyIn && (await paymentsReady() || ((await visible(page, "account") || await visible(page, "setup-address")) && !(await visible(page, "passkey-continue") || await visible(page, "passkey-existing"))))) {
+    if (!log.tPasskeyIn && ((await visible(page, "account") || await visible(page, "setup-address")) && !(await visible(page, "passkey-continue") || await visible(page, "passkey-existing")))) {
       log.tPasskeyIn = new Date().toISOString();
       say(`passkey accepted ${Math.round((Date.now() - tPayment) / 1000)}s after return`);
     }
+    if (await paymentsReady()) return true;
     // Gasless setup uses credit-balance/add-credits; open the account menu if we are signed in but the setup card is hidden.
     if ((await visible(page, "account")) && !(await visible(page, "setup-address")) && !(await paymentsReady())) {
       await page.getByTestId("account").click().catch(() => undefined);
@@ -317,7 +324,7 @@ try {
       await snap(page, `handover-${Math.round(elapsed / 1000)}s`);
     }
     return false;
-  });
+  }, 500);
   const handover = { ok: true, seconds: Math.round((Date.now() - tHandover) / 1000), text: "" };
   await snap(page, "paid-ready");
   handover.text = await textOf(page);

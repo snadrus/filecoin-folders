@@ -3,7 +3,7 @@
 import { createPublicClient, createWalletClient, http, type Address, type Hex, type PublicClient, type TransactionReceipt } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { calibration, mainnet } from "@filoz/synapse-core/chains";
-import { waitForReceipt } from "../src/receipt.js";
+import { jsonRpc, receiptRpcUrls, waitForReceipt } from "../src/receipt.js";
 
 export interface RelayCall {
   to?: Address;
@@ -61,12 +61,17 @@ export class SponsorWalletRelayer implements Relayer {
   /** Local pending nonce so back-to-back sends do not wait for a getTransaction round trip. */
   private nextNonce: number | undefined;
 
+  private network: SponsorNetwork;
+  private rpcUrl: string;
+
   constructor(privateKey: Hex, opts: ChainOptions = {}) {
     const account = privateKeyToAccount(privateKey);
     const network = opts.network ?? NETWORK;
+    this.network = network;
+    this.rpcUrl = rpcFor(network, opts.rpc);
     this.address = account.address;
     this.pub = publicClient(opts);
-    this.wallet = createWalletClient({ account, chain: chainFor(network) as never, transport: http(rpcFor(network, opts.rpc), { retryCount: 5 }) });
+    this.wallet = createWalletClient({ account, chain: chainFor(network) as never, transport: http(this.rpcUrl, { retryCount: 1, timeout: 8_000 }) });
   }
 
   send(call: RelayCall): Promise<Hex> {
@@ -81,16 +86,31 @@ export class SponsorWalletRelayer implements Relayer {
         estimateMs = Date.now() - t0;
         gas = (estimate * 13n) / 10n;
       }
-      if (this.nextNonce == null) {
-        this.nextNonce = Number(await this.pub.getTransactionCount({ address: this.address, blockTag: "pending" }));
-      }
-      const nonce = this.nextNonce;
+      const tFee = Date.now();
+      const [nonce, fees] = await Promise.all([
+        this.nextNonce == null
+          ? this.pub.getTransactionCount({ address: this.address, blockTag: "pending" }).then((n) => Number(n))
+          : Promise.resolve(this.nextNonce),
+        this.fees(),
+      ]);
+      const feeMs = Date.now() - tFee;
       const tSend = Date.now();
-      const hash = (await this.wallet.sendTransaction({ to: call.to ?? null, data: call.data, value: call.value ?? 0n, gas, nonce } as never)) as Hex;
+      const signed = await this.wallet.signTransaction({
+        type: "eip1559",
+        to: call.to ?? null,
+        data: call.data,
+        value: call.value ?? 0n,
+        gas,
+        nonce,
+        maxFeePerGas: fees.maxFeePerGas,
+        maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
+      } as never);
+      const urls = receiptRpcUrls(this.network, this.rpcUrl);
+      const hash = await this.broadcastRaw(signed, urls);
       const sendMs = Date.now() - tSend;
       this.nextNonce = nonce + 1;
       console.log(`[relay:${this.name}] ${call.label}: ${hash}`);
-      console.log(`[relay-timing] ${JSON.stringify({ label: call.label, hash, estimateMs, sendMs, totalMs: Date.now() - started, gas: gas.toString(), nonce })}`);
+      console.log(`[relay-timing] ${JSON.stringify({ label: call.label, hash, estimateMs, feeMs, sendMs, totalMs: Date.now() - started, gas: gas.toString(), nonce })}`);
       this.sent.push({ label: call.label, hash });
       if (this.sent.length > 500) this.sent.splice(0, this.sent.length - 500);
       return hash;
@@ -103,9 +123,34 @@ export class SponsorWalletRelayer implements Relayer {
 
   async relay(call: RelayCall): Promise<TransactionReceipt> {
     const hash = await this.send(call);
-    const receipt = await waitForReceipt(this.pub, hash);
+    const receipt = await waitForReceipt(this.pub, hash, { rpcUrls: receiptRpcUrls(this.network, this.rpcUrl) });
     if (receipt.status !== "success") throw new Error(`${call.label} reverted: ${hash}`);
     return receipt;
+  }
+
+  /** Pad current tip so we skip a slow fee-oracle round trip inside sendTransaction and still clear the next tipset. */
+  private async fees(): Promise<{ maxFeePerGas: bigint; maxPriorityFeePerGas: bigint }> {
+    const block = await this.pub.getBlock({ blockTag: "latest" });
+    const base = block.baseFeePerGas ?? 0n;
+    // Generous pad over base so we still clear the next tipset without a second fee-oracle round trip.
+    const maxPriorityFeePerGas = (base > 0n ? base : 100_000n) + 500_000n;
+    return { maxFeePerGas: base * 4n + maxPriorityFeePerGas, maxPriorityFeePerGas };
+  }
+
+  /** Sign once, then race eth_sendRawTransaction across fallback RPCs so a slow Glif POST does not stall the batch. */
+  private async broadcastRaw(raw: Hex, urls: string[]): Promise<Hex> {
+    const sendOne = async (url: string) => {
+      const hash = await jsonRpc<Hex>(url, "eth_sendRawTransaction", [raw], { timeoutMs: 8_000 });
+      if (typeof hash !== "string" || !hash.startsWith("0x")) throw new Error(`bad send hash from ${new URL(url).host}`);
+      console.log(`[relay-timing] broadcast ok host=${new URL(url).host} hash=${hash}`);
+      return hash;
+    };
+    try {
+      return await Promise.any(urls.map(sendOne));
+    } catch (error) {
+      const detail = error instanceof AggregateError ? error.errors.map((item) => (item instanceof Error ? item.message : String(item))).join("; ") : error;
+      throw new Error(`broadcast failed: ${detail}`);
+    }
   }
 }
 
