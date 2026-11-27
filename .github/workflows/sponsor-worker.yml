@@ -8,6 +8,7 @@ on:
     paths:
       - "apps/fifolders/sponsor/**"
       - "apps/fifolders/src/sponsored-abi.ts"
+      - "packages/sponsored-client/**"
       - ".github/workflows/sponsor-worker.yml"
   workflow_dispatch:
 
@@ -31,6 +32,8 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Build sponsored-client
+        run: pnpm --filter @fifolders/sponsored-client build
       - name: Typecheck worker
         working-directory: apps/fifolders/sponsor
         run: npx tsc -p tsconfig.worker.json
