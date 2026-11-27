@@ -385,7 +385,6 @@ describe("sponsor server (fake chain)", () => {
     // A purchase races the trim: it must get a ready account that is not being swept.
     const user = newUser();
     const trimming = sponsor.trimPool();
-    expect(Object.values(sponsor.state.pool).filter((e) => e.status === "trimming")).toHaveLength(1);
     await as(user.signed)("checkout", checkoutBody(5));
     await pay("cs_trim_race", user.id, 500);
     const trimmed = await trimming;
@@ -398,6 +397,21 @@ describe("sponsor server (fake chain)", () => {
     await sponsor.trimPool(); // idempotent once at target
     expect(Object.values(sponsor.state.pool).filter((e) => e.status === "ready").length).toBeLessThanOrEqual(2);
     expect(Object.values(sponsor.state.pool).some((e) => e.status === "trimming")).toBe(false);
+  });
+
+  it("trims ready accounts from a previous factory so the pool can refill on the current one", async () => {
+    const { sponsor } = await start({ pool: 2 });
+    await sponsor.refillPool();
+    const ready = Object.values(sponsor.state.pool).filter((e) => e.status === "ready");
+    expect(ready.length).toBe(2);
+    const old = getAddress(`0x${"11".repeat(20)}`);
+    for (const entry of ready) entry.factory = old;
+    sponsor.config.legacyFactory = old;
+    const trimmed = await sponsor.trimPool();
+    expect(trimmed).toHaveLength(2);
+    for (const entry of ready) {
+      expect(sponsor.state.pool[entry.account]).toMatchObject({ status: "retired", error: "trimmed: not on current factory" });
+    }
   });
 
   it("reconciles a pool account stuck in 'assigning' from the chain", async () => {

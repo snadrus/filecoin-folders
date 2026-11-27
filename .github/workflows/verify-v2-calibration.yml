@@ -1,0 +1,54 @@
+name: verify-v2-calibration
+
+# View-checks the live Calibration v2 factory, then (with SPONSOR_KEY_CALIBRATION) creates a
+# throwaway account, sends a session-key registry commit, and confirms a session-key USDFC
+# transfer reverts. Never prints the key. No mainnet.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build packages the script imports
+        run: pnpm --filter fil-folders build && pnpm --filter @fifolders/sponsored-client build
+      - name: Verify v2 factory and session-key rules
+        env:
+          SPONSOR_KEY: ${{ secrets.SPONSOR_KEY_CALIBRATION }}
+          SPONSOR_NETWORK: calibration
+        run: |
+          set -euo pipefail
+          if [ -z "${SPONSOR_KEY:-}" ]; then
+            echo "SPONSOR_KEY_CALIBRATION is not set"
+            exit 1
+          fi
+          set +e
+          ./node_modules/.bin/tsx apps/fifolders/sponsor/verify-v2.ts > "$RUNNER_TEMP/verify.out" 2> "$RUNNER_TEMP/verify.err"
+          status=$?
+          set -e
+          # Public output only (the script never prints the key).
+          cat "$RUNNER_TEMP/verify.out"
+          if [ "$status" -ne 0 ]; then
+            echo "verify-v2 failed (exit $status). stderr (secrets are masked by GitHub):"
+            tail -c 4000 "$RUNNER_TEMP/verify.err" || true
+            exit "$status"
+          fi
+          {
+            echo "### Calibration v2 verification"
+            echo
+            echo '```json'
+            cat "$RUNNER_TEMP/verify.out"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

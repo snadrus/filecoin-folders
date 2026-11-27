@@ -103,6 +103,8 @@ export interface PoolEntry {
   providerId?: string;
   hashes: Hex[];
   assignedTo?: string;
+  /** Factory that deployed this account (tagged on new builds; inferred from the chain when missing). */
+  factory?: Address;
   error?: string;
 }
 
@@ -361,11 +363,34 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
   let refilling: Promise<void> | null = null;
   const poolCount = (...statuses: PoolEntry["status"][]) => Object.values(state.pool).filter((entry) => statuses.includes(entry.status)).length;
 
+  async function isFactoryAccount(factory: Address, account: Address): Promise<boolean> {
+    return Boolean(await pub.readContract({ address: factory, abi: lockedFactoryAbi, functionName: "isAccount", args: [account] }).catch(() => false));
+  }
+
+  /** Ready/seeding accounts of the current factory. Untagged entries are current unless they only exist on the legacy factory. */
+  async function poolOnCurrentFactory(...statuses: PoolEntry["status"][]): Promise<PoolEntry[]> {
+    const out: PoolEntry[] = [];
+    for (const entry of Object.values(state.pool)) {
+      if (!statuses.includes(entry.status)) continue;
+      if (entry.factory) {
+        if (getAddress(entry.factory) === getAddress(config.factory)) out.push(entry);
+        continue;
+      }
+      if (config.legacyFactory && (await isFactoryAccount(config.legacyFactory, entry.account)) && !(await isFactoryAccount(config.factory, entry.account))) {
+        entry.factory = config.legacyFactory;
+        continue;
+      }
+      if (await isFactoryAccount(config.factory, entry.account)) entry.factory = config.factory;
+      out.push(entry);
+    }
+    return out;
+  }
+
   async function buildPooled(): Promise<void> {
     const salt = BigInt(`0x${randomHex(8)}`);
     const sessionExpiry = BigInt(Math.floor(Date.now() / 1000)) + ACCOUNT_TTL_SEC;
     const account = getAddress((await pub.readContract({ address: config.factory, abi: lockedFactoryAbi, functionName: "predict", args: [ZERO_ADDRESS, ZERO32, ZERO32, salt, sessionExpiry] })) as Address);
-    const entry: PoolEntry = { account, salt: salt.toString(), sessionExpiry: sessionExpiry.toString(), status: "seeding", hashes: [] };
+    const entry: PoolEntry = { account, salt: salt.toString(), sessionExpiry: sessionExpiry.toString(), status: "seeding", hashes: [], factory: config.factory };
     state.pool[account] = entry;
     save();
     try {
@@ -392,7 +417,7 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
     refilling ??= (async () => {
       try {
         let built = 0;
-        while (poolCount("ready", "seeding") < poolSize && built < (opts.max ?? Infinity)) {
+        while ((await poolOnCurrentFactory("ready", "seeding")).length < poolSize && built < (opts.max ?? Infinity)) {
           // Keep owed credits whole: build only with USDFC to spare for the seed, and FIL above the gas reserve.
           const funds = await sponsorFunds();
           if (funds.usdfc < pendingUsdfc() + seed || funds.fil < minFil() * 2n) {
@@ -503,7 +528,7 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
       try {
         // Pre-flight: if the sponsor is short, park the credit before sending anything (so a retry is always safe).
         const amount0 = BigInt(credit.usdfc);
-        const viaPool = !state.users[credit.identity] && Object.values(state.pool).some((entry) => entry.status === "ready");
+        const viaPool = !state.users[credit.identity] && (await poolOnCurrentFactory("ready")).length > 0;
         const needUsdfc = viaPool ? poolTopUp(amount0, seed) : amount0;
         const funds = await sponsorFunds();
         if (funds.usdfc < needUsdfc || funds.fil < minFil()) {
@@ -522,7 +547,7 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
           if (!record.dataSetId) await attachDataset(record);
         } else {
           if (!identity) throw new Error(`bad identity ${credit.identity}`);
-          const pooled = Object.values(state.pool).find((entry) => entry.status === "ready");
+          const pooled = (await poolOnCurrentFactory("ready"))[0];
           if (pooled) {
             // Warm path: one tx hands the account over and deposits the credit above its seed.
             credit.path = "pool";
@@ -856,12 +881,17 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
    */
   async function trimPool(): Promise<{ account: Address; outcome: string; swept?: string }[]> {
     const out: { account: Address; outcome: string; swept?: string }[] = [];
-    const ready = Object.values(state.pool).filter((entry) => entry.status === "ready");
-    const victims = ready.slice(Math.max(0, poolSize));
+    const current = await poolOnCurrentFactory("ready");
+    const currentSet = new Set(current.map((entry) => entry.account));
+    const stale = Object.values(state.pool).filter((entry) => entry.status === "ready" && !currentSet.has(entry.account));
+    const excess = current.slice(Math.max(0, poolSize));
+    const victims = [...stale, ...excess].filter((entry) => entry.status === "ready" && !assigningNow.has(entry.account));
     for (const entry of victims) {
-      if (entry.status !== "ready" || assigningNow.has(entry.account)) continue;
       entry.status = "trimming";
-      save();
+    }
+    if (victims.length) save();
+    for (const entry of victims) {
+      const reason = currentSet.has(entry.account) ? "trimmed: pool above target" : "trimmed: not on current factory";
       let result: SweepResult;
       try {
         result = await sweepAccount(pub, relayer, entry.account, config.network);
@@ -871,7 +901,7 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
       state.sweeps[entry.account] = { ...result, at: new Date(now()).toISOString() };
       if (result.outcome === "swept" || result.funds === "0") {
         entry.status = "retired";
-        entry.error = "trimmed: pool above target";
+        entry.error = reason;
       } else if (result.outcome.startsWith("error")) {
         entry.status = "failed"; // a sweep may have been sent: never hand it out again; sweepDeferred retries
         entry.error = `trim: ${result.outcome}`;

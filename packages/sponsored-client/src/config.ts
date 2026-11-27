@@ -140,10 +140,10 @@ export interface SponsorChainConfig {
 export const FALLBACK_SPONSOR_CONFIG: Record<ChainChoice, Omit<SponsorChainConfig, "network">> = {
   calibration: {
     chainId: 314159,
-    factory: "0xCBb99E41C173B06D15212A135ba9F46AAB19DEE5",
-    legacyFactory: null,
-    beacon: null,
-    implementation: null,
+    factory: "0x228867301f1f0EaF75b5d7af62F3c44e1796A56D",
+    legacyFactory: "0xCBb99E41C173B06D15212A135ba9F46AAB19DEE5",
+    beacon: "0xbF8D1Ff1c632E953c52Cc4a7CdFD81E17374D9fA",
+    implementation: "0x632aF12688d61Ef6ae647587735f2418f7A37529",
     registry: "0x9C06335D7DE588Caa104ee4FC3bb7cd8Aba62443",
     allowlist: {
       pay: "0x09a0fDc2723fAd1A7b8e3e00eE5DF73841df55a0",

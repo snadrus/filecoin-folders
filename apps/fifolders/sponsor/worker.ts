@@ -13,7 +13,7 @@
 //   Calibration: SPONSOR_KEY, STRIPE_SECRET_KEY (sk_test_/rk_test_), STRIPE_WEBHOOK_SECRET
 //   Mainnet:     SPONSOR_KEY_MAINNET, STRIPE_LIVE_SECRET_KEY (rk_live_/sk_live_), STRIPE_LIVE_WEBHOOK_SECRET
 import { DurableObject } from "cloudflare:workers";
-import type { Hex } from "viem";
+import { getAddress, type Hex } from "viem";
 import { CORS_HEADERS, configFromEnv, createSponsorCore, type SponsorCore, type SponsorState } from "./core.js";
 
 export interface Env {
@@ -109,8 +109,17 @@ export class SponsorDO extends DurableObject<Env> {
     const state = this.core.state;
     const pending = Object.values(state.credits).some((credit) => credit.status === "pending");
     const size = this.core.config.pool?.size ?? 0;
-    const ready = Object.values(state.pool).filter((entry) => entry.status === "ready" || entry.status === "seeding").length;
-    return pending || ready < size;
+    const factory = this.core.config.factory;
+    const legacy = this.core.config.legacyFactory;
+    const currentReady = Object.values(state.pool).filter((entry) => {
+      if (entry.status !== "ready" && entry.status !== "seeding") return false;
+      return Boolean(entry.factory) && getAddress(entry.factory!) === getAddress(factory);
+    }).length;
+    const needsClassify = Boolean(legacy) && Object.values(state.pool).some((entry) => entry.status === "ready" && (!entry.factory || getAddress(entry.factory) !== getAddress(factory)));
+    const ready = !legacy && !Object.values(state.pool).some((entry) => entry.factory)
+      ? Object.values(state.pool).filter((entry) => entry.status === "ready" || entry.status === "seeding").length
+      : currentReady;
+    return pending || ready < size || needsClassify;
   }
 
   /** Keep an alarm armed while there is background work (pending credits or a short pool). */
@@ -137,6 +146,7 @@ export class SponsorDO extends DurableObject<Env> {
 
   private async runAlarm(): Promise<void> {
     await this.core.settled();
+    await this.core.trimPool();
     await this.core.refillPool({ max: POOL_BUILDS_PER_ALARM });
     await this.core.settled();
     // A failed build stops the refill until the next cron tick (no hot loop on a broken provider).

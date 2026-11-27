@@ -3,6 +3,8 @@ name: deploy-v2-factory
 # Deploys LockedSignerAccountBeaconFactory (v2). Restricted to Calibration for now.
 # The sponsor key is injected as SPONSOR_KEY from a GitHub secret and is never printed.
 # Public addresses are written to the job summary and an artifact.
+# If deployments/calibration-factory-v2.json already points at a live contract, this
+# job prints those addresses and does not send another deploy transaction.
 on:
   workflow_dispatch:
     inputs:
@@ -41,29 +43,57 @@ jobs:
         env:
           SPONSOR_KEY: ${{ secrets.SPONSOR_KEY_CALIBRATION }}
           SPONSOR_NETWORK: ${{ inputs.network }}
+          CALIBRATION_RPC: https://api.calibration.node.glif.io/rpc/v1
         run: |
           set -euo pipefail
           if [ "${SPONSOR_NETWORK}" != "calibration" ]; then
             echo "This workflow is restricted to Calibration; refusing network=${SPONSOR_NETWORK}"
             exit 1
           fi
+
+          publish() {
+            local file="$1"
+            jq -e '.address and .beacon and .implementation and .network == "calibration"' "$file" >/dev/null
+            jq '{factory: .address, beacon, implementation, txHash, block, admin, treasury, registry}' "$file"
+            {
+              echo "### Calibration v2 factory"
+              echo
+              jq -r '"- factory: `\(.address)`\n- beacon: `\(.beacon)`\n- implementation: `\(.implementation)`\n- tx: `\(.txHash)`"' "$file"
+            } >> "$GITHUB_STEP_SUMMARY"
+          }
+
+          existing=deployments/calibration-factory-v2.json
+          if [ -f "$existing" ]; then
+            addr=$(jq -r .address "$existing")
+            code=$(cast code "$addr" --rpc-url "$CALIBRATION_RPC" || true)
+            if [ "${#code}" -gt 4 ]; then
+              echo "Factory already deployed at $addr; not sending another transaction."
+              publish "$existing"
+              exit 0
+            fi
+          fi
+
           if [ -z "${SPONSOR_KEY:-}" ]; then
             echo "SPONSOR_KEY_CALIBRATION is not set"
             exit 1
           fi
           forge build --root contracts
-          # Run the script directly so stdout is only the public JSON (no pnpm banner, never the key).
-          pnpm exec tsx apps/fifolders/sponsor/deploy-v2.ts > "$RUNNER_TEMP/deploy-v2.json"
-          jq -e '.address and .beacon and .implementation and .network == "calibration"' "$RUNNER_TEMP/deploy-v2.json" >/dev/null
-          jq '{factory: .address, beacon, implementation, txHash, block, admin, treasury, registry}' "$RUNNER_TEMP/deploy-v2.json"
-          {
-            echo "### Calibration v2 factory"
-            echo
-            jq -r '"- factory: `\(.address)`\n- beacon: `\(.beacon)`\n- implementation: `\(.implementation)`\n- tx: `\(.txHash)`"' "$RUNNER_TEMP/deploy-v2.json"
-          } >> "$GITHUB_STEP_SUMMARY"
+          # Direct tsx (no pnpm banner). The key stays in the env; never echo it.
+          set +e
+          ./node_modules/.bin/tsx apps/fifolders/sponsor/deploy-v2.ts > "$RUNNER_TEMP/deploy-v2.out" 2> "$RUNNER_TEMP/deploy-v2.err"
+          status=$?
+          set -e
+          if [ "$status" -ne 0 ]; then
+            echo "deploy-v2 failed (exit $status). stderr (secrets are masked by GitHub):"
+            tail -c 4000 "$RUNNER_TEMP/deploy-v2.err" || true
+            exit "$status"
+          fi
+          python3 -c "import json,sys; from pathlib import Path; raw=Path(sys.argv[1]).read_text(); s,e=raw.find('{'), raw.rfind('}'); assert s>=0 and e>s, 'deploy-v2 produced no JSON'; Path(sys.argv[2]).write_text(raw[s:e+1]+chr(10)); json.loads(raw[s:e+1])" "$RUNNER_TEMP/deploy-v2.out" "$RUNNER_TEMP/deploy-v2.json"
           mkdir -p deployments
           cp "$RUNNER_TEMP/deploy-v2.json" deployments/calibration-factory-v2.json
+          publish "$RUNNER_TEMP/deploy-v2.json"
       - uses: actions/upload-artifact@v4
         with:
           name: calibration-factory-v2
           path: deployments/calibration-factory-v2.json
+          if-no-files-found: error

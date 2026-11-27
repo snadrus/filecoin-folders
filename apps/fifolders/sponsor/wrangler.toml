@@ -11,17 +11,16 @@ routes = [{ pattern = "fast.scionbase.ai", custom_domain = true }]
 
 [vars]
 SPONSOR_NETWORK = "calibration"
-SPONSOR_FACTORY = "0xCBb99E41C173B06D15212A135ba9F46AAB19DEE5"
+SPONSOR_FACTORY = "0x228867301f1f0EaF75b5d7af62F3c44e1796A56D"
 SPONSOR_PROVIDER_ID = "2"
 SPONSOR_POOL_SIZE = "2"
 SPONSOR_POOL_SEED_USDFC = "1"
 SPONSOR_SWEEP_ACCOUNTS = "0x2CcbFfB44b410BDa7Fcb7708d1649bA2887370d2"
 SPONSOR_ALLOWED_ORIGINS = "https://fifolders.scionbase.ai/,http://localhost"
-# v2 beacon factory is filled in after `pnpm sponsor:deploy-v2`. Until then FACTORY stays the v1 clone factory.
-# SPONSOR_FACTORY_LEGACY = v1 factory once FACTORY switches to the beacon factory.
+# v2 beacon factory (Calibration, 2026-11-26). Beacon owner is the sponsor; hand to Andy's Ledger 0x with recover.ts --hand-beacon (never the f1 masked-ID).
+SPONSOR_FACTORY_LEGACY = "0xCBb99E41C173B06D15212A135ba9F46AAB19DEE5"
 SPONSOR_REGISTRY = "0x9C06335D7DE588Caa104ee4FC3bb7cd8Aba62443"
-# Beacon owner starts as the sponsor key; hand to Andy's Ledger 0x with recover.ts --hand-beacon (never the f1 masked-ID).
-# SPONSOR_BEACON = "0x…"
+SPONSOR_BEACON = "0xbF8D1Ff1c632E953c52Cc4a7CdFD81E17374D9fA"
 SPONSOR_GAS_HOURLY_FIL = "0.01"
 SPONSOR_GAS_BURST_FIL = "0.03"
 SPONSOR_GAS_DAILY_FIL = "0.05"
