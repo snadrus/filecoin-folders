@@ -18,6 +18,42 @@ All amounts are in USD, and 1 USDFC is credited per $1.
 
 The first purchase shows the setup fee as its own line item on the Stripe page.
 
+### Purchase waterfall
+
+Every card payment is split in this order. The code calls the $1.00 transaction fee the "reserve" (`reserveCents`)
+and the $1.50 creation fee `setupCents` (`pricing.ts` `creditFor`, `poolTopUp`).
+
+**First purchase** (charge A):
+1. **Stripe fee** goes to Stripe. This is the actual fee from the charge's balance transaction when Stripe returns it
+   at webhook time (one attempt, no wait). Otherwise it's the 2.9% + 30¢ estimate.
+2. **$1.50 account and dataset creation fee** stays in our Stripe balance.
+3. **$1.00 transaction fee** stays in our Stripe balance.
+4. **$1.00 for the 1 USDFC already in the spare account** we hand over (the pool seed). This stays in Stripe and
+   repays the sponsor, which pre-funded that USDFC.
+5. **The rest** is deposited as USDFC into the account in the same `factory.assign` transaction.
+
+The user's wallet ends up holding steps 4 + 5 = A − Stripe fee − $2.50 (at least 1 USDFC). With no ready spare
+(the slow path), steps 4 and 5 are deposited together as one deposit. The total is the same.
+
+| Charge | Stripe fee | Creation | Tx fee | Pre-funded seed | Top-up deposited | Wallet total |
+| --- | --- | --- | --- | --- | --- | --- |
+| $3.91 (minimum) | $0.41 | $1.50 | $1.00 | 1 USDFC | 0 USDFC | 1.00 USDFC |
+| $5.00 | $0.45 | $1.50 | $1.00 | 1 USDFC | 1.05 USDFC | 2.05 USDFC |
+| $10.00 | $0.59 | $1.50 | $1.00 | 1 USDFC | 5.91 USDFC | 6.91 USDFC |
+
+**Top-up** (an account already exists): Stripe fee, then the $1.00 transaction fee, then the rest is deposited.
+
+| Charge | Stripe fee | Tx fee | Deposited |
+| --- | --- | --- | --- |
+| $2.37 (minimum) | $0.37 | $1.00 | 1.00 USDFC |
+| $5.00 | $0.45 | $1.00 | 3.55 USDFC |
+| $10.00 | $0.59 | $1.00 | 8.41 USDFC |
+
+The minimums are set so the wallet always ends with at least 1 USDFC. On the minimum first purchase, that 1 USDFC is
+the pre-funded seed, and the extra top-up is 0. If Stripe's real fee is higher than the estimate (for example an
+international card), the difference comes out of the $1.00 transaction fee, never the user's 1 USDFC minimum.
+`test/purchase-waterfall.test.ts` pins these numbers.
+
 ## Warm pool (first purchase fast path)
 
 The sponsor keeps `SPONSOR_POOL_SIZE` ready accounts (2 on both Calibration and mainnet). Each one is:
