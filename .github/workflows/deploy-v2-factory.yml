@@ -1,0 +1,69 @@
+name: deploy-v2-factory
+
+# Deploys LockedSignerAccountBeaconFactory (v2). Restricted to Calibration for now.
+# The sponsor key is injected as SPONSOR_KEY from a GitHub secret and is never printed.
+# Public addresses are written to the job summary and an artifact.
+on:
+  workflow_dispatch:
+    inputs:
+      network:
+        description: "Chain to deploy the v2 beacon factory on"
+        required: true
+        type: choice
+        options:
+          - calibration
+        default: calibration
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-v2-factory
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: foundry-rs/foundry-toolchain@v1
+      - run: pnpm install --frozen-lockfile
+      - name: Build packages the deploy script imports
+        run: pnpm --filter fil-folders build
+      - name: Deploy v2 factory
+        env:
+          SPONSOR_KEY: ${{ secrets.SPONSOR_KEY_CALIBRATION }}
+          SPONSOR_NETWORK: ${{ inputs.network }}
+        run: |
+          set -euo pipefail
+          if [ "${SPONSOR_NETWORK}" != "calibration" ]; then
+            echo "This workflow is restricted to Calibration; refusing network=${SPONSOR_NETWORK}"
+            exit 1
+          fi
+          if [ -z "${SPONSOR_KEY:-}" ]; then
+            echo "SPONSOR_KEY_CALIBRATION is not set"
+            exit 1
+          fi
+          forge build --root contracts
+          # Run the script directly so stdout is only the public JSON (no pnpm banner, never the key).
+          pnpm exec tsx apps/fifolders/sponsor/deploy-v2.ts > "$RUNNER_TEMP/deploy-v2.json"
+          jq -e '.address and .beacon and .implementation and .network == "calibration"' "$RUNNER_TEMP/deploy-v2.json" >/dev/null
+          jq '{factory: .address, beacon, implementation, txHash, block, admin, treasury, registry}' "$RUNNER_TEMP/deploy-v2.json"
+          {
+            echo "### Calibration v2 factory"
+            echo
+            jq -r '"- factory: `\(.address)`\n- beacon: `\(.beacon)`\n- implementation: `\(.implementation)`\n- tx: `\(.txHash)`"' "$RUNNER_TEMP/deploy-v2.json"
+          } >> "$GITHUB_STEP_SUMMARY"
+          mkdir -p deployments
+          cp "$RUNNER_TEMP/deploy-v2.json" deployments/calibration-factory-v2.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: calibration-factory-v2
+          path: deployments/calibration-factory-v2.json
