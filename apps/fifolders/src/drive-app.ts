@@ -549,7 +549,11 @@ export class DriveApp {
     let pointer = false;
     let refocusing = false;
     // Touch focuses the row after pointerup (not during pointerdown), so keep the flag up long enough to cover the tap.
-    root.addEventListener("pointerdown", (event) => { pointer = true; setTimeout(() => { pointer = false; }, event.pointerType === "touch" ? 1000 : 0); }, true);
+    root.addEventListener("pointerdown", (event) => {
+      pointer = true;
+      setTimeout(() => { pointer = false; }, event.pointerType === "touch" ? 1000 : 0);
+      this.lastPointer = { type: event.pointerType, x: event.clientX, y: event.clientY };
+    }, true);
     root.addEventListener("focusin", (event) => {
       if (pointer || refocusing) return;
       const row = (event.target as HTMLElement | null)?.closest<HTMLElement>("[data-testid=entry]");
@@ -1976,14 +1980,20 @@ export class DriveApp {
       return;
     }
     event.preventDefault();
-    const path = decodeURIComponent(entry.dataset.path);
+    this.openContextFor(entry, event.clientX, event.clientY);
+  }
+
+  lastPointer: { type: string; x: number; y: number } = { type: "", x: 0, y: 0 };
+
+  private openContextFor(entry: HTMLElement, x: number, y: number): void {
+    const path = decodeURIComponent(entry.dataset.path ?? "");
     if (!this.selected.includes(path)) {
       this.selected = [path];
       this.anchor = path;
     }
     this.newMenu = false;
     this.accountMenu = false;
-    this.context = { x: event.clientX, y: event.clientY, paths: [...this.selected], target: path };
+    this.context = { x, y, paths: [...this.selected], target: path };
     this.render();
   }
 
@@ -2201,6 +2211,13 @@ export class DriveApp {
   private onDragStart(event: DragEvent): void {
     const entry = (event.target as HTMLElement | null)?.closest<HTMLElement>("[data-testid=entry]");
     if (!entry?.dataset.path) return;
+    // Chrome on Android turns a long-press on a draggable row into an HTML drag (no contextmenu event),
+    // so a touch long-press would otherwise never reach the actions sheet.
+    if (this.lastPointer.type === "touch") {
+      event.preventDefault();
+      this.openContextFor(entry, this.lastPointer.x, this.lastPointer.y);
+      return;
+    }
     const transfer = event.dataTransfer;
     if (!transfer) return;
     const path = decodeURIComponent(entry.dataset.path);
