@@ -53,7 +53,8 @@ export const DEFAULT_GAS_LIMITS = {
   dailyFil: "0.05",
   lifetimeBaseFil: "0.01",
   lifetimePerPurchaseFil: "0.002",
-  txMaxGas: "10000000",
+  // Filecoin EVM gas units are much larger than Ethereum; addSessionKey uses ~62M on Calibration and estimates can exceed 200M.
+  txMaxGas: "500000000",
   txMaxFeeFil: "0.01",
   sessionDailyFil: "0.02",
   ipHourlyFil: "0.03",
