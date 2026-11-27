@@ -1,0 +1,55 @@
+name: deploy-v3-impl
+
+# Deploys a LockedSignerAccountV3 implementation (one tx from the sponsor key) and prints the beacon upgradeTo
+# calldata that Andy's Ledger must sign. Does not touch the beacon. The key is never printed.
+on:
+  workflow_dispatch:
+    inputs:
+      network:
+        description: "calibration or mainnet"
+        required: true
+        type: choice
+        options: [calibration, mainnet]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-v3-impl-${{ inputs.network }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 10
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: foundry-rs/foundry-toolchain@dba66c27052e63476d886f22216e119ba7e615bf # v1
+      - run: pnpm install --frozen-lockfile
+      - name: Build packages the script imports
+        run: pnpm --filter fil-folders build
+      - name: Deploy V3 implementation
+        env:
+          SPONSOR_NETWORK: ${{ inputs.network }}
+          SPONSOR_KEY: ${{ inputs.network == 'mainnet' && secrets.SPONSOR_KEY_MAINNET || secrets.SPONSOR_KEY_CALIBRATION }}
+        run: |
+          set -euo pipefail
+          forge build --root contracts
+          pnpm exec tsx apps/fifolders/sponsor/deploy-v3-impl.ts > "$RUNNER_TEMP/v3.json"
+          jq -e '.implementation and .ledgerTx.data' "$RUNNER_TEMP/v3.json" >/dev/null
+          cp "$RUNNER_TEMP/v3.json" "deployments/${SPONSOR_NETWORK}-account-v3.json"
+          {
+            echo "### ${SPONSOR_NETWORK} LockedSignerAccountV3"
+            echo
+            jq -r '"- implementation: `\(.implementation)`\n- treasury (fixed): `\(.treasury)`\n- deploy tx: `\(.deployTx)`\n- Ledger tx: to `\(.ledgerTx.to)` data `\(.ledgerTx.data)`"' "$RUNNER_TEMP/v3.json"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ inputs.network }}-account-v3
+          path: deployments/${{ inputs.network }}-account-v3.json
