@@ -41,9 +41,10 @@ jobs:
         run: |
           set -euo pipefail
           forge build --root contracts
-          pnpm exec tsx apps/fifolders/sponsor/deploy-v3-impl.ts > "$RUNNER_TEMP/v3.json"
+          # The relayer logs to stdout; the script writes the result file itself.
+          pnpm exec tsx apps/fifolders/sponsor/deploy-v3-impl.ts
+          cp "deployments/${SPONSOR_NETWORK}-account-v3.json" "$RUNNER_TEMP/v3.json"
           jq -e '.implementation and .ledgerTx.data' "$RUNNER_TEMP/v3.json" >/dev/null
-          cp "$RUNNER_TEMP/v3.json" "deployments/${SPONSOR_NETWORK}-account-v3.json"
           {
             echo "### ${SPONSOR_NETWORK} LockedSignerAccountV3"
             echo

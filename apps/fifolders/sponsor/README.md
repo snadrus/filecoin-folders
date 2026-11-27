@@ -114,9 +114,25 @@ For local testing with real test keys, run
   - the owner's passkey (WebAuthn).
 
   Requests expire after 5 minutes and cannot be replayed.
-- **`/execute`.** Relays only to accounts the factory deployed (`factory.isAccount`). It checks `isAllowed`, then
-  simulates, then sends. It is rate limited per account (default 30/min). Setup requests are limited per caller
-  (20/h); checkout is limited to 10/h.
+- **`/execute`.** Relays only to factory accounts that have **paid** (an identity on the account or a Stripe credit
+  that is not disputed/refunded); spares and unpaid accounts get 403 and a lifetime gas cap of 0. Order of checks:
+  per-IP limit (120/min) → factory account → paid → not blocked → owner/session signature → per-account+signer limit
+  (default 30/min) → target is not the SessionKeyRegistry (403; stops a session key or owner logging in an SP signer
+  that could bill Filecoin Pay) → session `isAllowed` → simulate → trace. Gas limit = estimate × 1.3 (sent as the tx
+  gas, so the relayer never re-estimates higher). A tx that is mined but reverts is **charged** to the account's
+  budget; 3 mined reverts per account in 24 h block the account for 24 h, 5 per target in 24 h block the target for
+  7 days. Setup requests are limited per caller (20/h); checkout is limited to 10/h per identity and 30/h per IP,
+  open unpaid checkouts are capped at 5000 and expire after 48 h.
+- **Stuck sponsor txs** are re-sent with the **same nonce** and bumped fees (never a fresh tx while the old nonce is
+  open), so a dropped-then-mined deposit cannot be paid twice.
+- **Disputes/refunds.** `charge.dispute.created` and `charge.refunded` mark the credit disputed and block gas for that
+  account. Enable both events on the Stripe webhook endpoint (test and live).
+- **Redirects** (`successUrl`/`cancelUrl`) must match an allowed origin by protocol, host, port and path prefix.
+- **Sweeps** only touch spare (unassigned) or retired (owned by the sponsor) accounts, one relay attempt per run.
+- **Accounts (V3, pending Ledger `upgradeTo`).** `LockedSignerAccountV3` refuses SessionKeyRegistry calls from the
+  owner and session keys; datasets are opened via `requestDataSet(providerId, …)` only at FWSS-approved providers.
+  Its treasury is immutable (`factory.setTreasury` no longer redirects sweeps) and `sweep` only works on spare or
+  retired accounts. See `docs/beacon-upgrade.md`.
 - **Webhooks.** They are verified with HMAC-SHA256 and a 5-minute tolerance. They are idempotent by Checkout Session
   id. `livemode` must match the network. The amount comes from Stripe's `amount_total`, not from client input.
 

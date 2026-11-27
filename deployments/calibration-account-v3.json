@@ -1,0 +1,22 @@
+{
+  "network": "calibration",
+  "chainId": 314159,
+  "factory": "0x228867301f1f0EaF75b5d7af62F3c44e1796A56D",
+  "admin": "0xEc476AB8366a22fCafa2B7559638FE10b44E0106",
+  "beacon": "0xbF8D1Ff1c632E953c52Cc4a7CdFD81E17374D9fA",
+  "beaconOwner": "0xD62bD538bcEaB1284950E513f6Da796dD790642a",
+  "beaconOwnerIsLedger": true,
+  "previousImplementation": "0xb7eb10755792992471a60ff91F1D7AdADF0D69CB",
+  "implementation": "0xDa69D34F28C952e18EA7d21Cb54F1138a22d1e9d",
+  "treasury": "0xEc476AB8366a22fCafa2B7559638FE10b44E0106",
+  "deployTx": "0x532be9c27078a1ea597cc2da77fbf05beea6ae6ba6f8174962da74b6fabef4e2",
+  "ledgerTx": {
+    "from": "0xD62bD538bcEaB1284950E513f6Da796dD790642a",
+    "to": "0xbF8D1Ff1c632E953c52Cc4a7CdFD81E17374D9fA",
+    "value": "0",
+    "data": "0x3659cfe6000000000000000000000000da69d34f28c952e18ea7d21cb54f1138a22d1e9d",
+    "function": "upgradeTo(0xDa69D34F28C952e18EA7d21Cb54F1138a22d1e9d)"
+  },
+  "upgraded": false,
+  "date": "2026-11-27"
+}

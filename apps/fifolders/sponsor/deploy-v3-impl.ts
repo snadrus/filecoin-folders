@@ -45,6 +45,7 @@ const out = {
   implementation,
   treasury,
   deployTx: deploy.transactionHash,
+  upgraded: false,
   ledgerTx: { from: owner, to: beacon, value: "0", data: upgradeCalldata, function: `upgradeTo(${implementation})` },
   date: new Date().toISOString().slice(0, 10),
 };
