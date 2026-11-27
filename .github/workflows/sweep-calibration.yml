@@ -1,0 +1,82 @@
+name: sweep-calibration
+
+# Admin-sweep Filecoin Pay USDFC from listed Calibration accounts to the factory treasury
+# (the sponsor on v2). Never prints the sponsor key. Refuses any account that is currently
+# a ready warm-pool spare. Calibration only.
+on:
+  workflow_dispatch:
+    inputs:
+      accounts:
+        description: "Comma-separated 0x accounts to sweep (Calibration). Ready pool accounts are refused."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sweep-calibration
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build packages the sweep script imports
+        run: pnpm --filter fil-folders build && pnpm --filter @fifolders/sponsored-client build
+      - name: Sweep to Calibration treasury
+        env:
+          SPONSOR_KEY: ${{ secrets.SPONSOR_KEY_CALIBRATION }}
+          SPONSOR_NETWORK: calibration
+          CALIBRATION_RPC: https://api.calibration.node.glif.io/rpc/v1
+          ACCOUNTS: ${{ inputs.accounts }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SPONSOR_KEY:-}" ]; then
+            echo "SPONSOR_KEY_CALIBRATION is not set"
+            exit 1
+          fi
+          if [ "${SPONSOR_NETWORK}" != "calibration" ]; then
+            echo "This workflow is restricted to Calibration"
+            exit 1
+          fi
+
+          # Normalize to a space-separated argv list and refuse current ready pool spares.
+          mapfile -t ACCT_ARR < <(python3 -c 'import json,os,sys,urllib.request
+want=[a.strip() for a in os.environ["ACCOUNTS"].replace(","," ").split() if a.strip()]
+if not want: raise SystemExit("no accounts")
+req=urllib.request.Request("https://fast.scionbase.ai/pool", headers={"User-Agent":"Mozilla/5.0"})
+pool=json.load(urllib.request.urlopen(req, timeout=30))
+ready={str(e.get("account","")).lower() for e in pool.get("entries") or [] if e.get("status")=="ready"}
+blocked=[a for a in want if a.lower() in ready]
+if blocked:
+    print("refusing to sweep ready pool accounts:", ", ".join(blocked), file=sys.stderr); raise SystemExit(2)
+print("sweeping", len(want), "accounts; ready pool left untouched:", ", ".join(sorted(ready)) or "(none)", file=sys.stderr)
+print("\n".join(want))')
+
+          set +e
+          ./node_modules/.bin/tsx apps/fifolders/sponsor/sweep.ts "${ACCT_ARR[@]}" > "$RUNNER_TEMP/sweep.out" 2> "$RUNNER_TEMP/sweep.err"
+          status=$?
+          set -e
+          cat "$RUNNER_TEMP/sweep.out"
+          if [ "$status" -ne 0 ]; then
+            echo "sweep failed (exit $status). stderr (secrets are masked by GitHub):"
+            tail -c 4000 "$RUNNER_TEMP/sweep.err" || true
+            exit "$status"
+          fi
+          {
+            echo "### Calibration sweep"
+            echo
+            echo '```'
+            cat "$RUNNER_TEMP/sweep.out"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
