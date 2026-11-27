@@ -166,9 +166,12 @@ describe("sponsor server (fake chain)", () => {
   let close: (() => void) | undefined;
   afterEach(() => close?.());
 
-  async function start(opts: { pool?: number; secretKey?: string; fetch?: typeof fetch; noStripe?: boolean } = {}) {
+  async function start(opts: { pool?: number; secretKey?: string; fetch?: typeof fetch; noStripe?: boolean; poolCare?: { minRunwayDays?: number; topUpMonths?: number; maxAgeDays?: number } } = {}) {
     const sends: { label: string; to?: Address; data: Hex }[] = [];
     const sponsorUsdfc = { value: 10n ** 24n };
+    const sponsorFil = { value: 10n ** 20n };
+    const payAccounts = new Map<string, readonly [bigint, bigint, bigint, bigint]>();
+    const terminated: { account: string; dataSetId: string }[] = [];
     const clock = { value: Date.now() };
     const onChainUnassigned = new Map<string, boolean>();
     const droppedReceipts = new Set<string>();
@@ -184,7 +187,10 @@ describe("sponsor server (fake chain)", () => {
         if (functionName === "predict") return predicted(args!);
         if (functionName === "isAccount") return factoryAccounts.has(String(args?.[0]).toLowerCase());
         if (functionName === "allowance") return 0n;
-        if (functionName === "accounts") return [10n ** 18n, 0n, 0n, 0n];
+        if (functionName === "accounts") {
+          const owner = String(args?.[1] ?? args?.[0] ?? "").toLowerCase();
+          return payAccounts.get(owner) ?? [10n ** 18n, 0n, 0n, 0n];
+        }
         if (functionName === "sessionSigners") return 0n;
         if (functionName === "isAllowed") return true;
         if (functionName === "balanceOf") return sponsorUsdfc.value;
@@ -194,7 +200,7 @@ describe("sponsor server (fake chain)", () => {
         throw new Error(functionName);
       },
       async getBalance() {
-        return 10n ** 20n;
+        return sponsorFil.value;
       },
       async getTransactionReceipt({ hash }: { hash: Hex }) {
         if (receiptsHidden.value || droppedReceipts.has(hash.toLowerCase())) throw new Error("not found");
@@ -258,6 +264,7 @@ describe("sponsor server (fake chain)", () => {
         providerId: 2n,
         contracts: { pay: getAddress("0x0000000000000000000000000000000000000001"), usdfc: getAddress("0x0000000000000000000000000000000000000002"), fwss: getAddress("0x0000000000000000000000000000000000000003"), pdp: getAddress("0x0000000000000000000000000000000000000004") },
         pool: { size: opts.pool ?? 0, seedUsdfc: "1" },
+        poolCare: { minRunwayDays: 0, topUpMonths: 3, maxAgeDays: 0, ...opts.poolCare },
         stripe: opts.noStripe ? { allowedOrigins: [] } : { webhookSecret: WHSEC, ...(opts.secretKey ? { secretKey: opts.secretKey } : { fake: true }), allowedOrigins: ["http://localhost"] },
         limits: { executePerMinute: 2 },
       },
@@ -269,6 +276,10 @@ describe("sponsor server (fake chain)", () => {
         openDataset: async (account) => {
           opened.push(account);
           return { dataSetId: String(++datasets), txHash: `0x${"d".repeat(64)}` as Hex };
+        },
+        terminatePoolDataset: async (account, dataSetId) => {
+          terminated.push({ account, dataSetId });
+          return { hash: `0x${"e".repeat(64)}` as Hex };
         },
       },
     );
@@ -288,7 +299,7 @@ describe("sponsor server (fake chain)", () => {
       const response = await fetch(`${base}${path}`);
       return { status: response.status, json: (await response.json()) as Record<string, unknown> };
     };
-    return { sponsor, sends, post, get, as, pay, opened, factoryAccounts, sponsorUsdfc, clock, onChainUnassigned, droppedReceipts, revertedReceipts, receiptsHidden, blockTxs, block, holdInclusion, relayer };
+    return { sponsor, sends, post, get, as, pay, opened, factoryAccounts, sponsorUsdfc, sponsorFil, payAccounts, terminated, clock, onChainUnassigned, droppedReceipts, revertedReceipts, receiptsHidden, blockTxs, block, holdInclusion, relayer };
   }
 
   const newUser = () => {
@@ -694,5 +705,69 @@ describe("sponsor server (fake chain)", () => {
     const after = sponsor.state.credits.cs_rebroadcast!;
     expect(after.hash).toBeTruthy();
     expect(after.hash).not.toBe(hash);
+  });
+
+  it("reports runway for ready pool spares on /status", async () => {
+    const { sponsor, get, payAccounts } = await start({ pool: 1, poolCare: { minRunwayDays: 45, topUpMonths: 3, maxAgeDays: 90 } });
+    await sponsor.refillPool();
+    const account = Object.values(sponsor.state.pool).find((e) => e.status === "ready")!.account;
+    const rate = 10n ** 18n / 86_400n; // 1 USDFC / 30-day month
+    payAccounts.set(account.toLowerCase(), [10n ** 18n, 0n, rate, 1000n]);
+    const body = (await get("/status")).json as { pool: { ready: number; spares?: { account: string; runwayDays: number; availableUsdfc: string }[] } };
+    expect(body.pool.ready).toBe(1);
+    expect(body.pool.spares).toEqual(expect.arrayContaining([expect.objectContaining({ account, runwayDays: 30, availableUsdfc: "1" })]));
+  });
+
+  it("tops up a ready spare when Filecoin Pay runway is below the threshold", async () => {
+    const { sponsor, sends, payAccounts } = await start({ pool: 1, poolCare: { minRunwayDays: 45, topUpMonths: 3, maxAgeDays: 90 } });
+    await sponsor.refillPool();
+    const account = Object.values(sponsor.state.pool).find((e) => e.status === "ready")!.account;
+    const rate = 10n ** 18n / 86_400n;
+    payAccounts.set(account.toLowerCase(), [10n ** 18n, 0n, rate, 1000n]);
+    const tick = await sponsor.cronTick();
+    expect(tick.care.toppedUp).toContain(account);
+    expect(sends.some((s) => s.label === `pool top-up ${account}`)).toBe(true);
+    expect(sponsor.state.pool[account]!.care).toMatchObject({ action: "topup" });
+  });
+
+  it("does not top up a spare with enough runway", async () => {
+    const { sponsor, sends, payAccounts } = await start({ pool: 1, poolCare: { minRunwayDays: 45, topUpMonths: 3, maxAgeDays: 90 } });
+    await sponsor.refillPool();
+    const account = Object.values(sponsor.state.pool).find((e) => e.status === "ready")!.account;
+    const rate = 10n ** 18n / 86_400n;
+    payAccounts.set(account.toLowerCase(), [4n * 10n ** 18n, 0n, rate, 1000n]); // ~120 days
+    const before = sends.filter((s) => s.label.startsWith("pool top-up")).length;
+    const tick = await sponsor.cronTick();
+    expect(tick.care.toppedUp).toEqual([]);
+    expect(sends.filter((s) => s.label.startsWith("pool top-up")).length).toBe(before);
+    expect((await sponsor.status()).pool.spares[0]).toMatchObject({ account, runwayDays: 120 });
+  });
+
+  it("retires a ready spare older than max age (terminate + sweep) instead of topping up", async () => {
+    const { sponsor, terminated, clock, payAccounts } = await start({ pool: 1, poolCare: { minRunwayDays: 45, topUpMonths: 3, maxAgeDays: 90 } });
+    await sponsor.refillPool();
+    const account = Object.values(sponsor.state.pool).find((e) => e.status === "ready")!.account;
+    const rate = 10n ** 18n / 86_400n;
+    payAccounts.set(account.toLowerCase(), [10n ** 18n, 0n, rate, 1000n]);
+    sponsor.state.pool[account]!.createdAt = new Date(clock.value - 91 * 86_400_000).toISOString();
+    const tick = await sponsor.cronTick();
+    expect(tick.care.retired).toContain(account);
+    expect(terminated.some((row) => row.account === account)).toBe(true);
+    expect(sponsor.state.pool[account]).toMatchObject({ status: "retired", error: "retired: older than max pool age" });
+  });
+
+  it("skips pool care when the sponsor is under the 0.05 FIL floor", async () => {
+    const { sponsor, sponsorFil, payAccounts, terminated } = await start({ pool: 1, poolCare: { minRunwayDays: 45, topUpMonths: 3, maxAgeDays: 90 } });
+    await sponsor.refillPool();
+    const account = Object.values(sponsor.state.pool).find((e) => e.status === "ready")!.account;
+    const rate = 10n ** 18n / 86_400n;
+    payAccounts.set(account.toLowerCase(), [10n ** 18n, 0n, rate, 1000n]);
+    sponsorFil.value = 4n * 10n ** 16n; // 0.04 FIL
+    const tick = await sponsor.cronTick();
+    expect(tick.care.toppedUp).toEqual([]);
+    expect(tick.care.retired).toEqual([]);
+    expect(tick.care.skipped.some((row: { account: string }) => row.account === account)).toBe(true);
+    expect(terminated).toEqual([]);
+    expect(sponsor.state.pool[account]!.status).toBe("ready");
   });
 });

@@ -365,20 +365,18 @@ try {
   stopCreditPoll();
   }
 
-  // Finish setup: authorize / open drive. file-input is sr-only and present during setup, so it is not a ready signal.
+  // Finish setup: open the drive. The pre-generated session is usable at handover send; do not wait for "Session key until".
   let clickedCreate = false;
   let clickedAuth = false;
   let lastAuthClick = 0;
   let lastSetupMark = 0;
-  const sessionReady = async () => {
-    if (!(await visible(page, "session-status")) && (await visible(page, "account"))) {
-      await page.getByTestId("account").click().catch(() => undefined);
-    }
-    const status = (await page.getByTestId("session-status").innerText().catch(() => "")).trim();
-    return /Session key until/i.test(status);
+  const driveReadyForUpload = async () => {
+    if ((await visible(page, "drive-loading")) || (await visible(page, "drive-pending"))) return false;
+    const hasDrive = (await visible(page, "browser")) || (await page.getByText("This folder is empty").count().catch(() => 0)) > 0 || (await page.getByTestId("entry").count().catch(() => 0)) > 0;
+    return Boolean(hasDrive && (await visible(page, "file-input")));
   };
   await waitUntil(20 * 60_000, "drive ready for upload", async () => {
-    if (await sessionReady()) return true;
+    if (await driveReadyForUpload()) return true;
     if (await visible(page, "create-dataset") && !clickedCreate && !(await visible(page, "file-input")) && !(await page.getByText("This folder is empty").count())) {
       clickedCreate = true;
       say("clicking create-dataset");
@@ -443,7 +441,7 @@ try {
   if (await visible(page, "authorize-session")) {
     say("clicking authorize-session");
     await page.getByTestId("authorize-session").first().click();
-    await waitUntil(4 * 60_000, "session ready", sessionReady);
+    await continuePasskey(page);
   }
   steps.session = { ok: true, text: (await textOf(page)).slice(0, 300) };
   log.tSessionReady = new Date().toISOString();

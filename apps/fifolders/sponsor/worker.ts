@@ -51,7 +51,7 @@ export function networkEnv(env: Record<string, string | undefined>, network: "ca
     SPONSOR_RPC: env.SPONSOR_RPC_MAINNET,
     STRIPE_SECRET_KEY: env.STRIPE_LIVE_SECRET_KEY,
     STRIPE_WEBHOOK_SECRET: env.STRIPE_LIVE_WEBHOOK_SECRET,
-    ...Object.fromEntries(Object.entries(env).filter(([key]) => /^SPONSOR_(RESERVE|SETUP_FEE|MIN_|MAX_|STRIPE_FEE|USDFC_PER|LOW_|REFUND_|GAS_)/.test(key))),
+    ...Object.fromEntries(Object.entries(env).filter(([key]) => /^SPONSOR_(RESERVE|SETUP_FEE|MIN_|MAX_|STRIPE_FEE|USDFC_PER|LOW_|REFUND_|GAS_|POOL_MIN_|POOL_TOPUP_|POOL_MAX_AGE_)/.test(key))),
   };
 }
 

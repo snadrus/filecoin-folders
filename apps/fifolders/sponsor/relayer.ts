@@ -35,6 +35,8 @@ export interface Relayer {
   relay(call: RelayCall): Promise<TransactionReceipt>;
   /** Same nonce, bumped fees; used when a broadcast tx is not included in time. */
   replace?(hash: Hex, bumpBps?: number): Promise<Hex>;
+  /** Owner-signed Execute (retiring a sponsor-owned pool account). */
+  signTypedData?(params: { domain: Record<string, unknown>; types: Record<string, readonly { name: string; type: string }[]>; primaryType: string; message: Record<string, unknown> }): Promise<Hex>;
 }
 
 export type SponsorNetwork = "calibration" | "mainnet";
@@ -90,6 +92,10 @@ export class SponsorWalletRelayer implements Relayer {
     this.address = account.address;
     this.pub = publicClient(opts);
     this.wallet = createWalletClient({ account, chain: chainFor(network) as never, transport: http(this.rpcUrl, { retryCount: 1, timeout: 8_000 }) });
+  }
+
+  signTypedData(params: { domain: Record<string, unknown>; types: Record<string, readonly { name: string; type: string }[]>; primaryType: string; message: Record<string, unknown> }): Promise<Hex> {
+    return this.wallet.signTypedData(params as never);
   }
 
   send(call: RelayCall): Promise<Hex> {

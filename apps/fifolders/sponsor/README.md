@@ -54,6 +54,7 @@ deposits the credit, and opens the dataset (the slow path).
 | `SPONSOR_LOW_FIL` / `SPONSOR_LOW_USDFC` | sponsor | `/status` and `/health` report `low` below these. Defaults `0.05` and `20`. |
 | `SPONSOR_REFUND_AFTER_HOURS` | sponsor | A paid credit still waiting for sponsor funds after this long is refunded through Stripe. Default `24`. |
 | `SPONSOR_POOL_SIZE` / `SPONSOR_POOL_SIZE_MAINNET` / `SPONSOR_POOL_SEED_USDFC` | sponsor | Both networks keep 2 ready accounts (Calibration: `SPONSOR_POOL_SIZE`, mainnet: `SPONSOR_POOL_SIZE_MAINNET`). Seed default is `1`. |
+| `SPONSOR_POOL_MIN_RUNWAY_DAYS` / `SPONSOR_POOL_TOPUP_MONTHS` / `SPONSOR_POOL_MAX_AGE_DAYS` | sponsor | Ready-spare rail: top up when runway is under 45 days (restore 3 months); retire spares older than 90 days. Same on both networks. |
 | `SPONSOR_STRIPE_FAKE=1` | sponsor | Calibration only, and only when no Stripe key is set. Creates a local Checkout session; you then post a webhook signed with `STRIPE_WEBHOOK_SECRET` yourself. |
 | `VITE_SPONSOR_URL` | app | Turns on gasless mode. |
 | `VITE_SPONSOR_CREDIT_USD` | app | Suggested purchase. Default: the sponsor's `suggestedUsd`, else `10`. |
@@ -88,6 +89,7 @@ For local testing with real test keys, run
   using an idempotency key per session.
 - **The warm pool** refills after every handover and on each cron tick. Refill holds back whenever the wallet cannot
   cover owed credits plus a seed. With no ready account, a purchase falls back to on-demand creation.
+- **Pool runway.** On each cron tick (both networks) every unassigned ready account is checked against Filecoin Pay (`available` vs lockup rate, with a 1 USDFC/month floor). If runway is below `SPONSOR_POOL_MIN_RUNWAY_DAYS` (default 45), the sponsor deposits enough USDFC to restore `SPONSOR_POOL_TOPUP_MONTHS` (default 3). A spare older than `SPONSOR_POOL_MAX_AGE_DAYS` (default 90) is retired instead: the dataset is terminated, unspent funds are admin-swept, and the pool rebuilds a fresh account. Care respects the gas budget and the 0.05 FIL floor; `/status` lists each spare's runway and last action.
 - **Pool trimming.** When ready accounts exceed the target (for example after lowering `SPONSOR_POOL_SIZE`), the cron
   admin-sweeps the extra ones to the treasury (the sponsor on Calibration, so the USDFC is reused) and retires them.
   An account leaves `ready` before any await, so a purchase can never be handed one that is being swept. Entries

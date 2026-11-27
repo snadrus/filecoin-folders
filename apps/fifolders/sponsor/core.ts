@@ -35,6 +35,20 @@ import { sweepAccount, type SweepResult } from "./sweeplib.js";
 import { assertStripeMode, checkoutSessionIdForPaymentIntent, createCheckoutSession, estimateStripeFeeCents, fakeCheckoutSession, refundPayment, retrieveCheckoutSession, stripeFeeCents, verifyStripeSignature, type CheckoutSession, type Network } from "./stripe.js";
 import { FINALITY_EPOCHS, receiptFate, receiptRpcUrls, waitForReceipt, waitForTxInHead, type RecordedInclusion } from "../src/receipt.js";
 import { emptyGasState, gasStatus, lifetimeCapWei, limitsFromEnv, releaseGas, reserveGas, reservedCostWei, settleGas, GasBudgetError, type GasBudgetLimits, type GasBudgetState } from "./gas-budget.js";
+import { EXECUTE_TYPES, executeDomain } from "../src/sponsored-abi.js";
+import { privateKeyToAccount } from "viem/accounts";
+import {
+  DEFAULT_POOL_CARE,
+  ageDays,
+  createdAtFromSessionExpiry,
+  decideSpareCare,
+  effectiveRate,
+  poolCareFromEnv,
+  runwayDays,
+  settledPayAccount,
+  topUpToMonths,
+  type PoolCareConfig,
+} from "./pool-care.js";
 
 const ZERO32 = `0x${"0".repeat(64)}` as Hex;
 const ZERO_ADDRESS = getAddress(`0x${"0".repeat(40)}`);
@@ -71,6 +85,8 @@ export interface SponsorConfig {
   pricing?: Pricing;
   /** Warm pool: ready accounts to keep (0 disables) and the USDFC each holds. */
   pool?: { size: number; seedUsdfc: string };
+  /** Top up or retire stale unassigned spares (cron, both networks). */
+  poolCare?: PoolCareConfig;
   /** Checkout is refused (503) unless the sponsor holds at least this much FIL, plus USDFC for the charge. */
   minSponsorFil?: string;
   /** /status and /health report "low" below these (warn before checkout pauses). */
@@ -117,6 +133,12 @@ export interface PoolEntry {
   assignedTo?: string;
   /** Factory that deployed this account (tagged on new builds; inferred from the chain when missing). */
   factory?: Address;
+  /** ISO time the account entered the pool (build). Used for max-age retirement. */
+  createdAt?: string;
+  /** Last Filecoin Pay snapshot from cron or /status. */
+  pay?: { available: string; lockup: string; ratePerMonth: string; runwayDays: number; checkedAt: string };
+  /** Last care action (top-up, retire, skip). */
+  care?: { at: string; action: string; amount?: string; hash?: Hex; error?: string };
   error?: string;
 }
 
@@ -211,6 +233,7 @@ export function configFromEnv(env: Record<string, string | undefined>, opts: { s
     },
     pricing: pricingFromEnv(env),
     pool: { size: Number(env.SPONSOR_POOL_SIZE ?? 2), seedUsdfc: env.SPONSOR_POOL_SEED_USDFC ?? "1" },
+    poolCare: poolCareFromEnv(env),
     minSponsorFil: env.SPONSOR_MIN_FIL ?? "0.005",
     lowFil: env.SPONSOR_LOW_FIL ?? "0.05",
     lowUsdfc: env.SPONSOR_LOW_USDFC ?? "20",
@@ -277,6 +300,8 @@ export interface SponsorDeps {
   now?: () => number;
   /** Rebroadcast a still-pending handover tx if it is not in a head within this many epochs. Default 2. */
   includeWithinEpochs?: number;
+  /** Tests: terminate a retiring spare without an owner signature. */
+  terminatePoolDataset?: (account: Address, dataSetId: string) => Promise<{ hash?: Hex }>;
 }
 
 function randomHex(bytes: number): string {
@@ -417,7 +442,7 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
     const salt = BigInt(`0x${randomHex(8)}`);
     const sessionExpiry = BigInt(Math.floor(Date.now() / 1000)) + ACCOUNT_TTL_SEC;
     const account = getAddress((await pub.readContract({ address: config.factory, abi: lockedFactoryAbi, functionName: "predict", args: [ZERO_ADDRESS, ZERO32, ZERO32, salt, sessionExpiry] })) as Address);
-    const entry: PoolEntry = { account, salt: salt.toString(), sessionExpiry: sessionExpiry.toString(), status: "seeding", hashes: [], factory: config.factory };
+    const entry: PoolEntry = { account, salt: salt.toString(), sessionExpiry: sessionExpiry.toString(), status: "seeding", hashes: [], factory: config.factory, createdAt: new Date(now()).toISOString() };
     state.pool[account] = entry;
     save();
     try {
@@ -1389,15 +1414,251 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
     }
   }
 
-  /** Background tick (Worker cron / Node interval): owed credits first, then the pool, then deferred sweeps. */
+
+  const poolCare: PoolCareConfig = { ...DEFAULT_POOL_CARE, ...config.poolCare };
+  const filFloor = () => gasLimits.filFloorWei > 0n ? gasLimits.filFloorWei : parseUnits("0.05", 18);
+
+  function spareCreatedAtMs(entry: PoolEntry): number {
+    if (entry.createdAt) {
+      const parsed = Date.parse(entry.createdAt);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+    return createdAtFromSessionExpiry(entry.sessionExpiry, ACCOUNT_TTL_SEC, now());
+  }
+
+  async function readSparePay(entry: PoolEntry): Promise<{ available: bigint; lockup: bigint; rate: bigint; runwayDays: number }> {
+    const epoch = await pub.getBlockNumber();
+    const [funds, lockupCurrent, lockupRate, settledAt] = (await pub.readContract({
+      address: PAY,
+      abi: payAbi,
+      functionName: "accounts",
+      args: [USDFC, entry.account],
+    })) as readonly bigint[];
+    const settled = settledPayAccount(funds, lockupCurrent, lockupRate, settledAt, epoch);
+    const days = runwayDays(settled.available, lockupRate);
+    entry.pay = {
+      available: formatUnits(settled.available, 18),
+      lockup: formatUnits(settled.lockup, 18),
+      ratePerMonth: formatUnits(effectiveRate(lockupRate) * 86_400n, 18),
+      runwayDays: days,
+      checkedAt: new Date(now()).toISOString(),
+    };
+    return { available: settled.available, lockup: settled.lockup, rate: lockupRate, runwayDays: days };
+  }
+
+  function canSpendForPoolCare(funds: { fil: bigint; usdfc: bigint }, usdfcNeed: bigint): string | null {
+    if (funds.fil < filFloor() || funds.fil < minFil()) return `FIL floor ${formatUnits(filFloor(), 18)}`;
+    if (funds.usdfc < pendingUsdfc() + usdfcNeed) return "sponsor USDFC reserved for paid credits";
+    return null;
+  }
+
+  async function withCareGas<T>(account: Address, work: () => Promise<T>): Promise<T> {
+    if (!state.gas) state.gas = { budget: emptyGasState() };
+    const funds = await sponsorFunds();
+    const reservationId = `pool-care:${account}:${now()}`;
+    const cost = gasLimits.txMaxFeeWei;
+    reserveGas(state.gas.budget, gasLimits, {
+      account,
+      reservationId,
+      costWei: cost,
+      gas: 1n,
+      maxFeePerGas: cost,
+      lifetimeCapWei: lifetimeCapWei(0, gasLimits),
+      sponsorFilWei: funds.fil,
+      sessionKey: null,
+      ip: null,
+      now: now(),
+    });
+    save();
+    try {
+      const result = await work();
+      settleGas(state.gas.budget, reservationId, cost);
+      save();
+      return result;
+    } catch (error) {
+      releaseGas(state.gas.budget, reservationId);
+      save();
+      throw error;
+    }
+  }
+
+  async function terminateSpareDataset(entry: PoolEntry): Promise<Hex | undefined> {
+    const dataSetId = entry.dataSetId;
+    if (deps.terminatePoolDataset) return (await deps.terminatePoolDataset(entry.account, dataSetId ?? "")).hash;
+    if (!dataSetId) return undefined;
+    let unassigned = true;
+    try {
+      unassigned = Boolean(await pub.readContract({ address: entry.account, abi: lockedAccountAbi, functionName: "unassigned" }));
+    } catch { /* treat as unassigned */ }
+    if (unassigned) {
+      await relayer.relay({
+        to: config.factory,
+        label: `retire assign ${entry.account}`,
+        data: encodeFunctionData({
+          abi: lockedFactoryAbi,
+          functionName: "assign",
+          args: [entry.account, relayer.address, ZERO32, ZERO32, 0n],
+        }),
+      });
+    }
+    const sign = deps.sponsorKey
+      ? (params: Parameters<NonNullable<Relayer["signTypedData"]>>[0]) => privateKeyToAccount(deps.sponsorKey!).signTypedData(params as never)
+      : relayer.signTypedData?.bind(relayer);
+    if (!sign) throw new Error("cannot terminate pool dataset: no sponsor signer");
+    const nonce = (await pub.readContract({ address: entry.account, abi: lockedAccountAbi, functionName: "nonce" })) as bigint;
+    const deadline = BigInt(Math.floor(now() / 1000) + 3600);
+    const data = encodeFunctionData({
+      abi: parseAbi(["function terminateService(uint256 dataSetId)"]),
+      functionName: "terminateService",
+      args: [BigInt(dataSetId)],
+    });
+    const signature = await sign({
+      domain: executeDomain(config.chainId, entry.account) as never,
+      types: EXECUTE_TYPES,
+      primaryType: "Execute",
+      message: { target: FWSS, value: 0n, data, nonce, deadline },
+    });
+    const receipt = await relayer.relay({
+      to: entry.account,
+      label: `terminate ${entry.account} dataset ${dataSetId}`,
+      data: encodeFunctionData({
+        abi: lockedAccountAbi,
+        functionName: "execute",
+        args: [FWSS, 0n, data, nonce, deadline, signature],
+      }),
+    });
+    return receipt.transactionHash;
+  }
+
+  /**
+   * For each unassigned ready spare: retire if older than max age (terminate + sweep, pool rebuilds);
+   * otherwise top up from the sponsor when Filecoin Pay runway is below the configured threshold.
+   */
+  async function maintainPoolSpares(): Promise<{ toppedUp: Address[]; retired: Address[]; skipped: { account: Address; reason: string }[] }> {
+    const out = { toppedUp: [] as Address[], retired: [] as Address[], skipped: [] as { account: Address; reason: string }[] };
+    const ready = (await poolOnCurrentFactory("ready")).filter((entry) => entry.status === "ready" && !assigningNow.has(entry.account));
+    for (const entry of ready) {
+      if (entry.status !== "ready" || assigningNow.has(entry.account)) continue;
+      let pay: { available: bigint; lockup: bigint; rate: bigint; runwayDays: number };
+      try {
+        pay = await readSparePay(entry);
+      } catch (error) {
+        out.skipped.push({ account: entry.account, reason: error instanceof Error ? error.message : String(error) });
+        continue;
+      }
+      const age = ageDays(spareCreatedAtMs(entry), now());
+      const action = decideSpareCare({ ageDays: age, runwayDays: pay.runwayDays, care: poolCare });
+      if (action === "ok") {
+        entry.care = { at: new Date(now()).toISOString(), action: "ok" };
+        save();
+        continue;
+      }
+      let funds: { fil: bigint; usdfc: bigint };
+      try {
+        funds = await sponsorFunds();
+      } catch (error) {
+        out.skipped.push({ account: entry.account, reason: error instanceof Error ? error.message : String(error) });
+        continue;
+      }
+      if (action === "retire") {
+        const blocked = canSpendForPoolCare(funds, 0n);
+        if (blocked) {
+          entry.care = { at: new Date(now()).toISOString(), action: "skip", error: blocked };
+          out.skipped.push({ account: entry.account, reason: blocked });
+          save();
+          continue;
+        }
+        entry.status = "trimming";
+        save();
+        try {
+          const hash = await withCareGas(entry.account, () => terminateSpareDataset(entry));
+          let result: SweepResult;
+          try {
+            result = await sweepAccount(pub, relayer, entry.account, config.network);
+          } catch (error) {
+            result = { account: entry.account, funds: "?", lockup: "?", outcome: `error: ${error instanceof Error ? error.message : String(error)}` };
+          }
+          state.sweeps[entry.account] = { ...result, at: new Date(now()).toISOString() };
+          entry.status = "retired";
+          entry.error = "retired: older than max pool age";
+          entry.care = { at: new Date(now()).toISOString(), action: "retire", ...(hash ? { hash } : {}), ...(result.swept ? { amount: result.swept } : {}) };
+          out.retired.push(entry.account);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (error instanceof GasBudgetError) {
+            entry.status = "ready";
+            entry.care = { at: new Date(now()).toISOString(), action: "skip", error: message };
+            out.skipped.push({ account: entry.account, reason: message });
+          } else {
+            entry.status = "failed";
+            entry.error = `retire: ${message}`;
+            entry.care = { at: new Date(now()).toISOString(), action: "retire", error: message };
+            out.skipped.push({ account: entry.account, reason: message });
+          }
+        }
+        save();
+        continue;
+      }
+      const amount = topUpToMonths(pay.available, pay.rate, poolCare.topUpMonths);
+      if (amount <= 0n) {
+        entry.care = { at: new Date(now()).toISOString(), action: "ok" };
+        save();
+        continue;
+      }
+      const blocked = canSpendForPoolCare(funds, amount);
+      if (blocked) {
+        entry.care = { at: new Date(now()).toISOString(), action: "skip", error: blocked };
+        out.skipped.push({ account: entry.account, reason: blocked });
+        save();
+        continue;
+      }
+      try {
+        const hash = await withCareGas(entry.account, () => deposit(entry.account, amount, `pool top-up ${entry.account}`));
+        entry.hashes = [...(entry.hashes ?? []), hash];
+        entry.care = { at: new Date(now()).toISOString(), action: "topup", amount: formatUnits(amount, 18), hash };
+        await readSparePay(entry).catch(() => undefined);
+        out.toppedUp.push(entry.account);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        entry.care = { at: new Date(now()).toISOString(), action: "skip", error: message };
+        out.skipped.push({ account: entry.account, reason: message });
+      }
+      save();
+    }
+    return out;
+  }
+
+  async function spareStatusRows() {
+    const rows = [];
+    for (const entry of await poolOnCurrentFactory("ready")) {
+      try {
+        if (!entry.pay) await readSparePay(entry);
+      } catch { /* leave last snapshot */ }
+      rows.push({
+        account: entry.account,
+        status: entry.status,
+        createdAt: entry.createdAt ?? null,
+        ageDays: ageDays(spareCreatedAtMs(entry), now()),
+        availableUsdfc: entry.pay?.available ?? null,
+        lockupUsdfc: entry.pay?.lockup ?? null,
+        rateUsdfcPerMonth: entry.pay?.ratePerMonth ?? null,
+        runwayDays: entry.pay?.runwayDays ?? null,
+        lastAction: entry.care ?? null,
+      });
+    }
+    return rows;
+  }
+
+    /** Background tick (Worker cron / Node interval): owed credits first, then the pool, then deferred sweeps. */
   async function cronTick() {
     const reconciled = await reconcileAssigning();
     const finality = await checkHandoverFinality();
     const credits = await retryAwaiting();
     const trimmed = await trimPool();
+    const care = await maintainPoolSpares();
     void refillPool();
     const swept = await sweepDeferred();
-    return { reconciled, finality, credits, trimmed, swept, pool: poolStatus().counts };
+    return { reconciled, finality, credits, trimmed, care, swept, pool: poolStatus().counts };
   }
 
   /** Off-chain reserve + creation fees from delivered purchases: dollars owed back to the sponsor. */
@@ -1441,7 +1702,11 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
       },
       checkoutOpen: level === "ok" || level === "low",
       ledger: ledger(),
-      pool: poolStatus().counts,
+      pool: {
+        ...poolStatus().counts,
+        care: poolCare,
+        spares: await spareStatusRows(),
+      },
       credits,
       refundAfterHours: config.refundAfterHours ?? 24,
       contracts: await chainContracts(),
@@ -1481,7 +1746,7 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
     if (st.funds.level === "low") warnings.push(`sponsor wallet low: ${st.funds.fil} FIL / ${st.funds.usdfc} USDFC`);
     if (st.funds.level === "empty") warnings.push(`sponsor wallet empty: card checkout paused (${st.funds.fil} FIL / ${st.funds.usdfc} USDFC, ${st.funds.owedUsdfc} USDFC owed)`);
     if (st.funds.level === "unknown") warnings.push("sponsor balance unreadable (RPC)");
-    if (poolSize && !st.pool.ready) warnings.push("warm pool empty: purchases use on-demand creation");
+    if (poolSize && !poolStatus().counts.ready) warnings.push("warm pool empty: purchases use on-demand creation");
     if (st.credits["awaiting-funds"]) warnings.push(`${st.credits["awaiting-funds"]} paid credit(s) awaiting sponsor funds`);
     return {
       ok: true,
@@ -1554,7 +1819,7 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
   // Resume credits interrupted by a restart only if nothing was sent yet (never resend).
   for (const [id, credit] of Object.entries(state.credits)) if (credit.status === "pending" && !credit.hashes?.length) void queueCredit(id);
 
-  return { handle, state, relayer, pub, config, pricing, onStripeEvent, refillPool, sweepDeferred, retryAwaiting, trimPool, reconcileAssigning, checkHandoverFinality, cronTick, status, poolStatus, settled: () => creditQueue };
+  return { handle, state, relayer, pub, config, pricing, onStripeEvent, refillPool, sweepDeferred, retryAwaiting, trimPool, reconcileAssigning, checkHandoverFinality, maintainPoolSpares, cronTick, status, poolStatus, settled: () => creditQueue };
 }
 
 export type SponsorCore = ReturnType<typeof createSponsorCore>;
