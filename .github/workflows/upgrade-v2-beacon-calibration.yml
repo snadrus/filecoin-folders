@@ -1,0 +1,58 @@
+name: upgrade-v2-beacon-calibration
+
+# Deploys a new LockedSignerAccountV2 implementation and points the Calibration
+# beacon at it. Factory ABI is unchanged. The sponsor key is injected as
+# SPONSOR_KEY and is never printed. Refuses any network other than Calibration.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: upgrade-v2-beacon-calibration
+  cancel-in-progress: false
+
+jobs:
+  upgrade:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: foundry-rs/foundry-toolchain@v1
+      - run: pnpm install --frozen-lockfile
+      - name: Build packages the upgrade script imports
+        run: pnpm --filter fil-folders build
+      - name: Upgrade Calibration v2 beacon
+        env:
+          SPONSOR_KEY: ${{ secrets.SPONSOR_KEY_CALIBRATION }}
+          SPONSOR_NETWORK: calibration
+          CALIBRATION_RPC: https://api.calibration.node.glif.io/rpc/v1
+        run: |
+          set -euo pipefail
+          if [ "${SPONSOR_NETWORK}" != "calibration" ]; then
+            echo "This workflow is restricted to Calibration; refusing network=${SPONSOR_NETWORK}"
+            exit 1
+          fi
+          if [ -z "${SPONSOR_KEY:-}" ]; then
+            echo "SPONSOR_KEY_CALIBRATION is not set"
+            exit 1
+          fi
+          forge build --root contracts
+          pnpm exec tsx apps/fifolders/sponsor/upgrade-beacon.ts | tee /tmp/upgrade.json
+          jq -e '.implementation and .beacon and .upgradeTx' /tmp/upgrade.json >/dev/null
+          {
+            echo "### Calibration v2 beacon upgrade"
+            echo
+            jq -r '"- factory: `\(.factory)`\n- beacon: `\(.beacon)`\n- previous implementation: `\(.previousImplementation)`\n- implementation: `\(.implementation)`\n- deploy tx: `\(.deployTx)`\n- upgrade tx: `\(.upgradeTx)`"' /tmp/upgrade.json
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: calibration-factory-v2
+          path: deployments/calibration-factory-v2.json

@@ -72,6 +72,9 @@ import {
   formatToken,
   loadLastDataset,
   loadSession,
+  loadPendingSession,
+  savePendingSession,
+  bindPendingSession,
   clearSession,
   paymentsReady,
   saveLastDataset,
@@ -192,7 +195,12 @@ export function createLiveOnboarding(options: LiveOnboardingOptions = {}): Onboa
       const sessionId = params.get("session_id");
       if (params.get("checkout") !== "success" || !sessionId) return;
       const status = await waitForCredit(sessionId).catch(() => undefined);
-      if (status?.account) payer = getAddress(status.account);
+      if (status?.account) {
+        payer = getAddress(status.account);
+        for (const chainId of [calibration.id, mainnet.id]) {
+          if (loadPendingSession(chainId)) bindPendingSession(chainId, payer);
+        }
+      }
       params.delete("checkout");
       params.delete("session_id");
       const query = params.toString();
@@ -754,10 +762,19 @@ export function createLiveOnboarding(options: LiveOnboardingOptions = {}): Onboa
           : sponsoredPurchaseUsd(limits, !account);
         report?.({ flow: "payment", phase: "signing", label: intentText(INTENTS.sponsoredCredits(usd)) });
         const here = typeof window !== "undefined" && window.location ? `${window.location.origin}${window.location.pathname ?? "/"}` : "http://localhost/";
-        const checkout = await buySponsoredCredits(await sponsorSigner(choice), chainOf(choice).id, {
+        const chain = chainOf(choice);
+        const nowSec = BigInt(Math.floor(Date.now() / 1000));
+        const expiresAt = nowSec + BigInt(SESSION_TTL_SEC);
+        const pending = loadPendingSession(chain.id);
+        const privateKey = (pending && sessionUsable(pending, nowSec) ? pending.privateKey : generatePrivateKey()) as Hex;
+        const sessionAddress = privateKeyToAccount(privateKey).address;
+        savePendingSession({ v: 1, chainId: chain.id, root: "0x0000000000000000000000000000000000000000", privateKey, sessionAddress, expiry: expiresAt.toString() });
+        const checkout = await buySponsoredCredits(await sponsorSigner(choice), chain.id, {
           usd,
           successUrl: `${here}?checkout=success&session_id={CHECKOUT_SESSION_ID}`,
           cancelUrl: `${here}?checkout=cancel`,
+          sessionKey: sessionAddress,
+          sessionExpiry: expiresAt.toString(),
         });
         await (options.openCheckout ?? ((url: string) => window.location.assign(url)))(checkout.url);
         return;

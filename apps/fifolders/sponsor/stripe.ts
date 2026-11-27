@@ -129,3 +129,29 @@ export async function refundPayment(secretKey: string, paymentIntent: string, me
   if (!response.ok || !json.id) throw new Error(`Stripe refund: ${json.error?.message ?? response.status}`);
   return { id: json.id, status: json.status ?? "unknown" };
 }
+
+/** Map a PaymentIntent to its Checkout Session id (webhook may arrive as payment_intent.succeeded first). */
+export async function checkoutSessionIdForPaymentIntent(
+  secretKey: string,
+  paymentIntent: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<string | undefined> {
+  const url = `https://api.stripe.com/v1/checkout/sessions?payment_intent=${encodeURIComponent(paymentIntent)}&limit=1`;
+  const response = await fetchImpl(url, { headers: { authorization: `Bearer ${secretKey}` } });
+  const json = (await response.json()) as { data?: { id?: string }[]; error?: { message?: string } };
+  if (!response.ok) throw new Error(`Stripe: ${json.error?.message ?? response.status}`);
+  const id = json.data?.[0]?.id;
+  return id || undefined;
+}
+
+export async function retrieveCheckoutSession(
+  secretKey: string,
+  sessionId: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<Record<string, unknown>> {
+  const url = `https://api.stripe.com/v1/checkout/sessions/${encodeURIComponent(sessionId)}`;
+  const response = await fetchImpl(url, { headers: { authorization: `Bearer ${secretKey}` } });
+  const json = (await response.json()) as Record<string, unknown> & { error?: { message?: string } };
+  if (!response.ok) throw new Error(`Stripe: ${json.error?.message ?? response.status}`);
+  return json;
+}

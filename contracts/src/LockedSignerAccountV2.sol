@@ -41,6 +41,8 @@ contract LockedSignerAccountV2 {
     error NotUnassigned();
     error NoOwner();
     error BadAllowanceTarget();
+    error InitialSessionSet();
+    error BadSession();
 
     event Executed(uint256 indexed nonce, address indexed target, bytes4 selector, bool ownerSigned);
     event DataSetAllowed(uint256 indexed providerId, address payee, uint256 clientDataSetId, address createSigner);
@@ -100,6 +102,10 @@ contract LockedSignerAccountV2 {
     mapping(address => uint256) public sessionSigners;
     bool public unassigned;
     bool private _initialized;
+    // Appended in a Calibration beacon upgrade: one-shot admin initial session, consumed by assignOwner.
+    address public pendingSessionKey;
+    uint256 public pendingSessionExpiry;
+    bool public initialSessionInstalled;
 
     constructor(address factory_) {
         FACTORY = LockedSignerAccountBeaconFactory(factory_);
@@ -131,6 +137,46 @@ contract LockedSignerAccountV2 {
         passkeyY = qy;
         if (owner_ != address(0)) ISessionKeyRegistryL(FACTORY.SKR()).login(owner_, sessionExpiry, _fwssScopes(), "fifolders");
         emit OwnerAssigned(owner_, qx, qy);
+        if (pendingSessionKey != address(0)) {
+            _installInitialSession(pendingSessionKey, pendingSessionExpiry);
+            delete pendingSessionKey;
+            delete pendingSessionExpiry;
+        }
+    }
+
+    /// @notice Sponsor-only: park a browser session key on an unassigned pool account; assignOwner installs it in the same handover.
+    function prepareSession(address key, uint256 expiry) external {
+        if (msg.sender != FACTORY.admin()) revert NotAdmin();
+        if (!unassigned) revert NotUnassigned();
+        if (initialSessionInstalled) revert InitialSessionSet();
+        if (key == address(0)) revert BadSession();
+        if (expiry > sessionExpiry) expiry = sessionExpiry;
+        pendingSessionKey = key;
+        pendingSessionExpiry = expiry;
+    }
+
+    /// @notice Sponsor-only one-shot: install the buyer's pre-generated session after assign if prepareSession was dropped.
+    function adminAddSessionKey(address key, uint256 expiry) external {
+        if (msg.sender != FACTORY.admin()) revert NotAdmin();
+        if (initialSessionInstalled) revert InitialSessionSet();
+        if (key == address(0)) revert BadSession();
+        if (unassigned) {
+            if (expiry > sessionExpiry) expiry = sessionExpiry;
+            pendingSessionKey = key;
+            pendingSessionExpiry = expiry;
+            return;
+        }
+        _installInitialSession(key, expiry);
+    }
+
+    function _installInitialSession(address key, uint256 expiry) private {
+        if (initialSessionInstalled) revert InitialSessionSet();
+        if (key == address(0)) revert BadSession();
+        if (expiry > sessionExpiry) expiry = sessionExpiry;
+        sessionSigners[key] = expiry;
+        ISessionKeyRegistryL(FACTORY.SKR()).login(key, expiry, _fwssScopes(), "fifolders");
+        emit SessionKey(key, expiry);
+        initialSessionInstalled = true;
     }
 
     function domainSeparator() public view returns (bytes32) {

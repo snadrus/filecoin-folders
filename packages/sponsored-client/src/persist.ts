@@ -96,3 +96,37 @@ export function loadStoredWallet(): StoredWallet | null {
     return null;
   }
 }
+
+export function pendingSessionStorageKey(chainId: number): string {
+  return `fifolders:session:pending:${chainId}`;
+}
+
+export function loadPendingSession(chainId: number): StoredSession | null {
+  const raw = localStorage.getItem(pendingSessionStorageKey(chainId));
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as StoredSession;
+    if (parsed?.v !== 1 || !parsed.privateKey || !parsed.sessionAddress || !parsed.expiry) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+export function savePendingSession(session: StoredSession): void {
+  localStorage.setItem(pendingSessionStorageKey(session.chainId), JSON.stringify(session));
+}
+
+export function clearPendingSession(chainId: number): void {
+  localStorage.removeItem(pendingSessionStorageKey(chainId));
+}
+
+/** After handover: move the pre-checkout session key onto the assigned account address. */
+export function bindPendingSession(chainId: number, root: Address): StoredSession | null {
+  const pending = loadPendingSession(chainId);
+  if (!pending) return null;
+  const bound: StoredSession = { ...pending, root };
+  saveSession(bound);
+  clearPendingSession(chainId);
+  return bound;
+}

@@ -159,6 +159,40 @@ export function clearSession(chainId: number, root: string): void {
   localStorage.removeItem(sessionStorageKey(chainId, root));
 }
 
+export function pendingSessionStorageKey(chainId: number): string {
+  return `fifolders:session:pending:${chainId}`;
+}
+
+export function loadPendingSession(chainId: number): StoredSession | null {
+  const raw = localStorage.getItem(pendingSessionStorageKey(chainId));
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as StoredSession;
+    if (parsed?.v !== 1 || !parsed.privateKey || !parsed.sessionAddress || !parsed.expiry) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+export function savePendingSession(session: StoredSession): void {
+  localStorage.setItem(pendingSessionStorageKey(session.chainId), JSON.stringify(session));
+}
+
+export function clearPendingSession(chainId: number): void {
+  localStorage.removeItem(pendingSessionStorageKey(chainId));
+}
+
+/** After handover: attach the pre-checkout session key to the assigned account. */
+export function bindPendingSession(chainId: number, root: Address): StoredSession | null {
+  const pending = loadPendingSession(chainId);
+  if (!pending) return null;
+  const bound: StoredSession = { ...pending, root };
+  saveSession(bound);
+  clearPendingSession(chainId);
+  return bound;
+}
+
 export function sessionUsable(session: StoredSession | null, nowSec: bigint): boolean {
   if (!session) return false;
   const expiry = BigInt(session.expiry);

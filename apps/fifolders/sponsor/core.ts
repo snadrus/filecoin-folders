@@ -5,7 +5,7 @@
 //   GET  /pricing                             → minimums, setup fee, reserve, default purchase
 //   GET  /account?user=0x… | ?x=0x…&y=0x… | ?credential=… → { account, x?, y? } (null before the first purchase)
 //   POST /checkout  {auth, usd, successUrl, cancelUrl} → Stripe Checkout Session → { id, url, first }
-//   POST /stripe/webhook                      → Stripe-signed checkout.session.completed → credit (once per session)
+//   POST /stripe/webhook                      → Stripe-signed checkout.session.completed / payment_intent.succeeded → credit (once per session)
 //   GET  /credits?session=cs_…                → { status, account, usdfc, path, hashes }
 //   POST /dataset   {auth, metadata}          → dataset for an account that has none (normally pre-made)
 //   POST /execute   {account, target, value, data, nonce, deadline, signature} → relay an owner/session-signed Execute
@@ -32,8 +32,8 @@ import { DEFAULT_PRICING, creditFor, poolTopUp, pricingFromEnv, type Pricing } f
 import { RateLimiter } from "./ratelimit.js";
 import { SponsorWalletRelayer, chainFor, publicClient, type Relayer } from "./relayer.js";
 import { sweepAccount, type SweepResult } from "./sweeplib.js";
-import { assertStripeMode, createCheckoutSession, estimateStripeFeeCents, fakeCheckoutSession, refundPayment, stripeFeeCents, verifyStripeSignature, type CheckoutSession, type Network } from "./stripe.js";
-import { waitForReceipt } from "../src/receipt.js";
+import { assertStripeMode, checkoutSessionIdForPaymentIntent, createCheckoutSession, estimateStripeFeeCents, fakeCheckoutSession, refundPayment, retrieveCheckoutSession, stripeFeeCents, verifyStripeSignature, type CheckoutSession, type Network } from "./stripe.js";
+import { FINALITY_EPOCHS, receiptFate, waitForReceipt, type RecordedInclusion } from "../src/receipt.js";
 import { emptyGasState, gasStatus, lifetimeCapWei, limitsFromEnv, releaseGas, reserveGas, reservedCostWei, settleGas, GasBudgetError, type GasBudgetLimits, type GasBudgetState } from "./gas-budget.js";
 
 const ZERO32 = `0x${"0".repeat(64)}` as Hex;
@@ -131,6 +131,11 @@ export interface CreditRecord {
   refundId?: string;
   hash?: Hex;
   error?: string;
+  sessionKey?: Address;
+  sessionExpiry?: string;
+  /** Included handover txs, recorded at inclusion (not finality). */
+  inclusion?: { kind: string; hash: Hex; blockNumber: string; blockHash: Hex }[];
+  finality?: "included" | "finalized" | "dropped";
 }
 
 export interface SponsorState {
@@ -467,6 +472,9 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
         network: config.network,
         factory: config.factory,
         ...(identity.kind === "passkey" && identity.credentialId ? { credential: identity.credentialId } : {}),
+        ...(typeof body.sessionKey === "string" && isAddress(body.sessionKey)
+          ? { sessionKey: getAddress(body.sessionKey), ...(body.sessionExpiry != null && /^\d+$/.test(String(body.sessionExpiry)) ? { sessionExpiry: String(body.sessionExpiry) } : {}) }
+          : {}),
       },
     };
     await assertFunded(cents, first);
@@ -517,7 +525,44 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
   /** Pool accounts with an assign tx in flight in this process (never trimmed or reconciled). */
   const assigningNow = new Set<string>();
 
-  /** Apply one paid session, at most once. Each send is recorded before the next; a failure is never auto-resent. */
+  function recordInclusion(credit: CreditRecord, kind: string, receipt: { transactionHash: Hex; blockNumber?: bigint | number; blockHash?: Hex }): void {
+    if (receipt.blockHash == null || receipt.blockNumber == null) return;
+    const row = { kind, hash: receipt.transactionHash, blockNumber: BigInt(receipt.blockNumber).toString(), blockHash: receipt.blockHash as Hex };
+    credit.inclusion = [...(credit.inclusion ?? []).filter((item) => item.hash !== row.hash), row];
+    if (kind === "assign" || kind === "create" || kind === "deposit") {
+      credit.hash = receipt.transactionHash;
+      credit.finality = credit.finality === "finalized" ? "finalized" : "included";
+    }
+  }
+
+  async function waitAndRecord(credit: CreditRecord, kind: string, hash: Hex): Promise<{ transactionHash: Hex; status: string; blockNumber?: bigint; blockHash?: Hex }> {
+    const receipt = await waitForReceipt(pub, hash);
+    if (receipt.status !== "success") throw new Error(`${kind} reverted: ${hash}`);
+    recordInclusion(credit, kind, receipt);
+    return receipt;
+  }
+
+  async function maybeInstallSession(credit: CreditRecord, account: Address): Promise<void> {
+    const key = credit.sessionKey;
+    if (!key) return;
+    const expiry = BigInt(credit.sessionExpiry ?? String(Math.floor(Date.now() / 1000) + Number(ACCOUNT_TTL_SEC)));
+    try {
+      const already = (await pub.readContract({ address: account, abi: lockedAccountAbi, functionName: "sessionSigners", args: [key] })) as bigint;
+      if (already && already > 0n) return;
+      const hash = await relayer.send({
+        to: account,
+        label: `adminAddSessionKey ${account}`,
+        data: encodeFunctionData({ abi: lockedAccountAbi, functionName: "adminAddSessionKey", args: [key, expiry] }),
+      });
+      credit.hashes.push(hash);
+      save();
+      void waitAndRecord(credit, "session", hash).then(() => save()).catch((error) => console.warn("[sponsor] adminAddSessionKey", error));
+    } catch (error) {
+      console.warn("[sponsor] adminAddSessionKey", error);
+    }
+  }
+
+  /** Apply one paid session, at most once. Handover txs are sent back-to-back (nonce-ordered) and marked ready on inclusion. */
   function queueCredit(sessionId: string, credentialArg?: string): Promise<unknown> {
     creditQueue = creditQueue.then(async () => {
       const credit = state.credits[sessionId];
@@ -542,7 +587,11 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
         if (record) {
           credit.path = "topup";
           credit.account = record.account;
-          if (amount > 0n) credit.hashes.push((credit.hash = await deposit(record.account, amount, `credit ${record.account} (${sessionId})`)));
+          if (amount > 0n) {
+            credit.hashes.push((credit.hash = await deposit(record.account, amount, `credit ${record.account} (${sessionId})`)));
+            const receipt = await pub.getTransactionReceipt({ hash: credit.hash }).catch(() => undefined);
+            if (receipt) recordInclusion(credit, "deposit", receipt);
+          }
           credit.depositUsdfc = amount.toString();
           if (!record.dataSetId) await attachDataset(record);
         } else {
@@ -557,13 +606,35 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
             save();
             const topUp = poolTopUp(amount, seed);
             await ensureAllowance(config.factory, topUp);
-            const receipt = await relayer.relay({ to: config.factory, label: `assign ${pooled.account} (${sessionId})`, data: encodeFunctionData({ abi: lockedFactoryAbi, functionName: "assign", args: [pooled.account, ...ownerArgs(identity), topUp] }) });
-            credit.hashes.push((credit.hash = receipt.transactionHash));
+            const sessionExpiry = BigInt(credit.sessionExpiry ?? pooled.sessionExpiry);
+            // Same sponsor-nonce batch: prepareSession then factory.assign (owner + top-up). Ready when assign is included.
+            if (credit.sessionKey) {
+              const prep = await relayer.send({
+                to: pooled.account,
+                label: `prepareSession ${pooled.account} (${sessionId})`,
+                data: encodeFunctionData({ abi: lockedAccountAbi, functionName: "prepareSession", args: [credit.sessionKey, sessionExpiry] }),
+              });
+              credit.hashes.push(prep);
+              save();
+            }
+            const assignHash = await relayer.send({
+              to: config.factory,
+              label: `assign ${pooled.account} (${sessionId})`,
+              data: encodeFunctionData({ abi: lockedFactoryAbi, functionName: "assign", args: [pooled.account, ...ownerArgs(identity), topUp] }),
+            });
+            credit.hashes.push((credit.hash = assignHash));
+            save();
+            await waitAndRecord(credit, "assign", assignHash);
             pooled.status = "assigned";
             record = state.users[credit.identity] = { owner: ownerOf(identity), account: pooled.account, sessionExpiry: pooled.sessionExpiry, dataSetId: pooled.dataSetId, providerId: pooled.providerId, dataSetTx: pooled.dataSetTx, via: "pool", ...(credential ? { credentialId: credential } : {}) };
             credit.account = pooled.account;
             credit.depositUsdfc = topUp.toString();
             credit.usdfc = (amount > seed ? amount : seed).toString();
+            credit.status = "done";
+            credit.finality = "included";
+            delete credit.error;
+            save();
+            void maybeInstallSession(credit, pooled.account);
             void refillPool();
           } else {
             // Slow path: create, fund, open the dataset.
@@ -571,11 +642,19 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
             const sessionExpiry = BigInt(Math.floor(Date.now() / 1000)) + ACCOUNT_TTL_SEC;
             const args = ownerArgs(identity);
             const account = getAddress((await pub.readContract({ address: config.factory, abi: lockedFactoryAbi, functionName: "predict", args: [...args, 0n, sessionExpiry] })) as Address);
-            credit.hashes.push((await relayer.relay({ to: config.factory, label: `create account for ${credit.identity}`, data: encodeFunctionData({ abi: lockedFactoryAbi, functionName: "create", args: [...args, 0n, sessionExpiry] }) })).transactionHash);
+            const createHash = await relayer.send({ to: config.factory, label: `create account for ${credit.identity}`, data: encodeFunctionData({ abi: lockedFactoryAbi, functionName: "create", args: [...args, 0n, sessionExpiry] }) });
+            credit.hashes.push(createHash);
+            save();
+            await waitAndRecord(credit, "create", createHash);
             record = state.users[credit.identity] = { owner: ownerOf(identity), account, sessionExpiry: sessionExpiry.toString(), via: "create", ...(credential ? { credentialId: credential } : {}) };
             credit.account = account;
             save();
-            if (amount > 0n) credit.hashes.push((credit.hash = await deposit(account, amount, `credit ${account} (${sessionId})`)));
+            if (credit.sessionKey) void maybeInstallSession(credit, account);
+            if (amount > 0n) {
+              credit.hashes.push((credit.hash = await deposit(account, amount, `credit ${account} (${sessionId})`)));
+              const receipt = await pub.getTransactionReceipt({ hash: credit.hash }).catch(() => undefined);
+              if (receipt) recordInclusion(credit, "deposit", receipt);
+            }
             credit.depositUsdfc = amount.toString();
             await attachDataset(record);
             void refillPool();
@@ -602,7 +681,53 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
     save();
   }
 
-  /** Verified Stripe event → credit record (idempotent by session id). */
+  function sessionKeyFromMetadata(metadata: Record<string, string>): { sessionKey?: Address; sessionExpiry?: string } {
+    const raw = metadata.sessionKey ?? metadata.session_key ?? "";
+    if (!raw || !isAddress(raw)) return {};
+    const sessionKey = getAddress(raw);
+    const expiry = metadata.sessionExpiry ?? metadata.session_expiry ?? "";
+    return { sessionKey, ...( /^\d+$/.test(expiry) ? { sessionExpiry: expiry } : {}) };
+  }
+
+  async function applyPaidCheckout(session: Record<string, unknown>, livemode: boolean): Promise<{ received: true; credited?: string; duplicate?: boolean; ignored?: string }> {
+    const id = String(session.id ?? "");
+    if (!id) throw new HttpError(400, "event without session id");
+    const paid = session.payment_status === "paid" || session.status === "succeeded" || session.status === "complete";
+    if (!paid && session.payment_status) return { received: true, ignored: `payment_status ${String(session.payment_status)}` };
+    if (!paid) return { received: true, ignored: "not paid" };
+    if (Boolean(livemode) !== (config.network === "mainnet")) throw new HttpError(400, `livemode ${livemode} on ${config.network}`);
+    if (String(session.currency).toLowerCase() !== "usd") throw new HttpError(400, "currency must be usd");
+    if (state.credits[id]) return { received: true, duplicate: true, credited: state.credits[id]!.usdfc };
+    const metadata = (session.metadata ?? {}) as Record<string, string>;
+    if (metadata.factory && getAddress(metadata.factory) !== config.factory) return { received: true, ignored: "other factory" };
+    const identityId = String(metadata.identity ?? "");
+    if (!parseIdentityId(identityId)) throw new HttpError(400, "metadata.identity missing");
+    const chargeCents = Number(session.amount_total ?? session.amount);
+    if (!Number.isInteger(chargeCents) || chargeCents <= 0) throw new HttpError(400, "bad amount_total");
+    const feeCents = config.stripe.secretKey ? await stripeFeeCents(config.stripe.secretKey, id, deps.fetch) : estimateStripeFeeCents(chargeCents, pricing);
+    const raced = state.credits[id] as CreditRecord | undefined;
+    if (raced) return { received: true, duplicate: true, credited: raced.usdfc };
+    const first = !state.users[identityId]?.dataSetId;
+    const { creditUsdfc, ...quote } = creditFor(pricing, { chargeCents, feeCents, first });
+    const paymentIntent = typeof session.payment_intent === "string" ? session.payment_intent : undefined;
+    const sessionKey = sessionKeyFromMetadata(metadata);
+    state.credits[id] = { identity: identityId, ...quote, usdfc: creditUsdfc.toString(), depositUsdfc: "0", status: "pending", hashes: [], paidAt: new Date(now()).toISOString(), ...(paymentIntent ? { paymentIntent } : {}), ...(metadata.credential ? { credential: metadata.credential } : {}), ...sessionKey };
+    save();
+    void queueCredit(id, metadata.credential);
+    return { received: true, credited: creditUsdfc.toString() };
+  }
+
+  async function checkoutIdFromPaymentIntent(pi: Record<string, unknown>): Promise<string | undefined> {
+    const meta = (pi.metadata ?? {}) as Record<string, string>;
+    const direct = pi.checkout_session ?? meta.session ?? meta.checkout ?? meta.checkout_session;
+    if (typeof direct === "string" && direct.startsWith("cs_")) return direct;
+    if (config.stripe.secretKey && typeof pi.id === "string") {
+      return checkoutSessionIdForPaymentIntent(config.stripe.secretKey, pi.id, deps.fetch ?? fetch);
+    }
+    return undefined;
+  }
+
+  /** Verified Stripe event → credit record (idempotent by session id). Starts handover on checkout completion or payment_intent.succeeded. */
   async function onStripeEvent(raw: string, signature: string | undefined): Promise<{ received: true; credited?: string; duplicate?: boolean; ignored?: string }> {
     const secret = config.stripe.webhookSecret;
     if (!secret) throw new HttpError(503, "Stripe not configured: STRIPE_WEBHOOK_SECRET not set");
@@ -612,31 +737,25 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
       throw new HttpError(400, (error as Error).message);
     }
     const event = JSON.parse(raw) as { type?: string; livemode?: boolean; data?: { object?: Record<string, unknown> } };
+    if (event.type === "payment_intent.succeeded") {
+      const pi = event.data?.object ?? {};
+      const sessionId = await checkoutIdFromPaymentIntent(pi);
+      if (!sessionId) return { received: true, ignored: "payment_intent without checkout session" };
+      if (state.credits[sessionId]) return { received: true, duplicate: true, credited: state.credits[sessionId]!.usdfc };
+      let session: Record<string, unknown> = { id: sessionId, payment_status: "paid", currency: pi.currency, amount_total: pi.amount, payment_intent: pi.id, metadata: pi.metadata ?? {} };
+      if (config.stripe.secretKey) {
+        try {
+          session = { ...(await retrieveCheckoutSession(config.stripe.secretKey, sessionId, deps.fetch ?? fetch)), payment_intent: typeof session.payment_intent === "string" ? session.payment_intent : pi.id };
+        } catch {
+          /* metadata on the PaymentIntent is enough to start the handover */
+        }
+      }
+      if (!session.id) session.id = sessionId;
+      if (session.payment_status !== "paid") session.payment_status = "paid";
+      return applyPaidCheckout(session, Boolean(event.livemode));
+    }
     if (event.type !== "checkout.session.completed" && event.type !== "checkout.session.async_payment_succeeded") return { received: true, ignored: event.type };
-    const session = event.data?.object ?? {};
-    const id = String(session.id ?? "");
-    if (!id) throw new HttpError(400, "event without session id");
-    if (session.payment_status !== "paid") return { received: true, ignored: `payment_status ${String(session.payment_status)}` };
-    if (Boolean(event.livemode) !== (config.network === "mainnet")) throw new HttpError(400, `livemode ${event.livemode} on ${config.network}`);
-    if (String(session.currency).toLowerCase() !== "usd") throw new HttpError(400, "currency must be usd");
-    if (state.credits[id]) return { received: true, duplicate: true, credited: state.credits[id]!.usdfc };
-    const metadata = (session.metadata ?? {}) as Record<string, string>;
-    if (metadata.factory && getAddress(metadata.factory) !== config.factory) return { received: true, ignored: "other factory" };
-    const identityId = String(metadata.identity ?? "");
-    if (!parseIdentityId(identityId)) throw new HttpError(400, "metadata.identity missing");
-    const chargeCents = Number(session.amount_total);
-    if (!Number.isInteger(chargeCents) || chargeCents <= 0) throw new HttpError(400, "bad amount_total");
-    // Fee: Stripe's balance transaction (real keys) or the standard-pricing estimate (local fake only).
-    const feeCents = config.stripe.secretKey ? await stripeFeeCents(config.stripe.secretKey, id, deps.fetch) : estimateStripeFeeCents(chargeCents, pricing);
-    const raced = state.credits[id] as CreditRecord | undefined; // a duplicate delivery may have landed during the fee lookup
-    if (raced) return { received: true, duplicate: true, credited: raced.usdfc };
-    const first = !state.users[identityId]?.dataSetId;
-    const { creditUsdfc, ...quote } = creditFor(pricing, { chargeCents, feeCents, first });
-    const paymentIntent = typeof session.payment_intent === "string" ? session.payment_intent : undefined;
-    state.credits[id] = { identity: identityId, ...quote, usdfc: creditUsdfc.toString(), depositUsdfc: "0", status: "pending", hashes: [], paidAt: new Date(now()).toISOString(), ...(paymentIntent ? { paymentIntent } : {}), ...(metadata.credential ? { credential: metadata.credential } : {}) };
-    save();
-    void queueCredit(id, metadata.credential);
-    return { received: true, credited: creditUsdfc.toString() };
+    return applyPaidCheckout(event.data?.object ?? {}, Boolean(event.livemode));
   }
 
   /** Dataset for an account that has none (normally made by the pool or the slow path). */
@@ -951,14 +1070,111 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
     return out;
   }
 
+  /**
+   * Re-check included handover txs until F3/`finalized` or head >= block+900.
+   * Dropped or reorged receipts are resubmitted (if the account is still unassigned) or unwound, and the credit
+   * is flipped back to pending so /status and the client stop showing it as ready.
+   */
+  async function checkHandoverFinality(): Promise<{ finalized: string[]; dropped: string[]; resubmitted: string[]; unwound: string[] }> {
+    const out = { finalized: [] as string[], dropped: [] as string[], resubmitted: [] as string[], unwound: [] as string[] };
+    for (const [id, credit] of Object.entries(state.credits)) {
+      if (!credit.inclusion?.length) continue;
+      if (credit.finality === "finalized") continue;
+      if (credit.status !== "done" && credit.finality !== "included") continue;
+      let worst: "finalized" | "included" | "dropped" = "finalized";
+      for (const row of credit.inclusion) {
+        const recorded: RecordedInclusion = { hash: row.hash, blockNumber: row.blockNumber, blockHash: row.blockHash };
+        const result = await receiptFate(pub, recorded, { finalityEpochs: FINALITY_EPOCHS });
+        if (result.fate === "dropped") {
+          worst = "dropped";
+          break;
+        }
+        if (result.blockHash && result.blockNumber != null && (result.blockHash.toLowerCase() !== row.blockHash.toLowerCase() || result.blockNumber.toString() !== row.blockNumber)) {
+          row.blockHash = result.blockHash;
+          row.blockNumber = result.blockNumber.toString();
+        }
+        if (result.fate === "included") worst = "included";
+      }
+      if (worst === "finalized") {
+        credit.finality = "finalized";
+        out.finalized.push(id);
+        save();
+        continue;
+      }
+      if (worst !== "dropped") {
+        credit.finality = "included";
+        save();
+        continue;
+      }
+      credit.finality = "dropped";
+      credit.status = "pending";
+      credit.error = "handover tx dropped or reorged; retrying";
+      const account = credit.account;
+      delete credit.account;
+      out.dropped.push(id);
+      save();
+      if (credit.path === "pool" && account) {
+        let unassigned = true;
+        try {
+          unassigned = (await pub.readContract({ address: account, abi: poolAccountAbi, functionName: "unassigned" })) as boolean;
+        } catch {
+          unassigned = true;
+        }
+        const entry = Object.values(state.pool).find((item) => item.account.toLowerCase() === account.toLowerCase());
+        if (unassigned) {
+          if (entry) {
+            entry.status = "ready";
+            delete entry.assignedTo;
+          }
+          if (credit.identity && state.users[credit.identity]?.account?.toLowerCase() === account.toLowerCase()) {
+            delete state.users[credit.identity];
+          }
+          out.unwound.push(id);
+          save();
+          try {
+            await queueCredit(id, credit.credential);
+            if (state.credits[id]?.status === "done") out.resubmitted.push(id);
+          } catch (error) {
+            credit.status = "pending";
+            credit.error = `resubmit: ${error instanceof Error ? error.message : String(error)}`;
+            save();
+          }
+        } else if (entry) {
+          // Chain still has the assignment; receipt drop was a false read — restore ready.
+          credit.account = account;
+          credit.status = "done";
+          credit.finality = "included";
+          delete credit.error;
+          entry.status = "assigned";
+          if (credit.identity && !state.users[credit.identity]) {
+            const identity = parseIdentityId(credit.identity);
+            if (identity) state.users[credit.identity] = { owner: ownerOf(identity), account, sessionExpiry: entry.sessionExpiry, dataSetId: entry.dataSetId, providerId: entry.providerId, dataSetTx: entry.dataSetTx, via: "pool", ...(credit.credential ? { credentialId: credit.credential } : {}) };
+          }
+          save();
+        }
+      } else {
+        try {
+          await queueCredit(id, credit.credential);
+          if (state.credits[id]?.status === "done") out.resubmitted.push(id);
+        } catch (error) {
+          credit.status = "pending";
+          credit.error = `resubmit: ${error instanceof Error ? error.message : String(error)}`;
+          save();
+        }
+      }
+    }
+    return out;
+  }
+
   /** Background tick (Worker cron / Node interval): owed credits first, then the pool, then deferred sweeps. */
   async function cronTick() {
     const reconciled = await reconcileAssigning();
+    const finality = await checkHandoverFinality();
     const credits = await retryAwaiting();
     const trimmed = await trimPool();
     void refillPool();
     const swept = await sweepDeferred();
-    return { reconciled, credits, trimmed, swept, pool: poolStatus().counts };
+    return { reconciled, finality, credits, trimmed, swept, pool: poolStatus().counts };
   }
 
   /** Off-chain reserve + creation fees from delivered purchases: dollars owed back to the sponsor. */
@@ -1085,7 +1301,7 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
       if (req.method === "GET" && url.pathname === "/credits") {
         const id = url.searchParams.get("session") ?? "";
         const credit = state.credits[id];
-        return ok(credit ? { status: credit.status, account: credit.account ?? null, usdfc: credit.usdfc, path: credit.path ?? null, hash: credit.hash ?? null, hashes: credit.hashes, error: credit.error ?? null } : { status: state.checkouts[id] ? "awaiting-payment" : "unknown" });
+        return ok(credit ? { status: credit.status, account: credit.account ?? null, usdfc: credit.usdfc, path: credit.path ?? null, hash: credit.hash ?? null, hashes: credit.hashes, error: credit.error ?? null, finality: credit.finality ?? null, sessionKey: credit.sessionKey ?? null, inclusion: credit.inclusion ?? [] } : { status: state.checkouts[id] ? "awaiting-payment" : "unknown" });
       }
       if (req.method === "POST" && url.pathname === "/stripe/webhook") return ok(await onStripeEvent(req.body, req.header("stripe-signature")));
       if (req.method === "POST" && url.pathname === "/checkout") {
@@ -1115,7 +1331,7 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
   // Resume credits interrupted by a restart only if nothing was sent yet (never resend).
   for (const [id, credit] of Object.entries(state.credits)) if (credit.status === "pending" && !credit.hashes?.length) void queueCredit(id);
 
-  return { handle, state, relayer, pub, config, pricing, onStripeEvent, refillPool, sweepDeferred, retryAwaiting, trimPool, reconcileAssigning, cronTick, status, poolStatus, settled: () => creditQueue };
+  return { handle, state, relayer, pub, config, pricing, onStripeEvent, refillPool, sweepDeferred, retryAwaiting, trimPool, reconcileAssigning, checkHandoverFinality, cronTick, status, poolStatus, settled: () => creditQueue };
 }
 
 export type SponsorCore = ReturnType<typeof createSponsorCore>;

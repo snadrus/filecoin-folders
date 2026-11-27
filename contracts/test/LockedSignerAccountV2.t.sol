@@ -270,4 +270,58 @@ contract LockedSignerAccountV2Test is Test {
         assertEq(f.admin(), admin);
         assertEq(b.owner(), ledger);
     }
+
+    function test_prepareSessionConsumedByAssign() public {
+        vm.prank(admin);
+        LockedSignerAccountV2 p = f.createPooled(8, EXP);
+        vm.prank(admin);
+        p.prepareSession(sess, EXP);
+        assertEq(p.pendingSessionKey(), sess);
+        vm.prank(admin);
+        f.assign(p, user, 0, 0, 0);
+        assertFalse(p.unassigned());
+        assertEq(p.sessionSigners(sess), EXP);
+        assertTrue(p.initialSessionInstalled());
+        assertEq(p.pendingSessionKey(), address(0));
+    }
+
+    function test_prepareSessionOnlyAdminAndUnassigned() public {
+        vm.prank(admin);
+        LockedSignerAccountV2 p = f.createPooled(9, EXP);
+        vm.expectRevert(LockedSignerAccountV2.NotAdmin.selector);
+        p.prepareSession(sess, EXP);
+        vm.prank(admin);
+        p.prepareSession(sess, EXP);
+        vm.prank(admin);
+        f.assign(p, user, 0, 0, 0);
+        vm.prank(admin);
+        vm.expectRevert(LockedSignerAccountV2.NotUnassigned.selector);
+        p.prepareSession(sess, EXP);
+    }
+
+    function test_adminAddSessionKeyAfterAssignOnce() public {
+        vm.prank(admin);
+        LockedSignerAccountV2 p = f.createPooled(10, EXP);
+        vm.prank(admin);
+        f.assign(p, user, 0, 0, 0);
+        assertEq(p.sessionSigners(sess), 0);
+        vm.prank(admin);
+        p.adminAddSessionKey(sess, EXP);
+        assertEq(p.sessionSigners(sess), EXP);
+        assertTrue(p.initialSessionInstalled());
+        vm.prank(admin);
+        vm.expectRevert(LockedSignerAccountV2.InitialSessionSet.selector);
+        p.adminAddSessionKey(sess, EXP);
+    }
+
+    function test_adminAddSessionKeyParksWhileUnassigned() public {
+        vm.prank(admin);
+        LockedSignerAccountV2 p = f.createPooled(11, EXP);
+        vm.prank(admin);
+        p.adminAddSessionKey(sess, EXP);
+        assertEq(p.pendingSessionKey(), sess);
+        vm.prank(admin);
+        f.assign(p, user, 0, 0, 0);
+        assertEq(p.sessionSigners(sess), EXP);
+    }
 }

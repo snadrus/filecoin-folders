@@ -171,7 +171,9 @@ describe("sponsor server (fake chain)", () => {
     const sponsorUsdfc = { value: 10n ** 24n };
     const clock = { value: Date.now() };
     const onChainUnassigned = new Map<string, boolean>();
+    const droppedReceipts = new Set<string>();
     const factoryAccounts = new Set<string>();
+    const block = { number: 1000n, hash: (`0x${"ab".repeat(32)}`) as Hex };
     const predicted = (args: readonly unknown[]) => getAddress(keccak256(toHex(JSON.stringify(args, (_, v) => (typeof v === "bigint" ? v.toString() : v)))).slice(0, 42));
     const pub = {
       async readContract({ functionName, args, address }: { functionName: string; args?: readonly unknown[]; address?: Address }) {
@@ -191,7 +193,14 @@ describe("sponsor server (fake chain)", () => {
         return 10n ** 20n;
       },
       async getTransactionReceipt({ hash }: { hash: Hex }) {
-        return { status: "success", transactionHash: hash, logs: [] };
+        if (droppedReceipts.has(hash.toLowerCase())) throw new Error("not found");
+        return { status: "success", transactionHash: hash, logs: [], blockNumber: block.number, blockHash: block.hash };
+      },
+      async getBlockNumber() {
+        return block.number;
+      },
+      async getBlock() {
+        return { number: block.number, hash: block.hash };
       },
       async call() {
         return { data: "0x" };
@@ -262,7 +271,7 @@ describe("sponsor server (fake chain)", () => {
       const response = await fetch(`${base}${path}`);
       return { status: response.status, json: (await response.json()) as Record<string, unknown> };
     };
-    return { sponsor, sends, post, get, as, pay, opened, factoryAccounts, sponsorUsdfc, clock, onChainUnassigned };
+    return { sponsor, sends, post, get, as, pay, opened, factoryAccounts, sponsorUsdfc, clock, onChainUnassigned, droppedReceipts, block };
   }
 
   const newUser = () => {
@@ -522,5 +531,56 @@ describe("sponsor server (fake chain)", () => {
     const base = { network: "mainnet", chainId: 314, factory: FACTORY, providerId: 1n, contracts: { pay: FACTORY, usdfc: FACTORY, fwss: FACTORY, pdp: FACTORY } } as const;
     expect(() => createSponsor({ ...base, stripe: { fake: true, allowedOrigins: [] } }, { pub: {} as never, relayer: {} as never })).toThrow();
     expect(() => createSponsor({ ...base, stripe: { secretKey: "sk_test_x", webhookSecret: WHSEC, allowedOrigins: ["https://x"] } }, { pub: {} as never, relayer: {} as never })).toThrow(/live key/);
+  });
+
+  it("payment_intent.succeeded starts the handover (same credit as the checkout session)", async () => {
+    const { sponsor, post, as, get } = await start({ pool: 1 });
+    await sponsor.refillPool();
+    const user = newUser();
+    const checkout = await as(user.signed)("checkout", { ...checkoutBody(5), sessionKey: user.key.address, sessionExpiry: String(now() + 86400) });
+    expect(checkout.status).toBe(200);
+    const sessionId = String(checkout.json.id);
+    const raw = JSON.stringify({
+      id: "evt_pi_1",
+      type: "payment_intent.succeeded",
+      livemode: false,
+      data: { object: { id: "pi_pi_1", amount: 500, currency: "usd", status: "succeeded", metadata: { identity: user.id, factory: FACTORY, session: sessionId, sessionKey: user.key.address, sessionExpiry: String(now() + 86400) } } },
+    });
+    const hook = await post("/stripe/webhook", raw, { "stripe-signature": stripeSignatureHeader(raw, WHSEC) });
+    expect(hook.status).toBe(200);
+    expect(hook.json).toMatchObject({ received: true });
+    await sponsor.settled();
+    expect(sponsor.state.credits[sessionId]).toMatchObject({ status: "done", path: "pool", sessionKey: user.key.address, finality: "included" });
+    expect((await get(`/credits?session=${sessionId}`)).json).toMatchObject({ status: "done", account: expect.any(String), finality: "included" });
+    const again = await post("/stripe/webhook", raw, { "stripe-signature": stripeSignatureHeader(raw, WHSEC) });
+    expect(again.json).toMatchObject({ received: true, duplicate: true });
+  });
+
+  it("flips a credit back to pending when its handover receipt was dropped", async () => {
+    const { sponsor, as, pay, get, droppedReceipts, onChainUnassigned } = await start({ pool: 1 });
+    await sponsor.refillPool();
+    const user = newUser();
+    expect((await as(user.signed)("checkout", checkoutBody(5))).status).toBe(200);
+    await pay("cs_drop", user.id, 500);
+    await sponsor.settled();
+    const credit = sponsor.state.credits.cs_drop!;
+    expect(credit.status).toBe("done");
+    expect(credit.finality).toBe("included");
+    expect(credit.inclusion?.length).toBeGreaterThan(0);
+    const account = credit.account!;
+    const hash = credit.inclusion![0]!.hash;
+    droppedReceipts.add(hash.toLowerCase());
+    onChainUnassigned.set(account.toLowerCase(), true);
+    const tick = await sponsor.cronTick();
+    expect(tick.finality.dropped).toContain("cs_drop");
+    const after = sponsor.state.credits.cs_drop!;
+    if (tick.finality.resubmitted.includes("cs_drop")) {
+      expect(after.status).toBe("done");
+      expect(after.hash).not.toBe(hash);
+    } else {
+      expect(after.status).toBe("pending");
+      expect(after.account).toBeUndefined();
+      expect((await get("/credits?session=cs_drop")).json).toMatchObject({ status: "pending" });
+    }
   });
 });

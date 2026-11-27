@@ -18,7 +18,7 @@ export async function sponsorPricing(chain?: ChainChoice): Promise<SponsorPricin
 export async function buySponsoredCredits(
   signer: SponsorSigner,
   chainId: number,
-  input: { usd: number; successUrl: string; cancelUrl: string },
+  input: { usd: number; successUrl: string; cancelUrl: string; sessionKey?: Address; sessionExpiry?: string },
   chain?: ChainChoice,
 ): Promise<{ id: string; url: string; first: boolean }> {
   return signed("/checkout", signer, chainId, input, chain);
@@ -27,7 +27,7 @@ export async function buySponsoredCredits(
 export async function sponsoredCreditStatus(
   sessionId: string,
   chain?: ChainChoice,
-): Promise<{ status: string; account?: Address; usdfc?: string; path?: string | null; hash?: Hex | null; hashes?: Hex[] }> {
+): Promise<{ status: string; account?: Address; usdfc?: string; path?: string | null; hash?: Hex | null; hashes?: Hex[]; finality?: string | null }> {
   return sponsorCall(`/credits?session=${encodeURIComponent(sessionId)}`, undefined, chain ?? readNetworkPreference());
 }
 
@@ -39,7 +39,9 @@ export async function waitForCredit(
   const end = Date.now() + (opts.timeoutMs ?? 15 * 60_000);
   for (;;) {
     const status = await sponsoredCreditStatus(sessionId, opts.chain);
-    if (status.status === "done" || status.status === "failed" || status.status === "unknown" || Date.now() > end) return status;
+    // Ready on inclusion: the sponsor sets `account` as soon as assign is in a block (not F3 finality).
+    if (status.account && (status.status === "done" || status.status === "included")) return status;
+    if (status.status === "failed" || status.status === "unknown" || status.status === "refunded" || Date.now() > end) return status;
     await new Promise((resolve) => setTimeout(resolve, opts.intervalMs ?? 4_000));
   }
 }
