@@ -120,6 +120,45 @@ async function waitUntil(ms: number, label: string, fn: () => Promise<boolean>) 
 }
 
 try {
+  // Load prior run BEFORE any say()/flush so resume does not clobber result.json
+  // with a fresh volume name. Prefer LIVE_E2E_PREV, then after-timing.json (the
+  // timing rerun), then result.json, then the frozen baseline.json.
+  let volumeName = `live-e2e-${Date.now().toString(36)}`;
+  let session = "";
+  let tPayment = 0;
+  let tHandover = Date.now();
+  if (RESUME) {
+    try {
+      const prevPath = [
+        process.env.LIVE_E2E_PREV,
+        `${OUT}/after-timing.json`,
+        `${OUT}/result.json`,
+        `${OUT}/baseline.json`,
+      ].find((p) => !!p && existsSync(p));
+      if (prevPath) {
+        const prev = JSON.parse(readFileSync(prevPath, "utf8")) as Record<string, unknown>;
+        if (typeof prev.volumeName === "string") volumeName = prev.volumeName;
+        if (typeof prev.tPayment === "string") {
+          log.tPayment = prev.tPayment;
+          tPayment = Date.parse(prev.tPayment);
+        }
+        if (prev.tSessionReady) log.tSessionReady = prev.tSessionReady;
+        if (prev.tFirstSave) log.tFirstSave = prev.tFirstSave;
+        if (prev.secPaymentToPaymentsReady != null) log.secPaymentToPaymentsReady = prev.secPaymentToPaymentsReady;
+        if (prev.secPaymentToSessionReady != null) log.secPaymentToSessionReady = prev.secPaymentToSessionReady;
+        if (prev.secSessionToFirstSave != null) log.secSessionToFirstSave = prev.secSessionToFirstSave;
+        if (prev.secPaymentToFirstSave != null) log.secPaymentToFirstSave = prev.secPaymentToFirstSave;
+        if (prev.tPaymentsReady) log.tPaymentsReady = prev.tPaymentsReady;
+        if (prev.account) log.account = prev.account;
+        if (prev.steps && typeof prev.steps === "object") Object.assign(steps, prev.steps);
+        log.volumeName = volumeName;
+        log.priorPath = prevPath;
+      }
+    } catch {
+      /* no prior result */
+    }
+  }
+
   // --- 1 already confirmed at start; record status ---
   const status0 = await (await fetch(WORKER + "/status", { headers: { "user-agent": "Mozilla/5.0" } })).json();
   steps.poolBefore = {
@@ -130,25 +169,7 @@ try {
   };
   say(`status funds=${status0.funds?.level} ready=${status0.pool?.ready} fil=${status0.funds?.fil} usdfc=${status0.funds?.usdfc}`);
 
-  let volumeName = `live-e2e-${Date.now().toString(36)}`;
-  let session = "";
-  let tPayment = 0;
-  let tHandover = Date.now();
   if (RESUME) {
-    try {
-      const prevPath = existsSync(`${OUT}/baseline.json`) ? `${OUT}/baseline.json` : `${OUT}/result.json`;
-      const prev = JSON.parse(readFileSync(prevPath, "utf8")) as Record<string, unknown>;
-      if (typeof prev.volumeName === "string") volumeName = prev.volumeName;
-      if (typeof prev.tPayment === "string") {
-        log.tPayment = prev.tPayment;
-        tPayment = Date.parse(prev.tPayment);
-      }
-      if (prev.secPaymentToPaymentsReady != null) log.secPaymentToPaymentsReady = prev.secPaymentToPaymentsReady;
-      if (prev.tPaymentsReady) log.tPaymentsReady = prev.tPaymentsReady;
-      if (prev.steps) Object.assign(steps, prev.steps);
-    } catch {
-      /* no prior result */
-    }
     const n = await loadSavedPasskey(authenticatorId, cdp);
     if (!n) throw new Error("resume requested but no saved passkey at CRED_FILE");
     log.resumed = true;
@@ -399,8 +420,10 @@ try {
     if (err > 0 && done === 0 && entryN === 0 && elapsed > 30_000) {
       throw new Error(`drive save error: ${activity || toast}`.slice(0, 300));
     }
-    if (entryN > 0 && (uploadDone > 0 || done > 0 || /Saved|committed|done|Uploaded/i.test(activity)) && !pending) return true;
-    if (entryN > 0 && !pending && elapsed > 8_000) return true;
+    const saveBtn = await page.getByRole("button", { name: /Save \d+ changes?/i }).count().catch(() => 0);
+    const uploadComplete = await page.getByText(/upload complete/i).count().catch(() => 0);
+    if (entryN > 0 && (uploadDone > 0 || done > 0 || uploadComplete > 0 || /Saved|committed|done|Uploaded/i.test(activity)) && saveBtn === 0) return true;
+    if (entryN > 0 && saveBtn === 0 && elapsed > 8_000) return true;
     if (await visible(page, "authorize-session")) {
       await page.getByTestId("authorize-session").first().click().catch(() => undefined);
       await continuePasskey(page);
@@ -492,26 +515,42 @@ try {
   });
   const titleBox = fipen.locator("#title");
   await titleBox.waitFor({ timeout: 30_000 });
-  await titleBox.click();
-  await fipen.keyboard.press("Control+a");
-  await fipen.keyboard.type("Live E2E Note");
-  await fipen.keyboard.press("Enter");
-  const box = await fipen.locator("#pages canvas").first().boundingBox();
-  if (!box) throw new Error("fipen editor canvas missing");
-  await fipen.mouse.click(box.x + 120, box.y + 120);
-  await fipen.keyboard.type("Hello from standalone FiPen live e2e.");
+  const dirty = /Unsaved changes/i;
+  await waitUntil(45_000, "fipen text entered", async () => {
+    await titleBox.click().catch(() => undefined);
+    await fipen.keyboard.press("Control+a");
+    await fipen.keyboard.type("Live E2E Note");
+    await fipen.keyboard.press("Enter");
+    const box = await fipen.locator("#pages canvas").first().boundingBox();
+    if (!box) return false;
+    await fipen.mouse.click(box.x + Math.min(120, box.width / 2), box.y + Math.min(80, box.height / 2));
+    await fipen.keyboard.type("Hello from standalone FiPen live e2e.");
+    const status = await fipen.locator("#status").innerText({ timeout: 2_000 }).catch(() => "");
+    return dirty.test(status) && !/^New, unsaved$/i.test(status.trim());
+  });
   await fipen.locator("#p2p-save").waitFor({ timeout: 30_000 });
   await fipen.locator("#p2p-save").click();
   await snap(fipen, "fipen-typed");
   say("fipen save clicked; waiting for queued/saved");
+  let fipenLogged = 0;
   await waitUntil(20 * 60_000, "fipen saved to volume", async () => {
-    const state = await fipen.locator("#status").getAttribute("data-save").catch(() => "");
-    log.fipenState = state;
-    if (state === "failed") {
-      const t = await textOf(fipen);
-      throw new Error(`fipen save failed: ${t.slice(0, 200)}`);
+    const state = await fipen.locator("#status").getAttribute("data-save", { timeout: 2_000 }).catch(() => "");
+    const statusText = await fipen.locator("#status").innerText({ timeout: 2_000 }).catch(() => "");
+    log.fipenState = state || statusText;
+    const elapsed = Date.now() - fipenLogged;
+    if (fipenLogged === 0 || elapsed > 20_000) {
+      fipenLogged = Date.now();
+      say(`fipen wait state=${state || "none"} text=${(statusText || "").slice(0, 120)}`);
+      await snap(fipen, "fipen-wait");
     }
-    if (state === "saved") return true;
+    if (state === "failed" || /save failed/i.test(statusText)) {
+      throw new Error(`fipen save failed: ${(statusText || await textOf(fipen)).slice(0, 200)}`);
+    }
+    if (/^New, unsaved$|^Unsaved changes$/i.test((statusText || "").trim()) || state === "unsaved") {
+      await fipen.locator("#p2p-save").click().catch(() => undefined);
+    }
+    if (state === "saved" || state === "queued") return true;
+    if (/Saved to Filecoin|Queued for FiFolders|All changes saved/i.test(statusText)) return true;
     // drive tab may show the entry / activity
     const entry = await page.getByTestId("entry").filter({ hasText: "live-e2e" }).count().catch(() => 0);
     const activity = await page.getByTestId("activity").innerText().catch(() => "");
