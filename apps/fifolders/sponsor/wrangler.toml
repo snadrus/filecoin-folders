@@ -22,7 +22,7 @@ SPONSOR_POOL_MAX_AGE_DAYS = "90"
 # Low-balance emails (cron, both networks). Destination must be verified on Email Routing (see docs/sponsor-alerts.md).
 SPONSOR_ALERT_TO = "snadrus@gmail.com"
 SPONSOR_ALERT_FROM = "sponsor@scionbase.ai"
-SPONSOR_ALERT_FIL_WARN_FIL = "200"
+SPONSOR_ALERT_FIL_WARN_FIL = "0.1"
 SPONSOR_ALERT_FIL_CRITICAL_FIL = "0.06"
 # USDFC warn default: enough for 2 spares (3-month runway) + 3 minimum first purchases. Override with SPONSOR_ALERT_USDFC_WARN.
 SPONSOR_ALERT_MIN_RUNWAY_DAYS = "45"
