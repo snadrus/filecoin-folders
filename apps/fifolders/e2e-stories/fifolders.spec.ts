@@ -9,7 +9,9 @@ const ready = "/?onboard=1&pay=ready&datasets=1";
 async function connect(page: Page, query = ready) {
   await page.goto(query);
   await page.getByTestId("connect-wallet").click();
-  await expect(page.getByTestId("nav-drive")).toBeVisible();
+  // Phones keep the nav in a drawer behind the menu button, so the drive is "open" once the nav exists.
+  await expect(page.getByTestId("nav-drive")).toBeAttached();
+  await expect(page.getByTestId("browser").or(page.getByTestId("drive-pending")).first()).toBeVisible();
 }
 
 test("S01 first visit: no cost pop-up until asked; costs open from the bottom-left with the exact text", async ({ page }) => {
@@ -180,17 +182,59 @@ test("S19 a stale editor chunk after a deploy asks to reload", async ({ page }) 
   await page.waitForFunction(() => (window as any).__editor?.ready === true, null, { timeout: 45_000 });
 });
 
-test("S49 mobile: nav is a chip row, no horizontal overflow; Transaction log fits the screen", async ({ page }) => {
+test("S49 mobile: nav lives in a drawer behind the menu button, no horizontal overflow; Transaction log fits the screen", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await connect(page);
-  const wide = await page.evaluate(() => [...document.querySelectorAll("body *")].filter((e) => e.getBoundingClientRect().right > 391 && !e.closest(".places")).map((e) => `${e.tagName}.${e.className}<${e.parentElement?.className}|${e.textContent} ${Math.round(e.getBoundingClientRect().right)}`).slice(0, 6));
+  const wide = await page.evaluate(() => [...document.querySelectorAll("body *")].filter((e) => e.getBoundingClientRect().right > 391).map((e) => `${e.tagName}.${e.className}<${e.parentElement?.className}|${e.textContent} ${Math.round(e.getBoundingClientRect().right)}`).slice(0, 6));
   expect(wide, wide.join(", ")).toEqual([]);
+  await expect(page.getByTestId("nav-drive")).toBeHidden();
+  await expect(page.getByTestId("new-fab")).toBeVisible();
+  await page.getByTestId("menu-button").click();
+  await expect(page.getByTestId("nav-drive")).toBeVisible();
   await page.getByTestId("txlog-toggle").click();
+  await expect(page.getByTestId("nav-drive")).toBeHidden(); // picking an item closes the drawer
   const box = (await page.getByTestId("txlog").boundingBox())!;
   expect(box.x).toBeGreaterThanOrEqual(0);
   expect(box.x + box.width).toBeLessThanOrEqual(390);
   await expect(page.getByTestId("nav-fideploy")).toHaveCount(0);
   await expect(page.getByTestId("nav-ficlub")).toHaveCount(0);
+});
+
+test("S49b phone: ⋮ opens the file actions as a bottom sheet, a tap opens the file, and pending saves light the menu button", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await connect(page, "/?onboard=1&pay=ready&datasets=1&authdelay=4000");
+  await page.evaluate(() => {
+    for (const key of Object.keys(localStorage)) if (key.startsWith("fifolders:session:")) localStorage.removeItem(key);
+  });
+  await page.reload();
+  await expect(page.getByTestId("nav-drive")).toBeAttached();
+  await page.getByTestId("file-input").setInputFiles({ name: "phone.txt", mimeType: "text/plain", buffer: Buffer.from("from a phone") });
+  // Unconfirmed transaction log items: a dot on the menu button and a slow spinner that opens the log.
+  await expect(page.getByTestId("menu-dot")).toBeVisible();
+  await page.getByTestId("menu-pending").click();
+  await expect(page.getByTestId("txlog")).toBeVisible();
+  await page.getByTestId("txlog").getByRole("button", { name: "Close" }).click();
+  const row = page.getByTestId("entry").filter({ hasText: "phone.txt" });
+  await row.getByTestId("row-more").click();
+  const sheet = page.getByTestId("context-menu");
+  await expect(sheet.getByTestId("sheet-title")).toHaveText("phone.txt");
+  await page.evaluate(() => Promise.all((document.querySelector("[data-testid=context-menu]")?.getAnimations() ?? []).map((a) => a.finished.catch(() => undefined)))); // the sheet slides up
+  const box = (await sheet.boundingBox())!;
+  expect(box.x).toBe(0);
+  expect(Math.round(box.y + box.height)).toBe(844);
+  await page.keyboard.press("Escape");
+  await expect(sheet).toHaveCount(0);
+});
+
+test.describe("S49c touch", () => {
+  test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+  test("a tap on a row opens it (no double-tap)", async ({ page }) => {
+    await connect(page);
+    await page.getByTestId("file-input").setInputFiles({ name: "tap.txt", mimeType: "text/plain", buffer: Buffer.from("tapped open") });
+    await expect(page.getByTestId("entry")).toHaveCount(1);
+    await page.getByTestId("entry").first().tap();
+    await expect(page.getByTestId("preview-text")).toContainText("tapped open");
+  });
 });
 
 test("S55 wallet & setup menu is filled while the session key is still being authorized after Connect", async ({ page }) => {
@@ -320,6 +364,7 @@ test.describe("S64 phone: menus and dialogs sit above the Uploads panel", () => 
     await expect(page.getByTestId("entry")).toHaveCount(1);
     await expect(page.locator(".uploads")).toBeVisible();
     await page.getByTestId("entry").first().click({ button: "right" });
+    await page.evaluate(() => Promise.all((document.querySelector("[data-testid=context-menu]")?.getAnimations() ?? []).map((a) => a.finished.catch(() => undefined)))); // phones: the menu is a bottom sheet that slides up
     const covered = await page.evaluate(() =>
       [...document.querySelectorAll<HTMLElement>(".menu button")].filter((b) => {
         const r = b.getBoundingClientRect();

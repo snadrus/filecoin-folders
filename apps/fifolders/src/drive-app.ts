@@ -219,6 +219,7 @@ export class DriveApp {
   busy = false;
   newMenu = false;
   accountMenu = false;
+  drawerOpen = false;
   context: ContextModel | null = null;
   dialog: DialogModel | null = null;
   details: {
@@ -547,7 +548,8 @@ export class DriveApp {
     // Only keyboard focus selects: a mouse press focuses the row too, and the click handler owns Shift/Ctrl-click.
     let pointer = false;
     let refocusing = false;
-    root.addEventListener("pointerdown", () => { pointer = true; setTimeout(() => { pointer = false; }, 0); }, true);
+    // Touch focuses the row after pointerup (not during pointerdown), so keep the flag up long enough to cover the tap.
+    root.addEventListener("pointerdown", (event) => { pointer = true; setTimeout(() => { pointer = false; }, event.pointerType === "touch" ? 1000 : 0); }, true);
     root.addEventListener("focusin", (event) => {
       if (pointer || refocusing) return;
       const row = (event.target as HTMLElement | null)?.closest<HTMLElement>("[data-testid=entry]");
@@ -1529,6 +1531,30 @@ export class DriveApp {
       this.context = null;
       if (action !== "account" && action !== "open-datasets") this.accountMenu = false;
     }
+    if (action === "toggle-drawer" || action === "close-drawer") {
+      this.drawerOpen = action === "toggle-drawer" ? !this.drawerOpen : false;
+      this.newMenu = false;
+      this.context = null;
+      this.accountMenu = false;
+      this.render();
+      return;
+    }
+    if (action === "row-more") {
+      // Phones: the row's ⋮ opens the same actions as right-click, as a bottom sheet.
+      const row = actionEl?.closest<HTMLElement>("[data-testid=entry]");
+      const path = row?.dataset.path ? decodeURIComponent(row.dataset.path) : "";
+      if (!path) return;
+      if (!this.selected.includes(path)) {
+        this.selected = [path];
+        this.anchor = path;
+      }
+      const box = actionEl!.getBoundingClientRect();
+      this.drawerOpen = false;
+      this.context = { x: Math.max(8, box.right - 220), y: box.bottom, paths: [...this.selected], target: path };
+      this.render();
+      return;
+    }
+    if (this.drawerOpen && (action === "nav" || action === "toggle-txlog" || action === "show-costs" || action === "new-toggle" || action === "account")) this.drawerOpen = false;
     if (action === "new-toggle") {
       this.newMenu = !this.newMenu;
       this.context = null;
@@ -1809,6 +1835,21 @@ export class DriveApp {
     const entry = target.closest<HTMLElement>("[data-testid=entry]");
     if (entry?.dataset.path) {
       const path = decodeURIComponent(entry.dataset.path);
+      // Touch (Drive's mobile app): a tap opens the file or folder; long-press or ⋮ selects and shows actions.
+      // With several rows already selected (long-press), taps keep toggling the selection instead.
+      if ((event as PointerEvent).pointerType === "touch" && !event.shiftKey && this.selected.filter((p) => p !== path).length === 0) {
+        this.selected = [path];
+        this.anchor = path;
+        this.paintSelection();
+        this.onDblClick(event);
+        return;
+      }
+      if ((event as PointerEvent).pointerType === "touch" && this.selected.length > 1) {
+        this.selected = this.selected.includes(path) ? this.selected.filter((p) => p !== path) : [...this.selected, path];
+        this.anchor = path;
+        this.paintSelection();
+        return;
+      }
       const next = applySelection({
         ordered: this.entries.map((item) => item.path),
         selected: this.selected,
@@ -2373,11 +2414,12 @@ export class DriveApp {
       this.newMenu = false;
       this.accountMenu = false;
       this.context = null;
-      this.root?.querySelectorAll("[data-menu]").forEach((node) => node.remove());
+      this.root?.querySelectorAll("[data-menu], .sheet-scrim").forEach((node) => node.remove());
     });
     document.addEventListener("keydown", (event) => {
       if (event.key !== "Escape") return;
-      if (!this.newMenu && !this.accountMenu && !this.context && !this.dialog && !this.preview && !this.costsOpen) return;
+      if (!this.newMenu && !this.accountMenu && !this.context && !this.dialog && !this.preview && !this.costsOpen && !this.drawerOpen) return;
+      this.drawerOpen = false;
       this.costsOpen = false;
       this.newMenu = false;
       this.accountMenu = false;
@@ -2859,6 +2901,7 @@ export class DriveApp {
       storageUsed: this.storageUsed,
       newMenu: this.newMenu,
       accountMenu: this.accountMenu,
+      drawerOpen: this.drawerOpen,
       context: this.context
         ? {
             x: this.context.x,
@@ -2866,6 +2909,7 @@ export class DriveApp {
             trash: this.nav === "trash" || isTrashPath(this.context.target),
             directory: target?.type === "dir",
             starred: this.context.paths.every((path) => this.stars.has(path)),
+            title: this.context.paths.length > 1 ? `${this.context.paths.length} items` : baseName(this.context.target),
           }
         : null,
       dialog,

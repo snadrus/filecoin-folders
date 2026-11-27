@@ -294,19 +294,88 @@ button:disabled { cursor: default; opacity: 0.45; }
 .upload-row[data-status="error"] progress { accent-color: var(--danger); }
 
 @media (max-width: 800px) {
-  .shell { grid-template-columns: 1fr; grid-template-rows: auto auto minmax(0, 1fr); }
-  .topbar { flex-wrap: wrap; height: auto; }
-  /* Mobile: one scrollable chip row per group (like Drive's mobile tabs), not a two-column grid. */
-  .nav { display: flex; flex-direction: column; gap: 6px; padding: 8px 12px; }
-  .nav .new { align-self: flex-start; }
-  .nav .places { flex-direction: row; overflow-x: auto; margin: 0; gap: 4px; scrollbar-width: none; }
-  .nav .place, .nav .txlog-toggle { flex: none; border-radius: 999px; height: 36px; padding: 0 12px; white-space: nowrap; align-self: flex-start; }
-  .nav .places.suite { border-top: 0; padding-top: 0; }
-  .nav, .nav .places { min-width: 0; max-width: 100%; }
-  .row, .entry.list { grid-template-columns: minmax(0, 1fr) 90px; }
-  .entry.list .owner, .head-cell:nth-child(2), .head-cell:nth-child(3) { display: none; }
+  /* Phones and small tablets (Drive's mobile app): compact app bar, nav in a drawer, list rows with a ⋮ menu. */
+  .shell { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
+  .shell > * { min-width: 0; }
+  .topbar { flex-wrap: wrap; height: auto; gap: 4px 8px; padding: 6px 8px; min-height: 56px; }
+  .brand { min-width: 0; font-size: 18px; }
+  .brand > span { display: none; } /* logo only; the drawer names the app */
+  .search { order: 0; flex: 1 1 120px; height: 44px; padding: 0 12px; min-width: 0; }
+  .search input { min-width: 0; font-size: 16px; } /* 16px: iOS does not zoom the page on focus */
+  .account { padding: 4px; min-width: 44px; min-height: 44px; justify-content: center; }
+  .topbar .account-text { display: none; }
+  .topbar .activity-dot { display: none; } /* the menu button carries the pending indicator */
+  .staged-changes { order: 5; flex: 1 1 100%; justify-content: flex-end; }
+  .nav {
+    position: fixed; top: 0; bottom: 0; left: 0; z-index: 58;
+    width: min(304px, 86vw); padding: 8px 12px 16px; gap: 8px;
+    background: var(--surface); box-shadow: var(--shadow); border-radius: 0 16px 16px 0;
+    overflow-y: auto; transform: translateX(-105%); transition: transform 0.2s ease; visibility: hidden;
+  }
+  .shell[data-drawer="open"] .nav { transform: none; visibility: visible; }
+  .drawer-scrim { position: fixed; inset: 0; background: rgba(32, 33, 36, 0.4); z-index: 57; }
+  .drawer-head { display: flex; align-items: center; gap: 8px; font-size: 20px; font-weight: 500; padding: 8px 4px 12px; }
+  .nav .new { display: none; } /* the FAB creates on phones */
+  .nav .places { flex-direction: column; margin: 0; }
+  .nav .place, .nav .txlog-toggle { height: 48px; border-radius: 999px; padding: 0 16px; font-size: 15px; }
+  .nav .places.suite { border-top: 1px solid var(--line); padding-top: 8px; }
+  .nav .storage { margin-top: 8px; }
+  .menu-button { display: grid; place-items: center; position: relative; width: 44px; height: 44px; border-radius: 50%; flex: none; }
+  .menu-button .material-symbols-outlined { font-size: 24px; }
+  .menu-dot { position: absolute; top: 8px; right: 8px; width: 10px; height: 10px; border-radius: 50%; background: #1a73e8; box-shadow: 0 0 0 2px var(--surface); }
+  .menu-dot.error { background: var(--danger); }
+  .menu-pending { display: inline-flex; align-items: center; gap: 6px; height: 44px; padding: 0 10px 0 6px; margin-left: -6px; border-radius: 999px; color: #1a73e8; font-weight: 500; flex: none; }
+  .slow-spinner { width: 18px; height: 18px; border-radius: 50%; border: 2px solid rgba(26, 115, 232, 0.2); border-top-color: #1a73e8; animation: spin 2.4s linear infinite; }
+  .fab {
+    display: grid; place-items: center; position: fixed; right: 16px; bottom: calc(16px + env(safe-area-inset-bottom, 0px)); z-index: 48;
+    width: 56px; height: 56px; border-radius: 16px; background: var(--select); color: var(--accent-dark);
+    box-shadow: 0 4px 12px rgba(32, 33, 36, 0.28);
+  }
+  .fab .material-symbols-outlined { font-size: 28px; }
+  .shell:has(.uploads) .fab { bottom: calc(84px + env(safe-area-inset-bottom, 0px)); }
+  .browser { padding: 4px 8px 96px; } /* room under the last row for the FAB */
+  .toolbar { flex-wrap: wrap; gap: 4px 8px; }
+  .crumbs button { min-height: 40px; padding: 4px 8px; }
+  .toolbar .tools { margin-left: auto; min-width: 0; }
+  .tools button { width: 44px; height: 44px; }
+  .sort-label { font-size: 0; gap: 0; } /* keep the select, drop the "Sort" word */
+  .sort-label select { font-size: 14px; max-width: 130px; min-height: 44px; }
+  .row.head { display: none; } /* the sort menu replaces column headers */
+  .entry.list {
+    grid-template-columns: minmax(0, 1fr) 44px; grid-template-areas: "name more" "meta more";
+    min-height: 64px; padding: 6px 0 6px 8px; row-gap: 0; border-radius: 12px;
+  }
+  .entry.list .name-cell { grid-area: name; font-size: 15px; }
+  .entry.list .meta-line { display: block; grid-area: meta; font-size: 12px; padding-left: 32px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .entry.list .owner, .entry.list .mtime, .entry.list .size { display: none; }
+  .loose-drive.entry.list, .unixfs-entry.entry.list, [data-testid=loose-row].entry.list { grid-template-columns: minmax(0, 1fr); grid-template-areas: none; }
+  .row-more { display: grid; place-items: center; grid-area: more; width: 44px; height: 44px; border-radius: 50%; color: var(--muted); }
+  .row-more:active { background: var(--hover); }
+  .entry:hover { background: transparent; }
+  .entry[data-selected="true"], .entry[data-selected="true"]:hover { background: var(--select); }
+  .grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+  .entry.grid { position: relative; }
+  .entry.grid .row-more { position: absolute; top: 4px; right: 4px; }
   .details { width: 100%; }
   .workspace { flex-direction: column; }
+  /* Menus become bottom sheets with large rows. */
+  .sheet-scrim { position: fixed; inset: 0; background: rgba(32, 33, 36, 0.32); z-index: 59; }
+  .menu.floating[data-menu="context"], .menu.anchored[data-menu="new"] {
+    position: fixed; left: 0 !important; right: 0; top: auto !important; bottom: 0; width: 100%; min-width: 0;
+    max-height: 75vh; overflow-y: auto; border-radius: 16px 16px 0 0; padding: 8px 0 calc(8px + env(safe-area-inset-bottom, 0px));
+    z-index: 61; animation: sheet-up 0.16s ease-out;
+  }
+  .menu.floating[data-menu="context"] button, .menu.anchored[data-menu="new"] button { min-height: 52px; padding: 0 24px; font-size: 15px; gap: 20px; }
+  .sheet-title { display: block; padding: 12px 24px 10px; font-weight: 500; color: var(--muted); border-bottom: 1px solid var(--line); margin-bottom: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .account-menu { position: fixed; top: 8px; left: 8px; right: 8px; width: auto; max-height: calc(100vh - 16px); }
+  .account-menu button { min-height: 44px; }
+  .menu button { min-height: 44px; }
+  .costs-modal { padding: 20px; max-height: calc(100vh - 32px); overflow: auto; }
+}
+@keyframes sheet-up { from { transform: translateY(40px); opacity: 0.4; } to { transform: none; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .slow-spinner { animation-duration: 6s; } .menu.floating, .menu.anchored, .nav { animation: none !important; transition: none !important; } }
+@media (min-width: 801px) {
+  .menu-button, .menu-pending, .fab, .drawer-head, .meta-line, .row-more, .sheet-title, .sheet-scrim, .drawer-scrim { display: none; }
 }
 
 .setup-backdrop { z-index: 40; }
@@ -411,7 +480,10 @@ a.place { text-decoration: none; font-size: 14px; }
 @media (max-width: 800px) {
   .shell > * { min-width: 0; }
   .txlog { left: 8px; right: 8px; width: auto; bottom: 8px; z-index: 55; }
-  .toasts { left: 8px; right: 8px; bottom: 8px; }
+  .toasts { left: 8px; right: 8px; bottom: 8px; z-index: 51; }
+  .shell:has(.fab) .toasts { right: 80px; } /* leave the New button uncovered */
+  .shell:has(.uploads) .toasts { bottom: 76px; } /* stack above the Uploads card instead of overlapping it */
+  .uploads { left: 8px; right: 8px; width: auto; bottom: 8px; }
   .toast { max-width: none; }
   .toolbar { flex-wrap: wrap; gap: 4px 8px; }
   .toolbar .tools { margin-left: auto; min-width: 0; }

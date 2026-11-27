@@ -66,6 +66,8 @@ export interface ContextState {
   trash: boolean;
   directory: boolean;
   starred: boolean;
+  /** Bottom-sheet heading on phones: the file name, or "N items". */
+  title?: string;
 }
 
 export interface ActivityRow {
@@ -120,6 +122,8 @@ export interface ViewModel {
   /** Loose view still resolving pieces, e.g. "Reading pieces 3 of 12…". */
   looseProgress?: string;
   txlogOpen: boolean;
+  /** Phones/tablets: the nav is a drawer behind the app bar's menu button. */
+  drawerOpen?: boolean;
   badges: Record<string, string>;
   chain: "calibration" | "mainnet";
   mainnetBlocked: boolean;
@@ -221,13 +225,16 @@ export interface WalletPromptView {
 
 function renderScreen(model: ViewModel): string {
   if (!model.connected) return model.panel ? renderSetupShell(model) : renderConnect(model);
-  return `<div class="shell">
+  return `<div class="shell" data-drawer="${model.drawerOpen ? "open" : "closed"}">
     ${renderTop(model)}
     ${renderNav(model)}
+    ${renderDrawerScrim(model)}
     <main class="workspace">
       ${renderBrowser(model)}
       ${model.details ? renderDetails(model.details) : ""}
     </main>
+    <button class="fab" data-testid="new-fab" data-action="new-toggle" type="button" aria-label="New: folder, upload, FiPen or FiGrid" ${model.mainnetBlocked ? "disabled" : ""}><span class="material-symbols-outlined" aria-hidden="true">add</span></button>
+    ${model.newMenu || model.context ? `<div class="sheet-scrim" data-testid="sheet-scrim" aria-hidden="true"></div>` : ""}
     ${model.newMenu ? renderNewMenu() : ""}
     ${model.costsOpen ? renderCosts() : ""}
     ${model.txlogOpen ? renderTxlog(model) : ""}
@@ -325,9 +332,10 @@ function renderSetupShell(model: ViewModel): string {
   // A lapsed session on a set-up wallet is a Transaction log entry ("Reconnect wallet session"), not a setup pop-up.
   const reconnectOnly = Boolean(panel.selectedDatasetId && panel.paymentsReady && !panel.sessionReady && model.sessionPrompt);
   const needsUser = (!ready && !reconnectOnly) || Boolean(model.setupError);
-  return `<div class="shell">
+  return `<div class="shell" data-drawer="${model.drawerOpen ? "open" : "closed"}">
     ${renderTop(model)}
     ${renderNav(model)}
+    ${renderDrawerScrim(model)}
     <main class="workspace">
       ${!picked
         ? `<div class="empty" data-testid="drive-pending">Pick a dataset to open your folders.</div>`
@@ -458,7 +466,14 @@ function renderTop(model: ViewModel): string {
   const who = isWallet ? personOf(model.owner) : null;
   const label = who?.displayName || model.panel?.ens || shortAddress(model.owner);
   const secondary = isWallet ? model.panel?.ens || shortAddress(model.owner) : "";
+  const pending = txlogPending(model);
+  const attention = model.activity.some((item) => item.status === "error");
   return `<header class="topbar">
+    <button type="button" class="menu-button" data-action="toggle-drawer" data-testid="menu-button" aria-label="Menu" aria-expanded="${model.drawerOpen ? "true" : "false"}">
+      <span class="material-symbols-outlined" aria-hidden="true">menu</span>
+      ${pending || attention ? `<span class="menu-dot ${pending ? "" : "error"}" data-testid="menu-dot" aria-hidden="true"></span>` : ""}
+    </button>
+    ${pending ? `<button type="button" class="menu-pending" data-action="toggle-txlog" data-testid="menu-pending" aria-label="${pending} pending — open the Transaction log"><span class="slow-spinner" aria-hidden="true"></span><span class="menu-pending-count">${pending}</span></button>` : ""}
     <div class="brand">${logoSvg(28)} <span>FiFolders</span></div>
     <label class="search">
       <span class="material-symbols-outlined" aria-hidden="true">search</span>
@@ -501,7 +516,8 @@ function renderNav(model: ViewModel): string {
       ${pending ? `<span class="spinner small" data-testid="txlog-spinner" aria-hidden="true"></span>` : `<span class="material-symbols-outlined" aria-hidden="true">receipt_long</span>`} Transaction log
       ${pending ? `<span class="badge" data-testid="txlog-count">${pending}</span>` : errors ? `<span class="badge error" data-testid="txlog-count">!</span>` : ""}
     </button>`;
-  return `<aside class="nav">
+  return `<aside class="nav" data-testid="nav-drawer">
+    <div class="drawer-head">${logoSvg(28)} <span>FiFolders</span></div>
     <button class="new" data-testid="new-button" data-action="new-toggle" type="button" ${model.mainnetBlocked ? "disabled" : ""}>
       <span class="material-symbols-outlined" aria-hidden="true">add</span> New
     </button>
@@ -573,8 +589,13 @@ function navItem(id: NavId, icon: string, label: string, current: NavId): string
   </button>`;
 }
 
+function renderDrawerScrim(model: ViewModel): string {
+  return model.drawerOpen ? `<div class="drawer-scrim" data-action="close-drawer" data-testid="drawer-scrim"></div>` : "";
+}
+
 function renderNewMenu(): string {
   return `<div class="menu anchored" data-menu="new" data-testid="new-menu">
+    <div class="sheet-title">Create new</div>
     <button type="button" data-action="new-folder"><span class="material-symbols-outlined" aria-hidden="true">create_new_folder</span> New folder</button>
     <button type="button" data-action="upload-file"><span class="material-symbols-outlined" aria-hidden="true">upload_file</span> File upload</button>
     <button type="button" data-action="upload-folder"><span class="material-symbols-outlined" aria-hidden="true">drive_folder_upload</span> Folder upload</button>
@@ -678,8 +699,8 @@ function renderEntry(entry: Stat, model: ViewModel, index = 0): string {
   const body =
     model.view === "grid"
       ? name
-      : `<span class="cell name-cell">${name}</span><span class="cell owner" title="${escapeHtml(model.owner)}">${/^0x[0-9a-fA-F]{40}$/.test(model.owner) ? `${avatarHtml(personOf(model.owner), 20)} ${escapeHtml(personOf(model.owner).displayName)}` : escapeHtml(shortAddress(model.owner))}</span><span class="cell mtime">${escapeHtml(formatWhen(entry.mtime))}</span><span class="cell size">${entry.type === "dir" ? "—" : escapeHtml(formatBytes(entry.size))}</span>`;
-  return `<div class="entry ${model.view}" role="row" data-testid="entry" tabindex="${focusTarget ? 0 : -1}" aria-selected="${selected ? "true" : "false"}" aria-label="${escapeHtml(entry.name)}" data-path="${encodeURIComponent(entry.path)}" data-type="${entry.type}" data-kind="${kind}" data-selected="${selected ? "true" : "false"}" data-drop="${drop}" data-saving="${badge ? "true" : "false"}" draggable="true">${body}</div>`;
+      : `<span class="cell name-cell">${name}</span><span class="cell meta-line">${escapeHtml(formatWhen(entry.mtime))}${entry.type === "dir" ? "" : ` · ${escapeHtml(formatBytes(entry.size))}`}</span><span class="cell owner" title="${escapeHtml(model.owner)}">${/^0x[0-9a-fA-F]{40}$/.test(model.owner) ? `${avatarHtml(personOf(model.owner), 20)} ${escapeHtml(personOf(model.owner).displayName)}` : escapeHtml(shortAddress(model.owner))}</span><span class="cell mtime">${escapeHtml(formatWhen(entry.mtime))}</span><span class="cell size">${entry.type === "dir" ? "—" : escapeHtml(formatBytes(entry.size))}</span>`;
+  return `<div class="entry ${model.view}" role="row" data-testid="entry" tabindex="${focusTarget ? 0 : -1}" aria-selected="${selected ? "true" : "false"}" aria-label="${escapeHtml(entry.name)}" data-path="${encodeURIComponent(entry.path)}" data-type="${entry.type}" data-kind="${kind}" data-selected="${selected ? "true" : "false"}" data-drop="${drop}" data-saving="${badge ? "true" : "false"}" draggable="true">${body}<button type="button" class="row-more" data-action="row-more" data-testid="row-more" aria-label="More actions for ${escapeHtml(entry.name)}"><span class="material-symbols-outlined" aria-hidden="true">more_vert</span></button></div>`;
 }
 
 /** Filecoin Drive pieces group under their folder path; other loose pieces list flat after them. */
@@ -793,15 +814,16 @@ function renderContext(context: ContextState): string {
   const trashItems = context.trash
     ? `${item("restore", "restore_from_trash", "Restore")}${item("delete-forever", "delete_forever", "Delete forever")}`
     : `${item("trash", "delete", "Move to trash")}`;
+  const title = context.title ? `<div class="sheet-title" data-testid="sheet-title">${escapeHtml(context.title)}</div>` : "";
   if (context.trash) {
     // Like Drive's Trash: only restore, delete forever, or look at it.
     return `<div class="menu floating" data-menu="context" data-testid="context-menu" style="left:${context.x}px;top:${context.y}px">
-    ${trashItems}
+    ${title}${trashItems}
     ${item("details", "info", "Details")}
   </div>`;
   }
   return `<div class="menu floating" data-menu="context" data-testid="context-menu" style="left:${context.x}px;top:${context.y}px">
-    ${item("open", "open_in_new", "Open")}
+    ${title}${item("open", "open_in_new", "Open")}
     ${item("download", "download", "Download", context.directory)}
     ${item("rename", "edit", "Rename")}
     ${item("move", "drive_file_move", "Move to")}
