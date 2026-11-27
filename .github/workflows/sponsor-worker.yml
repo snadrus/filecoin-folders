@@ -8,6 +8,7 @@ on:
     paths:
       - "apps/fifolders/sponsor/**"
       - "apps/fifolders/src/sponsored-abi.ts"
+      - "apps/fifolders/src/receipt.ts"
       - "packages/sponsored-client/**"
       - ".github/workflows/sponsor-worker.yml"
   workflow_dispatch:

@@ -91,24 +91,42 @@ async function receiptFromBlockReceipts(
   return { receipt: receiptFromRpc(hit), source: `blockReceipts:${url}` };
 }
 
-async function lookupOnRpc(url: string, hash: Hex, opts: ReceiptLookupOpts): Promise<{ receipt: TransactionReceipt; source: string } | undefined> {
-  const direct = await jsonRpc<RpcReceipt | null>(url, "eth_getTransactionReceipt", [hash], opts).catch(() => null);
-  if (hasBlock(direct)) return { receipt: receiptFromRpc(direct), source: `getTransactionReceipt:${url}` };
-  // Glif can lag receipts until the next epoch, by which time "latest" has already moved on.
-  // Check latest and the two prior heads by number so we do not miss the including block.
-  const head = await jsonRpc<string>(url, "eth_blockNumber", [], opts).catch(() => undefined);
-  const tags = new Set<string>(["latest"]);
-  if (head) {
-    const n = BigInt(head);
-    for (let i = 0; i <= 2; i += 1) {
-      if (n >= BigInt(i)) tags.add(`0x${(n - BigInt(i)).toString(16)}`);
+/** Resolve as soon as any job finds a block receipt; do not wait for slower RPCs. */
+function firstReceipt(
+  jobs: Promise<{ receipt: TransactionReceipt; source?: string } | undefined>[],
+): Promise<{ receipt: TransactionReceipt; source?: string } | undefined> {
+  return new Promise((resolve) => {
+    let left = jobs.length;
+    if (!left) { resolve(undefined); return; }
+    for (const job of jobs) {
+      void job.then((row) => {
+        if (row?.receipt.blockHash) resolve(row);
+      }, () => undefined).finally(() => {
+        left -= 1;
+        if (left === 0) resolve(undefined);
+      });
     }
-  }
-  for (const tag of tags) {
-    const hit = await receiptFromBlockReceipts(url, hash, tag, opts);
-    if (hit) return hit;
-  }
-  return undefined;
+  });
+}
+
+async function lookupOnRpc(url: string, hash: Hex, opts: ReceiptLookupOpts): Promise<{ receipt: TransactionReceipt; source: string } | undefined> {
+  const direct = jsonRpc<RpcReceipt | null>(url, "eth_getTransactionReceipt", [hash], opts)
+    .then((raw) => (hasBlock(raw) ? { receipt: receiptFromRpc(raw), source: `getTransactionReceipt:${url}` } : undefined))
+    .catch(() => undefined);
+  const latest = receiptFromBlockReceipts(url, hash, "latest", opts);
+  const prior = (async () => {
+    // Glif can lag receipts until the next epoch, by which time "latest" has already moved on.
+    // Check the last few heads by number so we do not miss the including block.
+    const head = await jsonRpc<string>(url, "eth_blockNumber", [], opts).catch(() => undefined);
+    if (!head) return undefined;
+    const n = BigInt(head);
+    const tags: string[] = [];
+    for (let i = 0; i <= 2; i += 1) {
+      if (n >= BigInt(i)) tags.push(`0x${(n - BigInt(i)).toString(16)}`);
+    }
+    return firstReceipt(tags.map((tag) => receiptFromBlockReceipts(url, hash, tag, opts)));
+  })();
+  return await firstReceipt([direct, latest, prior]) as { receipt: TransactionReceipt; source: string } | undefined;
 }
 
 export async function waitForReceipt(
@@ -139,8 +157,7 @@ export async function waitForReceipt(
         return hit;
       }),
     ];
-    const results = await Promise.all(tick);
-    const found = results.find((row) => row?.receipt.blockHash);
+    const found = await firstReceipt(tick);
     if (found) {
       const host = (found.source ?? "").replace(/https?:\/\/[^/]+/, (m) => {
         try { return new URL(m).host; } catch { return m; }

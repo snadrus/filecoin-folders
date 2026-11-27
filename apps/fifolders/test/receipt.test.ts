@@ -85,6 +85,41 @@ describe("waitForReceipt", () => {
     expect(receipt.status).toBe("success");
     expect(receipt.blockNumber).toBe(17n);
   });
+
+  it("returns a fast RPC hit without waiting for a slow second endpoint", async () => {
+    const hash = "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+    const client = { getTransactionReceipt: async () => { throw new Error("not found"); } };
+    let slowStarted = 0;
+    let slowFinished = 0;
+    const fetchMock = (async (url: string | URL | Request, init?: RequestInit) => {
+      const href = String(url);
+      const body = JSON.parse(String(init?.body ?? "{}")) as { method?: string };
+      if (href.includes("slow.example") && body.method === "eth_getTransactionReceipt") {
+        slowStarted += 1;
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        slowFinished += 1;
+        return new Response(JSON.stringify({ result: null }));
+      }
+      if (href.includes("fast.example") && body.method === "eth_getBlockReceipts") {
+        return new Response(JSON.stringify({
+          result: [{ transactionHash: hash, blockHash: "0x" + "aa".repeat(32), blockNumber: "0x20", status: "0x1", gasUsed: "0x1", cumulativeGasUsed: "0x1", logs: [], type: "0x2", transactionIndex: "0x0" }],
+        }));
+      }
+      return new Response(JSON.stringify({ result: null }));
+    }) as typeof fetch;
+    const t0 = Date.now();
+    const receipt = await waitForReceipt(client, hash, {
+      pollMs: 1,
+      rpcUrls: ["https://fast.example/rpc/v1", "https://slow.example/rpc/v1"],
+      fetch: fetchMock,
+    });
+    const ms = Date.now() - t0;
+    expect(receipt.status).toBe("success");
+    expect(receipt.blockNumber).toBe(32n);
+    expect(ms).toBeLessThan(150);
+    expect(slowFinished).toBe(0);
+    expect(slowStarted).toBeGreaterThan(0);
+  });
 });
 
 describe("receiptFromRpc", () => {
