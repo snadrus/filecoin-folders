@@ -378,6 +378,7 @@ button:disabled { cursor: default; opacity: 0.45; }
   .details header { position: sticky; top: 0; background: var(--surface); padding: 8px 0; z-index: 1; border-bottom: 1px solid var(--line); margin: 0 -16px 0; padding-left: 16px; padding-right: 4px; }
   .details header button, .preview header button, .preview-actions .icon-link { min-width: 44px; min-height: 44px; display: inline-grid; place-items: center; }
   .details button { min-height: 40px; }
+  .details p, .details code, .details a { overflow-wrap: anywhere; }
   .backdrop { align-items: flex-start; padding: max(12px, 8vh) 12px 12px; z-index: 63; } /* top half: the keyboard never covers the field or buttons */
   .dialog .field input, .dialog .field select { font-size: 16px; min-height: 44px; }
   .dialog-actions button { min-height: 44px; padding: 0 18px; }
