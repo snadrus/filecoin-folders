@@ -40,11 +40,11 @@ jobs:
   refill:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           version: 10
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: pnpm
@@ -61,8 +61,8 @@ jobs:
           STRIPE_CRYPTO_PAYOUT_METHOD: ${{ secrets.STRIPE_CRYPTO_PAYOUT_METHOD }}
           SQUID_INTEGRATOR_ID: ${{ secrets.SQUID_INTEGRATOR_ID }}
           REFILL_ALERT_WEBHOOK: ${{ secrets.REFILL_ALERT_WEBHOOK }}
-          # The sponsor key is only passed when send=true, and is never echoed.
-          SPONSOR_KEY_MAINNET: ${{ secrets.SPONSOR_KEY_MAINNET }}
+          # The sponsor key is only passed on a manual send=true run (never on the schedule), and is never echoed.
+          SPONSOR_KEY_MAINNET: ${{ (github.event_name == 'workflow_dispatch' && inputs.send) && secrets.SPONSOR_KEY_MAINNET || '' }}
         run: |
           set -euo pipefail
           SEND="${{ inputs.send || 'false' }}"
