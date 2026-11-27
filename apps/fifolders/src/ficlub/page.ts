@@ -3,6 +3,7 @@ import { getAddress, isAddress, type Address } from "viem";
 import { onWalletPrompts, isUserRejection, type WalletPrompt } from "../wallet-prompts.js";
 import { checkBlob, encodeBlob, parseBlob, type ClubView, type RemovalBlob } from "./core.js";
 import type { ClubIO } from "./io.js";
+import { isSponsored, loadPasskey, readNetworkPreference } from "@fifolders/sponsored-client";
 
 const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
 const DAY = 86_400;
@@ -185,7 +186,12 @@ export class ClubPage {
         ? `<p class="blocked" data-testid="ficlub-not-deployed">FiClub contract not deployed yet — this page runs on an in-memory demo backend in this browser. Nothing is written on chain.</p>`
         : "";
     let body: string;
-    if (!this.me) body = `<div class="card"><p>Connect a wallet to see your clubs.</p><button class="primary" data-action="connect" data-testid="ficlub-connect">Connect wallet</button></div>`;
+    const passkeyOnly = isSponsored(readNetworkPreference()) && Boolean(loadPasskey());
+    if (!this.me) {
+      body = passkeyOnly
+        ? `<div class="card" data-testid="ficlub-passkey-blocked"><p>FiClub stays wallet-only. Your passkey and sponsored storage account cannot sign club actions, because clubs recover an admin wallet address on chain.</p><p>Connect the same browser wallet you use as Advanced in FiFolders to create or manage clubs. Your public identity can stay on the sponsored account.</p><button class="primary" data-action="connect" data-testid="ficlub-connect">Connect wallet</button></div>`
+        : `<div class="card"><p>Connect a wallet to see your clubs.</p><button class="primary" data-action="connect" data-testid="ficlub-connect">Connect wallet</button></div>`;
+    }
     else if (this.club()) body = this.renderClub(this.club()!);
     else body = this.renderList();
     const status = `${this.busy ? `<p class="note" data-testid="ficlub-busy">Working…</p>` : ""}${this.error ? `<p class="error" data-testid="ficlub-error">${esc(this.error)}</p>` : ""}${this.notice ? `<p class="ok" data-testid="ficlub-notice">${esc(this.notice)}</p>` : ""}`;

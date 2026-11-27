@@ -37,15 +37,15 @@ describe("edit", () => {
     expect(got.displayName).toBe("Andy 2");
     expect(parseIdentity(pieces.get("p0")!, A)?.displayName).toBe("Andy");
   });
-  it("labels profile pieces with Filecoin Drive metadata (label, path, version)", async () => {
+  it("labels profile pieces with Filecoin Drive metadata (label, path)", async () => {
     const registry = memRegistry();
     const seen: (Record<string, string> | undefined)[] = [];
     const storage = { put: async (_b: Uint8Array, o?: { metadata?: Record<string, string> }) => (seen.push(o?.metadata), { pieceCid: "p" + seen.length }) };
     await saveIdentity(buildIdentity(A, { displayName: "A" }), { storage, registry });
     await saveIdentity(buildIdentity(A, { displayName: "B" }), { storage, registry });
     expect(seen).toEqual([
-      { label: "profile.json", path: "FiPerson", version: "1" },
-      { label: "profile.json", path: "FiPerson", version: "2" },
+      { label: "profile.json", path: "FiPerson" },
+      { label: "profile.json", path: "FiPerson" },
     ]);
   });
   it("storage gate never pays: blocks without payments or dataset", () => {

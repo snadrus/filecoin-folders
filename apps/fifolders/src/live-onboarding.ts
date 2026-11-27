@@ -46,6 +46,7 @@ import {
   walletSponsorSigner,
   type SponsorSigner,
   liveRemovalAdapters,
+  openSponsoredVolume,
   relayExecute,
   sponsoredTransport,
 } from "./sponsored.js";
@@ -820,6 +821,72 @@ export function createLiveOnboarding(options: LiveOnboardingOptions = {}): Onboa
     async enter(input) {
       reportLoadStep("Finding your folders…");
       if (isSponsored()) await resolvePayer();
+      if (payer) {
+        // Passkey sign-in has no secp256k1 wallet for the EIP-712 volume key; encryption stays wallet-only.
+        if (passkey && input.encrypt) throw new Error("Encrypted volumes need a wallet signature. Sign in with a wallet to encrypt, or turn encryption off.");
+        const address = payer;
+        const chain = chainOf(input.chain);
+        const config = registryConfig(input.chain);
+        const datasetId = selectedDataset || loadLastDataset(chain.id, address) || "";
+        if (datasetId) saveLastDataset(chain.id, address, datasetId);
+        reportLoadStep("Checking this browser's wallet session…");
+        reportLoadStep("Connecting to storage…");
+        const wallet = passkey ? null : await walletClient(input.chain);
+        const cacheKey = `fifolders:volume-sig:${chain.id}:${address.toLowerCase()}:${config.address.toLowerCase()}:${input.volumeName}`;
+        let cas: Session["cas"] | undefined;
+        reportLoadStep("Reading your folders from Filecoin…");
+        const opened = await openSponsoredVolume({
+          chain: input.chain,
+          volumeName: input.volumeName,
+          datasetId: datasetId || undefined,
+          payer,
+          wrapStorage: (storage) => withProviderFallback(storage, input.chain),
+          wrapRegistry: (registry) => {
+            const observed = observeRegistry(registry);
+            cas = observed.cas;
+            return observed.registry;
+          },
+          wrapMigration: labelMigration,
+          onReplication: (notice) => {
+            const checkpoint: UploadCheckpoint = {
+              phase: notice.phase,
+              expectedCopies: notice.expectedCopies,
+              providers: notice.providers,
+              checks: 0,
+              nextCheckAt: 0,
+              ...(notice.error ? { error: notice.error } : {}),
+            };
+            saveCheckpoint(`${address.toLowerCase()}:${input.volumeName}`, checkpoint);
+          },
+          encryption: input.encrypt
+            ? {
+                signer: {
+                  signTypedData: async (parameters) => {
+                    const cached = localStorage.getItem(cacheKey) as Hex | null;
+                    if (cached) return cached;
+                    const signature = await withWalletIntent(INTENTS.unlock, () => wallet!.signTypedData(parameters as never));
+                    localStorage.setItem(cacheKey, signature);
+                    signatures += SIGNATURES.encryptSign;
+                    return signature;
+                  },
+                },
+                mode: "eip712",
+                chainId: chain.id,
+                registryAddress: config.address,
+              }
+            : undefined,
+        });
+        installPieceDetails(input.chain, opened.datasetId, opened.synapse);
+        return {
+          volume: opened.volume,
+          owner: address,
+          chain: input.chain,
+          encrypted: input.encrypt,
+          volumeName: input.volumeName,
+          cas: cas!,
+          removalAdapters: opened.removals,
+        };
+      }
       const address = owner();
       const chain = chainOf(input.chain);
       const config = registryConfig(input.chain);

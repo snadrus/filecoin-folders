@@ -22,7 +22,13 @@ export const IDENTITY_INTENTS = {
   upload: { title: "Store identity piece", purpose: "sign the add-piece request for your existing storage dataset", cost: "free signature; a few bytes billed from your storage deposit" },
   pointer: { title: "Link identity to wallet", purpose: "record the piece in FolderRegistry under your address", cost: "gas ~0.01 FIL" },
 } as const;
-export type IdentityIntent = (typeof IDENTITY_INTENTS)[keyof typeof IDENTITY_INTENTS];
+
+/** Same actions when the save is gasless (session key + sponsor relay). */
+export const IDENTITY_INTENTS_SPONSORED = {
+  upload: { title: "Store identity piece", purpose: "sign the add-piece request for your existing storage dataset", cost: "free signature; billed from your FiFolders credits" },
+  pointer: { title: "Link identity to your account", purpose: "record the piece in FolderRegistry under your storage account", cost: "free signature; the sponsor pays gas" },
+} as const;
+export type IdentityIntent = { title: string; purpose: string; cost: string };
 
 /** A save needs a step this library will not take (deposit, payment approval, dataset creation). */
 export class IdentityBlocked extends Error {
@@ -34,16 +40,16 @@ export class IdentityBlocked extends Error {
 
 /** Piece store (fil-folders `createSynapseStorage(...)` satisfies it). */
 export interface PieceWriter {
-  /** `metadata` is Synapse piece metadata (Filecoin Drive conventions: label, path, version). */
+  /** `metadata` is Synapse piece metadata (Filecoin Drive conventions: label, path, ipfsRootCID). */
   put(data: Uint8Array, options?: { metadata?: Record<string, string> }): Promise<{ pieceCid: string }>;
 }
 
 /** Folder Filecoin Drive / FiFolders show FiPerson pieces under. */
 export const IDENTITY_DRIVE_FOLDER = "FiPerson";
 
-/** Filecoin Drive-style piece metadata for one FiPerson record version (public: names no secrets). */
-export function identityPieceMetadata(fileName: string, version: bigint): Record<string, string> {
-  return { label: fileName, path: IDENTITY_DRIVE_FOLDER, version: version.toString() };
+/** Filecoin Drive-style piece metadata (public: names no secrets). Version lives on the registry, not as a fourth metadata key. */
+export function identityPieceMetadata(fileName: string, _version?: bigint): Record<string, string> {
+  return { label: fileName, path: IDENTITY_DRIVE_FOLDER };
 }
 /** FolderRegistry client (fil-folders `createViemRegistry(...)` satisfies it). */
 export interface PointerRegistry {
@@ -63,6 +69,8 @@ export interface SaveIdentityOptions {
   fileName?: string;
   /** Pause before the single CAS-conflict retry (default 1.5 s). */
   retryDelayMs?: number;
+  /** Wallet prompts; defaults to IDENTITY_INTENTS (FIL gas). Sponsored saves pass IDENTITY_INTENTS_SPONSORED. */
+  intents?: { upload: IdentityIntent; pointer: IdentityIntent };
 }
 
 export interface IdentitySaved {
@@ -80,18 +88,19 @@ export function isCasConflict(error: unknown): boolean {
 /** Store `bytes` as a piece and CAS-commit the pointer `(owner, fil-identity, key)` to it. */
 export async function savePointedPiece(owner: Address, bytes: Uint8Array, opts: SaveIdentityOptions): Promise<IdentitySaved> {
   const run = opts.withIntent ?? (<T>(_: IdentityIntent, fn: () => Promise<T>) => fn());
+  const intents = opts.intents ?? IDENTITY_INTENTS;
   opts.onStep?.("Storing your identity piece…");
   const key0 = opts.key ?? IDENTITY_PROFILE_KEY_ID;
   const before = await opts.registry.head(owner, IDENTITY_NS, key0).catch(() => null);
   const metadata = identityPieceMetadata(opts.fileName ?? (key0 === IDENTITY_PROFILE_KEY_ID ? "profile.json" : "record.json"), (before?.version ?? 0n) + 1n);
-  const { pieceCid } = await run(IDENTITY_INTENTS.upload, () => opts.storage.put(bytes, { metadata }));
-  opts.onStep?.("Linking it to your wallet…");
+  const { pieceCid } = await run(intents.upload, () => opts.storage.put(bytes, { metadata }));
+  opts.onStep?.("Linking it to your account…");
   const key = opts.key ?? IDENTITY_PROFILE_KEY_ID;
   // Re-read the head right before committing; a lagging RPC or an overlapping save can still hand back a
   // stale version, so on a CAS conflict re-read once more (after a short pause) and retry a single time.
   const commitOnce = async () => {
     const head = await opts.registry.head(owner, IDENTITY_NS, key);
-    return run(IDENTITY_INTENTS.pointer, () =>
+    return run(intents.pointer, () =>
       opts.registry.commit({ owner, ns: IDENTITY_NS, key, pieceCid: new TextEncoder().encode(pieceCid), prevPieceCid: head.pieceCid }),
     );
   };

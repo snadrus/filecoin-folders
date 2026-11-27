@@ -99,3 +99,32 @@ describe("notifications + clubs", () => {
     expect(root.querySelector("[data-testid=identity-coworkers]")?.textContent).toContain("1 club-mate");
   });
 });
+
+describe("sponsored identity connect", () => {
+  it("defaults to a passkey button, hides FIL gas copy, and exposes Advanced wallet", async () => {
+    const root = document.createElement("main");
+    document.body.appendChild(root);
+    const io = fakeIO({
+      peek: async () => null,
+      authMode: () => ({ sponsored: true, passkeyAvailable: true, hasSavedPasskey: true }),
+      connectWallet: async () => A,
+      connectPasskey: async () => A,
+    });
+    const page = new IdentityPage(root, io);
+    await page.start();
+    expect(root.querySelector("[data-testid=identity-connect]")!.textContent).toMatch(/passkey/i);
+    expect(root.querySelector("[data-testid=identity-connect-wallet]")).toBeTruthy();
+    expect(root.textContent).not.toMatch(/gas ~0.01 FIL/);
+    root.querySelector<HTMLButtonElement>("[data-testid=identity-connect-wallet]")!.click();
+    await tick();
+    expect(root.querySelector("[data-testid=identity-name]")).toBeTruthy();
+  });
+
+  it("keeps the wallet connect card when gasless is off", async () => {
+    const root = document.createElement("main");
+    const io = fakeIO({ peek: async () => null, authMode: () => ({ sponsored: false, passkeyAvailable: true, hasSavedPasskey: false }) });
+    await new IdentityPage(root, io).start();
+    expect(root.querySelector("[data-testid=identity-connect]")!.textContent).toMatch(/Connect wallet/);
+    expect(root.querySelector("[data-testid=identity-connect-wallet]")).toBeNull();
+  });
+});

@@ -46,6 +46,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter fil-folders build
       - run: pnpm --filter fiperson build
+      - run: pnpm --filter @fifolders/sponsored-client build
       - run: pnpm --filter fifolders build
         env:
           # Gasless mode on Calibration: sponsor Worker (apps/fifolders/sponsor/worker.ts) + Stripe test mode.
@@ -74,6 +75,13 @@ jobs:
           mkdir -p node_modules/fiperson
           cp ../packages/fiperson/package.json node_modules/fiperson/
           cp -R ../packages/fiperson/dist node_modules/fiperson/dist
+          # Same for the gasless client. Pages copies this commit's dist (like fil-folders/fiperson)
+          # rather than a git or npm dependency, because @fifolders/sponsored-client is not published
+          # and the editors' pin cannot see this commit until after the monorepo is pushed.
+          rm -rf node_modules/@fifolders/sponsored-client
+          mkdir -p node_modules/@fifolders/sponsored-client
+          cp ../packages/sponsored-client/package.json node_modules/@fifolders/sponsored-client/
+          cp -R ../packages/sponsored-client/dist node_modules/@fifolders/sponsored-client/dist
           BUILD_ONLY=1 node --disable-warning=ExperimentalWarning --experimental-strip-types p2p/serve.ts
       - run: node scripts/stage-editors.mjs collab-edit/p2p/dist
       - run: printf '%s\n' 'fifolders.scionbase.ai' > apps/fifolders/dist/CNAME

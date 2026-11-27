@@ -1,0 +1,45 @@
+{
+  "name": "@fifolders/sponsored-client",
+  "version": "0.1.0",
+  "description": "Gasless Filecoin client for FiFolders: passkey or wallet owns a LockedSignerAccount; a sponsor relays commits and users buy credits by card.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "sideEffects": false,
+  "files": [
+    "dist",
+    "src"
+  ],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run && tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@noble/curves": "1.9.7",
+    "fil-folders": "workspace:*",
+    "viem": "^2.38.3"
+  },
+  "peerDependencies": {
+    "@filoz/synapse-core": ">=0.4.0",
+    "@filoz/synapse-sdk": ">=0.37.0"
+  },
+  "devDependencies": {
+    "@filoz/synapse-core": "^0.4.1",
+    "@filoz/synapse-sdk": "^0.40.4",
+    "@types/node": "^22.19.0",
+    "happy-dom": "^18.0.1",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  }
+}

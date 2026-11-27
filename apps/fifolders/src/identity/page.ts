@@ -134,10 +134,18 @@ export class IdentityPage {
     const el = (event.target as HTMLElement).closest<HTMLElement>("[data-action]");
     if (!el) return;
     const action = el.dataset.action;
-    if (action === "connect") {
+    if (action === "connect" || action === "connect-wallet" || action === "connect-passkey-new" || action === "connect-passkey-existing") {
       this.state.error = "";
       try {
-        await this.useAddress(await this.io.connect());
+        const address =
+          action === "connect-wallet" && this.io.connectWallet
+            ? await this.io.connectWallet()
+            : action === "connect-passkey-new" && this.io.connectPasskey
+              ? await this.io.connectPasskey("new")
+              : action === "connect-passkey-existing" && this.io.connectPasskey
+                ? await this.io.connectPasskey("existing")
+                : await this.io.connect();
+        await this.useAddress(address);
       } catch (error) {
         this.state.error = isUserRejection(error) ? "Connection was cancelled." : (error as Error).message;
         this.render();
@@ -322,10 +330,22 @@ export class IdentityPage {
   render(): void {
     const s = this.state;
     const d = s.draft;
-    const header = `<header><h1>Your identity</h1><nav class="identity-links"><a href="../ficlub/" data-testid="identity-ficlub-link">FiClub — your groups</a></nav><p class="lede">One name and avatar for your wallet, shown in FiFolders, FiPen and FiGrid. It is saved as a small public piece on Filecoin and linked to your wallet on chain, so anyone you work with sees the same name.</p></header>`;
+    const mode = this.io.authMode?.() ?? { sponsored: false, passkeyAvailable: false, hasSavedPasskey: false };
+    const who = mode.sponsored ? "your FiFolders account" : "your wallet";
+    const header = `<header><h1>Your identity</h1><nav class="identity-links"><a href="../ficlub/" data-testid="identity-ficlub-link">FiClub — your groups</a></nav><p class="lede">One name and avatar for ${who}, shown in FiFolders, FiPen and FiGrid. It is saved as a small public piece on Filecoin and linked on chain, so anyone you work with sees the same name.</p></header>`;
     let body: string;
     if (!s.address) {
-      body = `<section class="card"><p>Connect the wallet you use with FiFolders.</p><button type="button" class="primary" data-action="connect" data-testid="identity-connect">Connect wallet</button><p class="note">Connecting is free.</p></section>`;
+      body = mode.sponsored && mode.passkeyAvailable
+        ? `<section class="card"><p>Sign in with the passkey you use in FiFolders. Your profile is stored under your storage account.</p>
+            <button type="button" class="primary" data-action="connect" data-testid="identity-connect">${mode.hasSavedPasskey ? "Continue with your passkey" : "Create a passkey"}</button>
+            <p class="note">${mode.hasSavedPasskey ? `<button type="button" class="text" data-action="connect-passkey-new">Create a new passkey</button> · ` : ""}<button type="button" class="text" data-action="connect-passkey-existing">Use an existing passkey</button></p>
+            <details class="advanced" data-testid="identity-advanced"><summary>Advanced</summary>
+              <p>Use a browser wallet instead. In gasless mode the profile is still stored under your sponsored storage account, not the wallet address.</p>
+              <button type="button" data-action="connect-wallet" data-testid="identity-connect-wallet">Connect wallet</button>
+            </details>
+            ${s.error ? `<p class="error" role="alert" data-testid="identity-error">${esc(s.error)}</p>` : ""}
+          </section>`
+        : `<section class="card"><p>Connect the wallet you use with FiFolders.</p><button type="button" class="primary" data-action="connect" data-testid="identity-connect">Connect wallet</button><p class="note">Connecting is free.</p>${s.error ? `<p class="error" role="alert" data-testid="identity-error">${esc(s.error)}</p>` : ""}</section>`;
     } else if (s.loading) {
       body = `<section class="card"><p data-testid="identity-loading">Looking up your identity…</p></section>`;
     } else {
@@ -353,7 +373,9 @@ export class IdentityPage {
         ${s.blocked ? `<p class="blocked" role="alert" data-testid="identity-blocked">${esc(s.blocked.message)} <a href="${esc(s.blocked.url)}">Open FiFolders</a></p>` : ""}
         ${s.saved ? `<p class="ok" role="status" data-testid="identity-saved">Saved.${this.returnTo ? ` <button type="button" data-action="return" data-testid="identity-return">Back to your document</button>` : ""}</p>` : ""}
         <button type="submit" class="primary" data-testid="identity-save" ${s.busy ? "disabled" : ""}>${esc(s.busy || "Save identity")}</button>
-        <p class="note">Saving asks your wallet twice: a free signature to store the piece (billed from your existing FiFolders storage deposit — a few bytes, well under $0.01/month) and one transaction to link it (gas ~0.01 FIL). Everything here is public.</p>
+        <p class="note">${mode.sponsored
+          ? "Saving uses your FiFolders session: a free signature to store the piece (billed from your credits) and a free signature to link it. The sponsor pays gas. Everything here is public."
+          : "Saving asks your wallet twice: a free signature to store the piece (billed from your existing FiFolders storage deposit — a few bytes, well under $0.01/month) and one transaction to link it (gas ~0.01 FIL). Everything here is public."}</p>
       </form>${this.clubsSection()}`;
     }
     const back = this.returnTo ? `<a class="back" href="${esc(this.returnTo)}" data-testid="identity-back">← Back</a>` : `<a class="back" href="../">← FiFolders</a>`;

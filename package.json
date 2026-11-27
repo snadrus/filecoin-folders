@@ -6,8 +6,8 @@
     "node": ">=22"
   },
   "scripts": {
-    "build": "pnpm --filter fil-folders --filter fiperson build",
-    "test": "forge test --root contracts -vv && pnpm --filter fil-folders test && pnpm --filter fiperson build && pnpm --filter fiperson test && pnpm --filter fil-folders build && tsc -p tsconfig.example.json && pnpm --filter fifolders test",
+    "build": "pnpm --filter fil-folders --filter fiperson --filter @fifolders/sponsored-client build",
+    "test": "forge test --root contracts -vv && pnpm --filter fil-folders test && pnpm --filter @fifolders/sponsored-client test && pnpm --filter fiperson build && pnpm --filter fiperson test && pnpm --filter fil-folders build && pnpm --filter @fifolders/sponsored-client build && tsc -p tsconfig.example.json && pnpm --filter fifolders test",
     "test:contracts": "forge test --root contracts -vv",
     "example": "tsx examples/cli.ts",
     "sponsor": "tsx apps/fifolders/sponsor/server.ts",

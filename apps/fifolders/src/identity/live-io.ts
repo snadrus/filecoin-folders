@@ -2,11 +2,25 @@ import { walletWithPublicReads } from "../split-transport.js";
 import { withTransientRetry } from "fil-folders";
 import { calibration, mainnet } from "@filoz/synapse-core/chains";
 import { createSynapseStorage, createViemRegistry } from "fil-folders";
-import { assertStorageReady, saveIdentity, type IdentityV1 } from "fiperson/edit";
+import { assertStorageReady, IDENTITY_INTENTS_SPONSORED, saveIdentity, type IdentityV1 } from "fiperson/edit";
 import { createPublicClient, createWalletClient, custom, getAddress, http, type Address, type Chain, type PublicClient } from "viem";
+import {
+  createPasskey,
+  findExistingPasskey,
+  findPasskeyAccount,
+  findPasskeyByCredential,
+  isSponsored,
+  loadPasskey,
+  restore,
+  savePasskey,
+  settleReturnedCheckout,
+  signIn,
+  type ChainChoice,
+  type Identity,
+} from "@fifolders/sponsored-client";
 import { discoverWallets } from "../eip6963.js";
 import { readNetworkPreference } from "../network.js";
-import { CALIBRATION_FROM_BLOCK, CALIBRATION_REGISTRY, CALIBRATION_RPC, MAINNET_RPC, ensureChain, type ChainChoice } from "../session.js";
+import { CALIBRATION_FROM_BLOCK, CALIBRATION_REGISTRY, CALIBRATION_RPC, MAINNET_RPC, ensureChain } from "../session.js";
 import { INTENTS, watchWalletPrompts, withWalletIntent, labelMigration } from "../wallet-prompts.js";
 import { IdentityBlocked, type IdentityIO } from "./io.js";
 import { resolvePerson } from "../person.js";
@@ -27,7 +41,11 @@ function registryOf(choice: ChainChoice): { address: Address; fromBlock: bigint 
   return { address: CALIBRATION_REGISTRY, fromBlock: CALIBRATION_FROM_BLOCK };
 }
 
-/** Same chain + storage FiFolders uses: FolderRegistry pointer, Synapse piece in the wallet's FiFolders dataset. */
+function passkeyAvailable(): boolean {
+  return typeof navigator !== "undefined" && Boolean(navigator.credentials) && typeof globalThis.PublicKeyCredential !== "undefined";
+}
+
+/** Same chain + storage FiFolders uses: FolderRegistry pointer, Synapse piece in the sponsored (or wallet) dataset. */
 export function createLiveIdentityIO(choice: ChainChoice = readNetworkPreference()): IdentityIO {
   let provider: Provider | null = null;
   const chain = chainOf(choice);
@@ -44,9 +62,40 @@ export function createLiveIdentityIO(choice: ChainChoice = readNetworkPreference
     return provider;
   }
 
+  function walletIdentity(address: Address, p: Provider): Identity {
+    return {
+      kind: "wallet",
+      address,
+      sign: (typed) =>
+        withWalletIntent(INTENTS.sponsoredRequest, () =>
+          createWalletClient({ account: address, chain, transport: walletWithPublicReads(p, rpc) }).signTypedData(typed as never),
+        ),
+    };
+  }
+
+  async function finishSignIn(identity: Identity): Promise<string> {
+    await settleReturnedCheckout({ chain: choice });
+    const result = await signIn({ chain: choice, identity });
+    if ("checkoutUrl" in result) {
+      window.location.assign(result.checkoutUrl);
+      throw new IdentityBlocked("Finish payment to set up your storage account, then return here to save.", result.checkoutUrl);
+    }
+    return result.payer;
+  }
+
   return {
+    authMode: () => ({
+      sponsored: isSponsored(choice),
+      passkeyAvailable: passkeyAvailable(),
+      hasSavedPasskey: Boolean(loadPasskey()),
+    }),
     async peek() {
       try {
+        if (isSponsored(choice)) {
+          await settleReturnedCheckout({ chain: choice });
+          const session = await restore(choice);
+          if (session) return session.payer.toLowerCase();
+        }
         const accounts = (await (await getProvider()).request({ method: "eth_accounts" })) as string[];
         return accounts?.[0]?.toLowerCase() || null;
       } catch {
@@ -54,22 +103,69 @@ export function createLiveIdentityIO(choice: ChainChoice = readNetworkPreference
       }
     },
     async connect() {
+      if (isSponsored(choice) && passkeyAvailable()) return this.connectPasskey!(loadPasskey() ? "saved" : "new");
+      return this.connectWallet!();
+    },
+    async connectPasskey(kind) {
+      if (!passkeyAvailable()) throw new Error("This browser does not support passkeys.");
+      let key = kind === "saved" ? loadPasskey() : null;
+      if (kind === "existing" || (!key && kind !== "new" && kind !== "saved")) {
+        key = await findExistingPasskey({
+          byCredential: (id) => findPasskeyByCredential(id, choice),
+          hasAccount: async (pub) => Boolean(await findPasskeyAccount(pub, choice)),
+        });
+      }
+      if (kind === "new" || !key) key = await createPasskey("FiFolders");
+      if (!key) throw new Error("No passkey was created.");
+      savePasskey(key);
+      return finishSignIn({ kind: "passkey", key });
+    },
+    async connectWallet() {
       const p = await getProvider();
       const accounts = (await withWalletIntent(INTENTS.connect, () => p.request({ method: "eth_requestAccounts" }))) as string[];
-      const address = accounts?.[0]?.toLowerCase();
+      const address = accounts?.[0];
       if (!address) throw new Error("The wallet returned no account.");
-      return address;
+      if (isSponsored(choice)) return finishSignIn(walletIdentity(getAddress(address), p));
+      return address.toLowerCase();
     },
     load: (address) => resolvePerson(address, choice, true),
     async findClubs(address) {
       if (choice === "mainnet") throw new IdentityBlocked("FiClub is on Calibration only for now. Switch FiFolders to Calibration.");
       const found = await findMyClubs(address, { call: rpcEthCall(CALIBRATION_RPC), contract: import.meta.env.VITE_FICLUB_ADDRESS_CALIBRATION || CALIBRATION_FICLUB });
-      // Warm the identity cache so @-mentions show club-mates' names and avatars.
       await Promise.all(found.coworkers.map((a) => resolvePerson(a, choice).catch(() => null)));
       return found;
     },
     async save(address, identity: IdentityV1, onStep) {
       const owner = getAddress(address);
+      if (isSponsored(choice)) {
+        await settleReturnedCheckout({ chain: choice });
+        let session = await restore(choice);
+        if (!session || session.payer.toLowerCase() !== owner.toLowerCase()) {
+          const passkey = loadPasskey();
+          const p = passkey ? null : await getProvider();
+          const ident: Identity = passkey
+            ? { kind: "passkey", key: passkey }
+            : walletIdentity(owner, p!);
+          const result = await signIn({ chain: choice, identity: ident });
+          if ("checkoutUrl" in result) {
+            window.location.assign(result.checkoutUrl);
+            throw new IdentityBlocked("Finish payment to set up your storage account, then save again.", result.checkoutUrl);
+          }
+          session = result;
+        }
+        if (session.payer.toLowerCase() !== owner.toLowerCase()) {
+          throw new IdentityBlocked("This identity is for a different storage account. Sign in again, then save.");
+        }
+        const doc = { ...identity, address: session.payer };
+        return saveIdentity(doc, {
+          storage: session.storage,
+          registry: session.registry,
+          onStep,
+          intents: IDENTITY_INTENTS_SPONSORED,
+          withIntent: (intent, fn) => withWalletIntent(intent, fn),
+        });
+      }
+
       const p = await getProvider();
       onStep("Checking your storage setup…");
       await ensureChain(p as never, choice);
@@ -87,7 +183,7 @@ export function createLiveIdentityIO(choice: ChainChoice = readNetworkPreference
       const synapse = Synapse.create({ account: owner, chain, transport: walletWithPublicReads(p, rpc), source: "fifolders" } as never);
       const storage = createSynapseStorage(synapse as never, { dataSetId: BigInt(dataset!.dataSetId), copies: 1, resolveOnAdded: true });
       const registry = createViemRegistry({
-      wrapMigration: labelMigration,
+        wrapMigration: labelMigration,
         ...registryOf(choice),
         publicClient: client,
         walletClient: createWalletClient({ account: owner, chain, transport: walletWithPublicReads(p, rpc) }),
