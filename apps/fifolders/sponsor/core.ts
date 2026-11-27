@@ -188,7 +188,7 @@ export function configFromEnv(env: Record<string, string | undefined>, opts: { s
       pdp: getAddress(contracts.pdp!.address),
     },
     pricing: pricingFromEnv(env),
-    pool: { size: Number(env.SPONSOR_POOL_SIZE ?? 5), seedUsdfc: env.SPONSOR_POOL_SEED_USDFC ?? "1" },
+    pool: { size: Number(env.SPONSOR_POOL_SIZE ?? 2), seedUsdfc: env.SPONSOR_POOL_SEED_USDFC ?? "1" },
     minSponsorFil: env.SPONSOR_MIN_FIL ?? "0.005",
     lowFil: env.SPONSOR_LOW_FIL ?? "0.05",
     lowUsdfc: env.SPONSOR_LOW_USDFC ?? "20",

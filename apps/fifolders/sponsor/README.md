@@ -20,7 +20,7 @@ The first purchase shows the setup fee as its own line item on the Stripe page.
 
 ## Warm pool (first purchase fast path)
 
-The sponsor keeps `SPONSOR_POOL_SIZE` ready accounts (default 5). Each one is:
+The sponsor keeps `SPONSOR_POOL_SIZE` ready accounts (2 on both Calibration and mainnet). Each one is:
 - created with `factory.createPooled`, with no owner;
 - funded with 1 USDFC deposited in Filecoin Pay;
 - given a dataset already open at an approved provider.
@@ -53,7 +53,7 @@ deposits the credit, and opens the dataset (the slow path).
 | `SPONSOR_MIN_FIL` | sponsor | FIL kept for gas. Below it, checkout and pool refill pause. Default `0.005`. |
 | `SPONSOR_LOW_FIL` / `SPONSOR_LOW_USDFC` | sponsor | `/status` and `/health` report `low` below these. Defaults `0.05` and `20`. |
 | `SPONSOR_REFUND_AFTER_HOURS` | sponsor | A paid credit still waiting for sponsor funds after this long is refunded through Stripe. Default `24`. |
-| `SPONSOR_POOL_SIZE` / `SPONSOR_POOL_SEED_USDFC` | sponsor | Defaults are `5` and `1`. |
+| `SPONSOR_POOL_SIZE` / `SPONSOR_POOL_SIZE_MAINNET` / `SPONSOR_POOL_SEED_USDFC` | sponsor | Both networks keep 2 ready accounts (Calibration: `SPONSOR_POOL_SIZE`, mainnet: `SPONSOR_POOL_SIZE_MAINNET`). Seed default is `1`. |
 | `SPONSOR_STRIPE_FAKE=1` | sponsor | Calibration only, and only when no Stripe key is set. Creates a local Checkout session; you then post a webhook signed with `STRIPE_WEBHOOK_SECRET` yourself. |
 | `VITE_SPONSOR_URL` | app | Turns on gasless mode. |
 | `VITE_SPONSOR_CREDIT_USD` | app | Suggested purchase. Default: the sponsor's `suggestedUsd`, else `10`. |
