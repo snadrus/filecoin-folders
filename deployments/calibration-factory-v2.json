@@ -19,5 +19,8 @@
   "deployTx": "0x0431979ed26102567efd77e45c9e72c64ca1b9a8557411bd05121a399be314fb",
   "upgradeBlock": 4280993,
   "upgradeDate": "2026-11-27",
-  "intendedBeaconOwner": "0xD62bD538bcEaB1284950E513f6Da796dD790642a"
+  "intendedBeaconOwner": "0xD62bD538bcEaB1284950E513f6Da796dD790642a",
+  "beaconOwner": "0xD62bD538bcEaB1284950E513f6Da796dD790642a",
+  "handBeaconTx": "0x7bc5de5dbd4f5c749b02b5ecde3f2ccccde66c9f0abe0ab52706b24f87ae145b",
+  "handBeaconDate": "2026-11-27"
 }
