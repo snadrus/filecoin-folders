@@ -46,7 +46,25 @@ const admin = relayer?.address ?? (process.env.SPONSOR_ADMIN ? getAddress(proces
 const treasury = getAddress(process.env.SPONSOR_TREASURY ?? legacyTreasury ?? (NETWORK === "mainnet" ? "0xFf00000000000000000000000000000000399a90" : admin));
 const data = encodeDeployData({ abi: artifact.abi, bytecode: artifact.bytecode.object, args: [fwss, registry, admin, treasury] });
 
-const gas = await pub.estimateGas({ account: admin, data } as never);
+console.log(JSON.stringify({ stage: "preflight", deployer: admin, network: NETWORK, registry, fwss, treasury, intendedBeaconOwner: intendedBeaconOwner() }));
+
+async function estimateDeployGas(): Promise<bigint> {
+  let last: unknown;
+  for (let i = 0; i < 3; i += 1) {
+    try {
+      return await pub.estimateGas({ account: admin, data } as never);
+    } catch (error) {
+      last = error;
+      const msg = error instanceof Error ? error.message : String(error);
+      // Avoid dumping init bytecode in logs.
+      console.error(JSON.stringify({ stage: "estimateGas", attempt: i + 1, error: msg.slice(0, 400) }));
+      if (i < 2) await new Promise((r) => setTimeout(r, 2_000));
+    }
+  }
+  throw last instanceof Error ? last : new Error(String(last));
+}
+
+const gas = await estimateDeployGas();
 const fees = await pub.estimateFeesPerGas();
 const maxFee = fees.maxFeePerGas ?? fees.gasPrice ?? 0n;
 const cost = (gas * 13n) / 10n * maxFee;
