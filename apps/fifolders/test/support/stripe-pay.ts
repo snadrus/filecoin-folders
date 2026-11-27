@@ -32,19 +32,41 @@ export async function payOnPage(page: import("@playwright/test").Page, opts: { e
     if (await frame.locator("#payment-nameInput").isVisible().catch(() => false)) await frame.locator("#payment-nameInput").fill("FiFolders E2E");
     if (await frame.locator("#payment-countryInput").isVisible().catch(() => false)) await frame.locator("#payment-countryInput").selectOption("US");
     if (await frame.locator("#payment-postalCodeInput").isVisible().catch(() => false)) await frame.locator("#payment-postalCodeInput").fill("60601");
-    const optIn = frame.locator("#payment-linkOptInInput");
-    if ((await optIn.count()) && (await optIn.isChecked().catch(() => false))) await optIn.uncheck({ force: true }).catch(() => undefined);
+    // Link opt-in ("Save my information") surfaces a phone field that blocks Pay
+    // when the number is empty/incomplete. Uncheck it on the payment frame and
+    // the page, immediately before submit — Stripe can re-check after field fill.
+    const uncheckLinkOptIn = async () => {
+      const roots = [frame, page] as const;
+      for (const root of roots) {
+        const box = root.locator("#payment-linkOptInInput, input[name=\"enableStripePass\"], input[name=\"linkOptIn\"]").first();
+        if (await box.count().catch(() => 0)) {
+          if (await box.isChecked().catch(() => false)) await box.setChecked(false, { force: true }).catch(() => undefined);
+        }
+        const label = root.getByText("Save my information for faster checkout");
+        if ((await label.count().catch(() => 0)) && (await box.isChecked().catch(() => false))) {
+          await label.first().click({ force: true }).catch(() => undefined);
+        }
+      }
+    };
+    await uncheckLinkOptIn();
     // Paid once Stripe navigates to the success URL; the target need not be reachable (e.g. localhost).
     const left = () => !page.url().startsWith("https://checkout.stripe.com/");
+    const phoneError = async () => {
+      const t = (await frame.locator("body").innerText().catch(() => "")) + (await page.locator("body").innerText().catch(() => ""));
+      return /phone number is incomplete/i.test(t);
+    };
     const redirected = page
       .waitForURL((next) => !next.href.startsWith("https://checkout.stripe.com/"), { timeout: 150_000, waitUntil: "commit" })
       .then(() => true, () => left());
     await page.waitForTimeout(1_500); // let Elements finish validating the filled fields
+    await uncheckLinkOptIn();
+    if (await phoneError()) await uncheckLinkOptIn();
     opts.onSubmit?.();
     await frame.getByTestId("payment-form-submit-button").click();
     for (let i = 0; i < 3 && !left(); i += 1) {
-      const done = await Promise.race([redirected, page.waitForTimeout(25_000).then(() => false)]);
+      const done = await Promise.race([redirected, page.waitForTimeout(8_000).then(() => false)]);
       if (done || left()) break;
+      await uncheckLinkOptIn();
       await frame.getByTestId("payment-form-submit-button").click({ timeout: 5_000 }).catch(() => undefined); // retry a stalled submit
     }
     if (!(await redirected) && !left()) throw new Error("Stripe Checkout did not redirect after submit");

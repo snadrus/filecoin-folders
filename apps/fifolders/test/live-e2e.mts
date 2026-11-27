@@ -161,6 +161,7 @@ async function waitUntil(ms: number, label: string, fn: () => Promise<boolean>, 
   throw new Error(`timeout waiting for ${label}`);
 }
 
+let stopCreditPoll = () => undefined;
 try {
   // Load prior run BEFORE any say()/flush so resume does not clobber result.json
   // with a fresh volume name. Prefer LIVE_E2E_PREV, then after-timing.json (the
@@ -263,7 +264,7 @@ try {
   say("on Stripe test checkout");
   log.tCheckoutPage = new Date().toISOString();
   const creditSince: { submit?: number; return?: number } = {};
-  const stopCreditPoll = startCreditPoll(session, log, creditSince);
+  stopCreditPoll = startCreditPoll(session, log, creditSince);
   await payOnPage(page, {
     email: "fifolders-live-e2e@example.com",
     screenshot: `${OUT}/stripe-fail.png`,
@@ -676,6 +677,7 @@ try {
   }
   say(`FAIL: ${log.error}`);
 } finally {
+  stopCreditPoll();
   const txs = executeBodies
     .map((b) => {
       if (!b || typeof b !== "object") return null;
