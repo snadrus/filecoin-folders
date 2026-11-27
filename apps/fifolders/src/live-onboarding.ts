@@ -748,7 +748,10 @@ export function createLiveOnboarding(options: LiveOnboardingOptions = {}): Onboa
         stripeModeNote(choice);
         // Minimums (charge − Stripe fee ≥ $2.00, + $1.50 creation fee on the first purchase) are enforced by the sponsor too.
         const limits = await sponsorPricing().catch(() => DEFAULT_SPONSOR_LIMITS);
-        const usd = sponsoredPurchaseUsd(limits, !account);
+        const requestedUsd = Number(typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("usd") ?? "" : "");
+        const usd = Number.isFinite(requestedUsd) && requestedUsd > 0
+          ? sponsoredPurchaseUsd(limits, !account, requestedUsd)
+          : sponsoredPurchaseUsd(limits, !account);
         report?.({ flow: "payment", phase: "signing", label: intentText(INTENTS.sponsoredCredits(usd)) });
         const here = typeof window !== "undefined" && window.location ? `${window.location.origin}${window.location.pathname ?? "/"}` : "http://localhost/";
         const checkout = await buySponsoredCredits(await sponsorSigner(choice), chainOf(choice).id, {
