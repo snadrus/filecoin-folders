@@ -15,16 +15,20 @@
 import { DurableObject } from "cloudflare:workers";
 import { getAddress, type Hex } from "viem";
 import { CORS_HEADERS, configFromEnv, createSponsorCore, type SponsorCore, type SponsorState } from "./core.js";
+import { deliverAlertEmail, mailerConfigured } from "./mailer.js";
 
 export interface Env {
   SPONSOR: DurableObjectNamespace<SponsorDO>;
   SPONSOR_MAINNET: DurableObjectNamespace<SponsorMainnetDO>;
   SPONSOR_KEY: string;
   SPONSOR_RPC?: string;
+  EMAIL?: { send: (message: unknown) => Promise<unknown> };
+  RESEND_API_KEY?: string;
+  RESEND_FROM?: string;
   [name: string]: unknown;
 }
 
-const COLLECTIONS = ["users", "checkouts", "credits", "pool", "sweeps", "gas"] as const;
+const COLLECTIONS = ["users", "checkouts", "credits", "pool", "sweeps", "gas", "alerts"] as const;
 const POOL_BUILDS_PER_ALARM = 1;
 
 function stringEnv(env: Env): Record<string, string | undefined> {
@@ -51,7 +55,7 @@ export function networkEnv(env: Record<string, string | undefined>, network: "ca
     SPONSOR_RPC: env.SPONSOR_RPC_MAINNET,
     STRIPE_SECRET_KEY: env.STRIPE_LIVE_SECRET_KEY,
     STRIPE_WEBHOOK_SECRET: env.STRIPE_LIVE_WEBHOOK_SECRET,
-    ...Object.fromEntries(Object.entries(env).filter(([key]) => /^SPONSOR_(RESERVE|SETUP_FEE|MIN_|MAX_|STRIPE_FEE|USDFC_PER|LOW_|REFUND_|GAS_|POOL_MIN_|POOL_TOPUP_|POOL_MAX_AGE_)/.test(key))),
+    ...Object.fromEntries(Object.entries(env).filter(([key]) => /^(RESEND_|SPONSOR_(RESERVE|SETUP_FEE|MIN_|MAX_|STRIPE_FEE|USDFC_PER|LOW_|REFUND_|GAS_|POOL_MIN_|POOL_TOPUP_|POOL_MAX_AGE_|ALERT_))/.test(key))),
   };
 }
 
@@ -82,7 +86,13 @@ export class SponsorDO extends DurableObject<Env> {
         return;
       }
       try {
-        this.core = createSponsorCore(configFromEnv(view), { sponsorKey: view.SPONSOR_KEY as Hex, rpc: view.SPONSOR_RPC, state, persist: (current) => this.persist(current) });
+        this.core = createSponsorCore(configFromEnv(view), {
+          sponsorKey: view.SPONSOR_KEY as Hex,
+          rpc: view.SPONSOR_RPC,
+          state,
+          persist: (current) => this.persist(current),
+          sendEmail: mailerConfigured(this.env) ? (msg) => deliverAlertEmail(this.env, msg) : undefined,
+        });
       } catch (error) {
         this.disabled = `${this.network} sponsor misconfigured: ${error instanceof Error ? error.message : String(error)}`;
         return;

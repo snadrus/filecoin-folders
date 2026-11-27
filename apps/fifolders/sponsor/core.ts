@@ -49,6 +49,19 @@ import {
   topUpToMonths,
   type PoolCareConfig,
 } from "./pool-care.js";
+import {
+  alertStatusView,
+  alertThresholdsFromEnv,
+  classifyBalances,
+  composeAlertEmail,
+  decideBalanceAlert,
+  fmtToken,
+  usdfcReserveNeed,
+  type AlertAction,
+  type AlertLevel,
+  type AlertThresholds,
+  type BalanceAlertRecord,
+} from "./balance-alerts.js";
 
 const ZERO32 = `0x${"0".repeat(64)}` as Hex;
 const ZERO_ADDRESS = getAddress(`0x${"0".repeat(40)}`);
@@ -87,6 +100,8 @@ export interface SponsorConfig {
   pool?: { size: number; seedUsdfc: string };
   /** Top up or retire stale unassigned spares (cron, both networks). */
   poolCare?: PoolCareConfig;
+  /** Low-balance emails from the cron (both networks). Absent or enabled=false disables sending. */
+  alerts?: AlertThresholds;
   /** Checkout is refused (503) unless the sponsor holds at least this much FIL, plus USDFC for the charge. */
   minSponsorFil?: string;
   /** /status and /health report "low" below these (warn before checkout pauses). */
@@ -186,6 +201,8 @@ export interface SponsorState {
   sweeps: Record<string, SweepResult & { at: string }>;
   /** Per-account sponsor gas budget (Durable Object). */
   gas?: { budget: GasBudgetState };
+  /** Singleton alert records (key "balance"). */
+  alerts?: Record<string, BalanceAlertRecord>;
 }
 
 export interface SponsorRequest {
@@ -247,6 +264,12 @@ export function configFromEnv(env: Record<string, string | undefined>, opts: { s
     sweepAccounts: (env.SPONSOR_SWEEP_ACCOUNTS ?? "").split(",").map((value) => value.trim()).filter((value) => isAddress(value)).map((value) => getAddress(value)),
     gasLimits: limitsFromEnv(env),
   };
+  config.alerts = alertThresholdsFromEnv(env, {
+    poolSize: config.pool?.size ?? 0,
+    seedUsdfc: config.pool?.seedUsdfc ?? "1",
+    care: config.poolCare ?? { minRunwayDays: 45, topUpMonths: 3, maxAgeDays: 90 },
+    pricing: config.pricing!,
+  });
   validateConfig(config);
   return config;
 }
@@ -302,6 +325,8 @@ export interface SponsorDeps {
   includeWithinEpochs?: number;
   /** Tests: terminate a retiring spare without an owner signature. */
   terminatePoolDataset?: (account: Address, dataSetId: string) => Promise<{ hash?: Hex }>;
+  /** Deliver a low-balance / recovery / reminder email. Absent = record the skip on /status. */
+  sendEmail?: (msg: { to: string; from: string; subject: string; text: string }) => Promise<{ channel: "email-routing" | "resend" } | void>;
 }
 
 function randomHex(bytes: number): string {
@@ -329,6 +354,7 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
     pool: loaded.pool ?? {},
     sweeps: loaded.sweeps ?? {},
     gas: { budget: loaded.gas?.budget ?? emptyGasState() },
+    alerts: loaded.alerts ?? {},
   };
   const gasLimits = config.gasLimits ?? limitsFromEnv();
   // A pool build interrupted by a restart (or an evicted Durable Object) is not resumable: park it for a sweep.
@@ -1416,6 +1442,13 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
 
 
   const poolCare: PoolCareConfig = { ...DEFAULT_POOL_CARE, ...config.poolCare };
+  const alertsCfg: AlertThresholds | undefined = config.alerts?.enabled ? config.alerts : undefined;
+  const usdfcNeed = usdfcReserveNeed({
+    poolSize,
+    seedUsdfc: config.pool?.seedUsdfc ?? "1",
+    topUpMonths: poolCare.topUpMonths,
+    pricing,
+  });
   const filFloor = () => gasLimits.filFloorWei > 0n ? gasLimits.filFloorWei : parseUnits("0.05", 18);
 
   function spareCreatedAtMs(entry: PoolEntry): number {
@@ -1649,6 +1682,97 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
     return rows;
   }
 
+
+  function balanceSnapshot(funds: { fil: bigint; usdfc: bigint } | null) {
+    if (!funds || !config.alerts) return null;
+    const runways = Object.values(state.pool)
+      .filter((entry) => entry.status === "ready" && typeof entry.pay?.runwayDays === "number")
+      .map((entry) => entry.pay!.runwayDays);
+    return classifyBalances({
+      filWei: funds.fil,
+      usdfcWei: funds.usdfc,
+      owedUsdfcWei: pendingUsdfc(),
+      spareRunways: runways,
+      thresholds: config.alerts,
+    });
+  }
+
+  function alertView(funds: { fil: bigint; usdfc: bigint } | null) {
+    if (!config.alerts) return { enabled: false };
+    const snapshot = balanceSnapshot(funds);
+    if (!snapshot) return { enabled: config.alerts.enabled, level: "unknown" };
+    return alertStatusView(state.alerts?.balance, snapshot, config.alerts, usdfcNeed);
+  }
+
+  async function checkBalanceAlerts(): Promise<{ action: AlertAction | null; level: AlertLevel | "unknown"; sent: boolean; error?: string }> {
+    if (!alertsCfg) return { action: null, level: "ok", sent: false };
+    let funds: { fil: bigint; usdfc: bigint };
+    try {
+      funds = await sponsorFunds();
+    } catch (error) {
+      return { action: null, level: "unknown", sent: false, error: error instanceof Error ? error.message : String(error) };
+    }
+    const snapshot = balanceSnapshot(funds);
+    if (!snapshot) return { action: null, level: "ok", sent: false };
+    const prev = state.alerts?.balance;
+    const action = decideBalanceAlert({
+      prev: prev ? { level: prev.level, lastSentAt: prev.lastSentAt ? Date.parse(prev.lastSentAt) : undefined } : undefined,
+      level: snapshot.level,
+      now: now(),
+      reminderMs: alertsCfg.reminderMs,
+    });
+    state.alerts ??= {};
+    const record: BalanceAlertRecord = {
+      ...(prev ?? { level: "ok" }),
+      level: snapshot.level,
+      reasons: snapshot.reasons,
+      fil: fmtToken(snapshot.filWei),
+      usdfc: fmtToken(snapshot.usdfcWei),
+    };
+    state.alerts.balance = record;
+    if (!action) {
+      save();
+      return { action: null, level: snapshot.level, sent: false };
+    }
+    const lastAttempt = record.lastAttemptAt ? Date.parse(record.lastAttemptAt) : 0;
+    const retryAfter = deps.sendEmail ? 10 * 60 * 1000 : alertsCfg.reminderMs;
+    if (record.lastError && lastAttempt && now() - lastAttempt < retryAfter && record.lastAction === action) {
+      save();
+      return { action, level: snapshot.level, sent: false, error: record.lastError };
+    }
+    if (!deps.sendEmail) {
+      record.lastError = "no mailer: enable Cloudflare Email Routing send_email on scionbase.ai, or set RESEND_API_KEY";
+      record.lastAttemptAt = new Date(now()).toISOString();
+      record.lastAction = action;
+      save();
+      return { action, level: snapshot.level, sent: false, error: record.lastError };
+    }
+    try {
+      const email = composeAlertEmail({
+        action,
+        snapshot,
+        network: config.network,
+        sponsor: relayer.address,
+        thresholds: alertsCfg,
+        need: usdfcNeed,
+      });
+      const result = await deps.sendEmail(email);
+      record.lastSentAt = new Date(now()).toISOString();
+      record.lastAction = action;
+      record.lastChannel = result?.channel;
+      delete record.lastError;
+      record.lastAttemptAt = record.lastSentAt;
+      save();
+      return { action, level: snapshot.level, sent: true };
+    } catch (error) {
+      record.lastError = error instanceof Error ? error.message : String(error);
+      record.lastAttemptAt = new Date(now()).toISOString();
+      record.lastAction = action;
+      save();
+      return { action, level: snapshot.level, sent: false, error: record.lastError };
+    }
+  }
+
     /** Background tick (Worker cron / Node interval): owed credits first, then the pool, then deferred sweeps. */
   async function cronTick() {
     const reconciled = await reconcileAssigning();
@@ -1656,9 +1780,10 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
     const credits = await retryAwaiting();
     const trimmed = await trimPool();
     const care = await maintainPoolSpares();
+    const alerts = await checkBalanceAlerts();
     void refillPool();
     const swept = await sweepDeferred();
-    return { reconciled, finality, credits, trimmed, care, swept, pool: poolStatus().counts };
+    return { reconciled, finality, credits, trimmed, care, alerts, swept, pool: poolStatus().counts };
   }
 
   /** Off-chain reserve + creation fees from delivered purchases: dollars owed back to the sponsor. */
@@ -1711,6 +1836,7 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
       refundAfterHours: config.refundAfterHours ?? 24,
       contracts: await chainContracts(),
       gas: gasStatus(state.gas?.budget ?? emptyGasState(), gasLimits, funds?.fil ?? null),
+      alerts: alertView(funds),
     };
   }
 
@@ -1748,6 +1874,11 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
     if (st.funds.level === "unknown") warnings.push("sponsor balance unreadable (RPC)");
     if (poolSize && !poolStatus().counts.ready) warnings.push("warm pool empty: purchases use on-demand creation");
     if (st.credits["awaiting-funds"]) warnings.push(`${st.credits["awaiting-funds"]} paid credit(s) awaiting sponsor funds`);
+    const alertLevel = (st.alerts as { level?: string } | undefined)?.level;
+    if (alertLevel === "warn" || alertLevel === "critical") {
+      const reasons = ((st.alerts as { reasons?: string[] }).reasons ?? []).join("; ") || alertLevel;
+      warnings.push(`balance alert (${alertLevel}): ${reasons}`);
+    }
     return {
       ok: true,
       funds: st.funds.level,
@@ -1819,7 +1950,7 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
   // Resume credits interrupted by a restart only if nothing was sent yet (never resend).
   for (const [id, credit] of Object.entries(state.credits)) if (credit.status === "pending" && !credit.hashes?.length) void queueCredit(id);
 
-  return { handle, state, relayer, pub, config, pricing, onStripeEvent, refillPool, sweepDeferred, retryAwaiting, trimPool, reconcileAssigning, checkHandoverFinality, maintainPoolSpares, cronTick, status, poolStatus, settled: () => creditQueue };
+  return { handle, state, relayer, pub, config, pricing, onStripeEvent, refillPool, sweepDeferred, retryAwaiting, trimPool, reconcileAssigning, checkHandoverFinality, maintainPoolSpares, checkBalanceAlerts, cronTick, status, poolStatus, settled: () => creditQueue };
 }
 
 export type SponsorCore = ReturnType<typeof createSponsorCore>;

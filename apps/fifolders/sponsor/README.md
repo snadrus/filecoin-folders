@@ -55,6 +55,12 @@ deposits the credit, and opens the dataset (the slow path).
 | `SPONSOR_REFUND_AFTER_HOURS` | sponsor | A paid credit still waiting for sponsor funds after this long is refunded through Stripe. Default `24`. |
 | `SPONSOR_POOL_SIZE` / `SPONSOR_POOL_SIZE_MAINNET` / `SPONSOR_POOL_SEED_USDFC` | sponsor | Both networks keep 2 ready accounts (Calibration: `SPONSOR_POOL_SIZE`, mainnet: `SPONSOR_POOL_SIZE_MAINNET`). Seed default is `1`. |
 | `SPONSOR_POOL_MIN_RUNWAY_DAYS` / `SPONSOR_POOL_TOPUP_MONTHS` / `SPONSOR_POOL_MAX_AGE_DAYS` | sponsor | Ready-spare rail: top up when runway is under 45 days (restore 3 months); retire spares older than 90 days. Same on both networks. |
+| `SPONSOR_ALERT_FIL_WARN_FIL` / `SPONSOR_ALERT_FIL_CRITICAL_FIL` | sponsor | Cron emails when sponsor FIL is below these. Defaults `0.1` and `0.06`. |
+| `SPONSOR_ALERT_USDFC_WARN` / `SPONSOR_ALERT_USDFC_CRITICAL` | sponsor | Optional USDFC floors. Unset = 2 spares at 3-month runway plus 3 minimum first purchases (warn), or 1 spare + 1 first purchase (critical). |
+| `SPONSOR_ALERT_MIN_RUNWAY_DAYS` / `SPONSOR_ALERT_CRITICAL_RUNWAY_DAYS` | sponsor | Email when a ready spare's runway is below these. Defaults `45` and `7`. |
+| `SPONSOR_ALERT_TO` / `SPONSOR_ALERT_FROM` | sponsor | Defaults `snadrus@gmail.com` and `sponsor@scionbase.ai`. |
+| `SPONSOR_ALERT_REMINDER_HOURS` / `SPONSOR_ALERT_DISABLED` | sponsor | Daily reminder while low (default `24`). Set `SPONSOR_ALERT_DISABLED=1` to silence. |
+| `RESEND_API_KEY` / `RESEND_FROM` | sponsor secret | Fallback mailer if the Email Routing `send_email` binding is not usable. |
 | `SPONSOR_STRIPE_FAKE=1` | sponsor | Calibration only, and only when no Stripe key is set. Creates a local Checkout session; you then post a webhook signed with `STRIPE_WEBHOOK_SECRET` yourself. |
 | `VITE_SPONSOR_URL` | app | Turns on gasless mode. |
 | `VITE_SPONSOR_CREDIT_USD` | app | Suggested purchase. Default: the sponsor's `suggestedUsd`, else `10`. |
@@ -94,8 +100,9 @@ For local testing with real test keys, run
   admin-sweeps the extra ones to the treasury (the sponsor on Calibration, so the USDFC is reused) and retires them.
   An account leaves `ready` before any await, so a purchase can never be handed one that is being swept. Entries
   stuck in `assigning` with no handover in flight are settled from the chain (`unassigned()`).
+- **Low-balance email.** Each cron tick (both networks) compares sponsor FIL, USDFC (minus owed credits), and ready-spare runway to the alert thresholds. Mail is edge-triggered in Durable Object state: one message on going low, one on recovery, and a daily reminder while low. Preferred delivery is the Cloudflare Email Routing `send_email` binding; `RESEND_API_KEY` is the fallback. Setup clicks and a forced-threshold test are in [`docs/sponsor-alerts.md`](../../../docs/sponsor-alerts.md).
 - **`GET /status`** returns the funds level (`ok`, `low`, `empty`, or `unknown`), FIL and USDFC balances, owed USDFC,
-  thresholds, `checkoutOpen`, pool counts, credit counts by status, and `ledger` (reserve + creation fees owed to the sponsor). `/health` adds `funds` and `warnings`. The
+  thresholds, `checkoutOpen`, pool counts (including spare runways), `alerts` (level, last email, send error), credit counts by status, and `ledger` (reserve + creation fees owed to the sponsor). `/health` adds `funds` and `warnings`. The
   deploy workflow turns those warnings into run annotations.
 
 ## Ops

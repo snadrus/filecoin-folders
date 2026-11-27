@@ -7,6 +7,7 @@ import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { verifyAuth, requestDigest } from "../sponsor/auth.js";
 import { RateLimiter } from "../sponsor/ratelimit.js";
 import { createSponsor, type SponsorConfig } from "../sponsor/server.js";
+import { type AlertThresholds } from "../sponsor/balance-alerts.js";
 import { DEFAULT_PRICING, creditFor, minChargeCents, poolTopUp, pricingFromEnv, stripeFeeModelCents, usdfcForCents } from "../sponsor/pricing.js";
 import { lockedFactoryAbi } from "../src/sponsored-abi.js";
 import { assertStripeMode, stripeSignatureHeader, verifyStripeSignature } from "../sponsor/stripe.js";
@@ -166,8 +167,9 @@ describe("sponsor server (fake chain)", () => {
   let close: (() => void) | undefined;
   afterEach(() => close?.());
 
-  async function start(opts: { pool?: number; secretKey?: string; fetch?: typeof fetch; noStripe?: boolean; poolCare?: { minRunwayDays?: number; topUpMonths?: number; maxAgeDays?: number } } = {}) {
+  async function start(opts: { pool?: number; secretKey?: string; fetch?: typeof fetch; noStripe?: boolean; poolCare?: { minRunwayDays?: number; topUpMonths?: number; maxAgeDays?: number }; alerts?: AlertThresholds; sendEmail?: false } = {}) {
     const sends: { label: string; to?: Address; data: Hex }[] = [];
+    const emails: { to: string; from: string; subject: string; text: string }[] = [];
     const sponsorUsdfc = { value: 10n ** 24n };
     const sponsorFil = { value: 10n ** 20n };
     const payAccounts = new Map<string, readonly [bigint, bigint, bigint, bigint]>();
@@ -265,6 +267,7 @@ describe("sponsor server (fake chain)", () => {
         contracts: { pay: getAddress("0x0000000000000000000000000000000000000001"), usdfc: getAddress("0x0000000000000000000000000000000000000002"), fwss: getAddress("0x0000000000000000000000000000000000000003"), pdp: getAddress("0x0000000000000000000000000000000000000004") },
         pool: { size: opts.pool ?? 0, seedUsdfc: "1" },
         poolCare: { minRunwayDays: 0, topUpMonths: 3, maxAgeDays: 0, ...opts.poolCare },
+        alerts: opts.alerts,
         stripe: opts.noStripe ? { allowedOrigins: [] } : { webhookSecret: WHSEC, ...(opts.secretKey ? { secretKey: opts.secretKey } : { fake: true }), allowedOrigins: ["http://localhost"] },
         limits: { executePerMinute: 2 },
       },
@@ -273,6 +276,12 @@ describe("sponsor server (fake chain)", () => {
         relayer: relayer as never,
         fetch: opts.fetch,
         now: () => clock.value,
+        sendEmail: opts.sendEmail === false ? undefined : opts.alerts?.enabled
+          ? async (msg) => {
+              emails.push(msg);
+              return { channel: "resend" as const };
+            }
+          : undefined,
         openDataset: async (account) => {
           opened.push(account);
           return { dataSetId: String(++datasets), txHash: `0x${"d".repeat(64)}` as Hex };
@@ -299,7 +308,7 @@ describe("sponsor server (fake chain)", () => {
       const response = await fetch(`${base}${path}`);
       return { status: response.status, json: (await response.json()) as Record<string, unknown> };
     };
-    return { sponsor, sends, post, get, as, pay, opened, factoryAccounts, sponsorUsdfc, sponsorFil, payAccounts, terminated, clock, onChainUnassigned, droppedReceipts, revertedReceipts, receiptsHidden, blockTxs, block, holdInclusion, relayer };
+    return { sponsor, sends, post, get, as, pay, opened, factoryAccounts, sponsorUsdfc, sponsorFil, payAccounts, terminated, clock, onChainUnassigned, droppedReceipts, revertedReceipts, receiptsHidden, blockTxs, block, holdInclusion, relayer, emails };
   }
 
   const newUser = () => {
@@ -769,5 +778,64 @@ describe("sponsor server (fake chain)", () => {
     expect(tick.care.skipped.some((row: { account: string }) => row.account === account)).toBe(true);
     expect(terminated).toEqual([]);
     expect(sponsor.state.pool[account]!.status).toBe("ready");
+  });
+
+  const testAlerts = (over: Partial<AlertThresholds> = {}): AlertThresholds => ({
+    enabled: true,
+    filWarnWei: 10n ** 17n, // 0.1 FIL
+    filCriticalWei: 6n * 10n ** 16n, // 0.06
+    usdfcWarnWei: 9n * 10n ** 18n,
+    usdfcCriticalWei: 4n * 10n ** 18n,
+    minRunwayDays: 45,
+    criticalRunwayDays: 7,
+    reminderMs: 24 * 3_600_000,
+    to: "snadrus@gmail.com",
+    from: "sponsor@scionbase.ai",
+    ...over,
+  });
+
+  it("emails once when sponsor FIL goes low, stays quiet, then emails recovery", async () => {
+    const { sponsor, sponsorFil, clock, emails, get } = await start({ alerts: testAlerts() });
+    sponsorFil.value = 8n * 10n ** 16n; // 0.08 FIL
+    const first = await sponsor.cronTick();
+    expect(first.alerts).toMatchObject({ action: "low", level: "warn", sent: true });
+    expect(emails).toHaveLength(1);
+    expect(emails[0]!.to).toBe("snadrus@gmail.com");
+    expect(emails[0]!.subject).toMatch(/FIL low/i);
+    expect(emails[0]!.text).toContain("Suggested top-up");
+    const again = await sponsor.cronTick();
+    expect(again.alerts.action).toBe(null);
+    expect(emails).toHaveLength(1);
+    sponsorFil.value = 10n ** 20n; // 100 FIL
+    const recovered = await sponsor.cronTick();
+    expect(recovered.alerts).toMatchObject({ action: "recovery", level: "ok", sent: true });
+    expect(emails).toHaveLength(2);
+    expect(emails[1]!.subject).toMatch(/recovered/i);
+    const status = await get("/status");
+    expect(status.json.alerts).toMatchObject({ enabled: true, level: "ok", lastAction: "recovery", lastChannel: "resend" });
+  });
+
+  it("sends a daily reminder while the wallet stays low", async () => {
+    const { sponsor, sponsorFil, clock, emails } = await start({ alerts: testAlerts() });
+    sponsorFil.value = 8n * 10n ** 16n;
+    await sponsor.cronTick();
+    expect(emails).toHaveLength(1);
+    clock.value += 24 * 3_600_000;
+    const reminder = await sponsor.cronTick();
+    expect(reminder.alerts.action).toBe("reminder");
+    expect(emails).toHaveLength(2);
+    expect(emails[1]!.subject).toMatch(/still warn/i);
+  });
+
+  it("records a missing mailer on /status without throwing", async () => {
+    const { sponsor, sponsorFil, emails, get } = await start({ alerts: testAlerts(), sendEmail: false });
+    sponsorFil.value = 8n * 10n ** 16n;
+    const tick = await sponsor.cronTick();
+    expect(tick.alerts).toMatchObject({ action: "low", level: "warn", sent: false });
+    expect(tick.alerts.error).toMatch(/no mailer/);
+    expect(emails).toHaveLength(0);
+    const status = await get("/status");
+    expect(status.json.alerts).toMatchObject({ enabled: true, level: "warn", lastAction: "low" });
+    expect(String((status.json.alerts as { lastError: string }).lastError)).toMatch(/no mailer/);
   });
 });

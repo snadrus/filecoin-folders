@@ -19,6 +19,15 @@ SPONSOR_POOL_SEED_USDFC = "1"
 SPONSOR_POOL_MIN_RUNWAY_DAYS = "45"
 SPONSOR_POOL_TOPUP_MONTHS = "3"
 SPONSOR_POOL_MAX_AGE_DAYS = "90"
+# Low-balance emails (cron, both networks). Destination must be verified on Email Routing (see docs/sponsor-alerts.md).
+SPONSOR_ALERT_TO = "snadrus@gmail.com"
+SPONSOR_ALERT_FROM = "sponsor@scionbase.ai"
+SPONSOR_ALERT_FIL_WARN_FIL = "0.1"
+SPONSOR_ALERT_FIL_CRITICAL_FIL = "0.06"
+# USDFC warn default: enough for 2 spares (3-month runway) + 3 minimum first purchases. Override with SPONSOR_ALERT_USDFC_WARN.
+SPONSOR_ALERT_MIN_RUNWAY_DAYS = "45"
+SPONSOR_ALERT_CRITICAL_RUNWAY_DAYS = "7"
+SPONSOR_ALERT_REMINDER_HOURS = "24"
 SPONSOR_SWEEP_ACCOUNTS = "0x2CcbFfB44b410BDa7Fcb7708d1649bA2887370d2"
 SPONSOR_ALLOWED_ORIGINS = "https://fifolders.scionbase.ai/,http://localhost"
 # v2 beacon factory (Calibration, 2026-11-26). Beacon owner is Andy's Ledger 0xD62bD538bcEaB1284950E513f6Da796dD790642a after recover.ts --hand-beacon (never the f1 masked-ID). Upgrades: docs/beacon-upgrade.md.
@@ -69,3 +78,10 @@ crons = ["*/10 * * * *"]
 
 [observability]
 enabled = true
+
+# Preferred mail path: Cloudflare Email Routing. Requires Email Routing on scionbase.ai and a
+# verified destination (snadrus@gmail.com). If deploy fails on this binding, remove the block;
+# the worker falls back to the RESEND_API_KEY secret. See docs/sponsor-alerts.md.
+[[send_email]]
+name = "EMAIL"
+destination_address = "snadrus@gmail.com"

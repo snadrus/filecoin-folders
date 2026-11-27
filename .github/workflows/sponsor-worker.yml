@@ -53,14 +53,15 @@ jobs:
           SPONSOR_KEY_MAINNET: ${{ secrets.SPONSOR_KEY_MAINNET }}
           STRIPE_LIVE_SECRET_KEY: ${{ secrets.STRIPE_LIVE_SECRET_KEY }}
           STRIPE_LIVE_WEBHOOK_SECRET: ${{ secrets.STRIPE_LIVE_WEBHOOK_SECRET }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
         run: |
           umask 077
           f="$RUNNER_TEMP/secrets.json"
           # Only non-empty secrets are uploaded (an unset GitHub secret leaves the Worker's value alone).
-          jq -n 'env | with_entries(select(.key | test("^(SPONSOR_KEY|SPONSOR_KEY_MAINNET|STRIPE_SECRET_KEY|STRIPE_WEBHOOK_SECRET|STRIPE_LIVE_SECRET_KEY|STRIPE_LIVE_WEBHOOK_SECRET)$")) | select(.value != ""))' > "$f"
+          jq -n 'env | with_entries(select(.key | test("^(SPONSOR_KEY|SPONSOR_KEY_MAINNET|STRIPE_SECRET_KEY|STRIPE_WEBHOOK_SECRET|STRIPE_LIVE_SECRET_KEY|STRIPE_LIVE_WEBHOOK_SECRET|RESEND_API_KEY)$")) | select(.value != ""))' > "$f"
           npx wrangler secret bulk "$f" > /dev/null
           rm -f "$f"
-          echo "secrets updated: $(jq -n 'env | [keys[] | select(test("^(SPONSOR_KEY|SPONSOR_KEY_MAINNET|STRIPE_SECRET_KEY|STRIPE_WEBHOOK_SECRET|STRIPE_LIVE_SECRET_KEY|STRIPE_LIVE_WEBHOOK_SECRET)$"))] | join(",")')"
+          echo "secrets updated: $(jq -n 'env | [keys[] | select(test("^(SPONSOR_KEY|SPONSOR_KEY_MAINNET|STRIPE_SECRET_KEY|STRIPE_WEBHOOK_SECRET|STRIPE_LIVE_SECRET_KEY|STRIPE_LIVE_WEBHOOK_SECRET|RESEND_API_KEY)$"))] | join(",")')"
       - name: Health
         run: |
           sleep 10
