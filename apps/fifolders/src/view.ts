@@ -294,8 +294,9 @@ function sponsoredCredits(model: ViewModel, buttonClass: string): string {
   const panel = model.panel;
   if (!panel) return "";
   const ready = panel.paymentsReady;
+  const status = ready ? `<p class="account-line status ok" data-testid="payment-status">Storage payment ready</p>` : "";
   const balance = ready ? `<p class="account-line status ok" data-testid="credit-balance">Storage credits: ${escapeHtml(panel.deposit)} USDFC available</p>` : "";
-  return `${balance}
+  return `${status}${balance}
     <button type="button" class="${ready ? "" : buttonClass}" data-action="${ready ? "add-funds" : "fix-payments"}" data-testid="${ready ? "add-credits" : "fix-payments"}">${ready ? "Add credits" : "Buy storage credits"}</button>
     <p class="note">${escapeHtml(model.costs.depositNote)}</p>`;
 }

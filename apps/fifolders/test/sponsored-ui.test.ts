@@ -128,6 +128,7 @@ describe("gasless UI (sponsor configured)", () => {
 
   it("funded: shows the available USDFC and an 'Add credits' button", () => {
     const root = mount(renderApp(model({ panel: panel(true) as never })));
+    expect(root.querySelector("[data-testid=payment-status]")!.textContent).toBe("Storage payment ready");
     expect(root.querySelector("[data-testid=credit-balance]")!.textContent).toBe("Storage credits: 4.85 USDFC available");
     const add = root.querySelector<HTMLButtonElement>("[data-testid=add-credits]")!;
     expect(add.textContent).toBe("Add credits");
