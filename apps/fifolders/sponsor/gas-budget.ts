@@ -1,7 +1,7 @@
 /** Per-account sponsor gas budget, stored in the Durable Object. Amounts are wei (attoFIL). */
 import { formatUnits, parseUnits } from "viem";
 
-export type GasLimitName = "hourly" | "daily" | "lifetime" | "tx-gas" | "tx-fee" | "session" | "ip" | "fil-floor";
+export type GasLimitName = "hourly" | "daily" | "lifetime" | "tx-gas" | "tx-fee" | "session" | "ip" | "fil-floor" | "blocked";
 
 export class GasBudgetError extends Error {
   readonly status = 429;
@@ -41,10 +41,65 @@ export interface GasAccount {
   sessions: Record<string, { dayUsed: string; dayStart: number }>;
 }
 
+export interface FailureRow {
+  count: number;
+  first: number;
+  blockedUntil?: number;
+  reason?: string;
+}
+
 export interface GasBudgetState {
   accounts: Record<string, GasAccount>;
   ips: Record<string, GasBucket>;
   reservations: Record<string, { account: string; amount: string; at: number }>;
+  /** Relays that were mined but reverted (sponsor paid gas for nothing), per account and per target. */
+  failures?: { accounts: Record<string, FailureRow>; targets: Record<string, FailureRow> };
+}
+
+/** Reverted relays tolerated per window before the account (or, across accounts, the target) is refused. */
+export const FAILURE_RULES = {
+  windowMs: 24 * 3_600_000,
+  accountMax: 3,
+  accountBlockMs: 24 * 3_600_000,
+  targetMax: 5,
+  targetBlockMs: 7 * 24 * 3_600_000,
+} as const;
+
+function failures(state: GasBudgetState): NonNullable<GasBudgetState["failures"]> {
+  state.failures ??= { accounts: {}, targets: {} };
+  return state.failures;
+}
+
+/** Throws GasBudgetError("blocked") if the account or target is refused right now. */
+export function assertRelayAllowed(state: GasBudgetState, account: string, target: string, now = Date.now()): void {
+  const f = failures(state);
+  for (const [kind, row] of [["account", f.accounts[account.toLowerCase()]], ["target", f.targets[target.toLowerCase()]]] as const) {
+    if (row?.blockedUntil && row.blockedUntil > now) {
+      throw new GasBudgetError("blocked", Math.max(1, Math.ceil((row.blockedUntil - now) / 1000)), `${kind} blocked from sponsored relays: ${row.reason ?? "repeated reverted relays"}`);
+    }
+  }
+}
+
+function bump(row: FailureRow | undefined, now: number, max: number, blockMs: number, reason: string): FailureRow {
+  const next: FailureRow = row && now - row.first < FAILURE_RULES.windowMs ? { ...row, count: row.count + 1 } : { count: 1, first: now };
+  if (next.count >= max) Object.assign(next, { blockedUntil: now + blockMs, reason });
+  return next;
+}
+
+/** A relay was mined and reverted: count it; block the account after 3/day and the target after 5/day (any accounts). */
+export function recordRelayFailure(state: GasBudgetState, account: string, target: string, now = Date.now()): void {
+  const f = failures(state);
+  const a = account.toLowerCase();
+  const t = target.toLowerCase();
+  f.accounts[a] = bump(f.accounts[a], now, FAILURE_RULES.accountMax, FAILURE_RULES.accountBlockMs, "repeated reverted relays");
+  f.targets[t] = bump(f.targets[t], now, FAILURE_RULES.targetMax, FAILURE_RULES.targetBlockMs, "target keeps reverting relays");
+}
+
+/** Refuse sponsored relays for an account (e.g. a disputed card payment). */
+export function blockAccount(state: GasBudgetState, account: string, untilMs: number, reason: string): void {
+  const f = failures(state);
+  const a = account.toLowerCase();
+  f.accounts[a] = { ...(f.accounts[a] ?? { count: 0, first: Date.now() }), blockedUntil: untilMs, reason };
 }
 
 export const DEFAULT_GAS_LIMITS = {
@@ -208,7 +263,8 @@ export function settleGas(state: GasBudgetState, reservationId: string, actualWe
   if (!hold) return;
   const row = state.accounts[hold.account];
   const reserved = BigInt(hold.amount);
-  const actual = actualWei < reserved ? actualWei : reserved;
+  // Charge what the sponsor actually paid, even above the reservation (re-estimate drift, fee spikes).
+  const actual = actualWei;
   if (row) {
     row.reserved = (BigInt(row.reserved || "0") - reserved).toString();
     if (BigInt(row.reserved) < 0n) row.reserved = "0";

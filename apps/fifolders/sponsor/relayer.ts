@@ -35,6 +35,10 @@ export interface Relayer {
   relay(call: RelayCall): Promise<TransactionReceipt>;
   /** Same nonce, bumped fees; used when a broadcast tx is not included in time. */
   replace?(hash: Hex, bumpBps?: number): Promise<Hex>;
+  /** The signed fields of a tx this relayer broadcast (nonce included), so a caller can persist it for resends. */
+  sentTx?(hash: Hex): PendingRelay | undefined;
+  /** Re-sign `prev` with the SAME nonce and bumped fees (works after a restart from a persisted record). */
+  resend?(prev: PendingRelay, bumpBps?: number): Promise<Hex>;
   /** Owner-signed Execute (retiring a sponsor-owned pool account). */
   signTypedData?(params: { domain: Record<string, unknown>; types: Record<string, readonly { name: string; type: string }[]>; primaryType: string; message: Record<string, unknown> }): Promise<Hex>;
 }
@@ -164,10 +168,19 @@ export class SponsorWalletRelayer implements Relayer {
     return receipt;
   }
 
+  sentTx(hash: Hex): PendingRelay | undefined {
+    return this.pending.get(hash.toLowerCase());
+  }
+
   async replace(hash: Hex, bumpBps = 2_500): Promise<Hex> {
+    const prev = this.pending.get(hash.toLowerCase());
+    if (!prev) throw new Error(`no pending tx to replace: ${hash}`);
+    return this.resend(prev, bumpBps);
+  }
+
+  async resend(prev: PendingRelay, bumpBps = 2_500): Promise<Hex> {
+    const hash = prev.hash;
     const next = this.queue.then(async () => {
-      const prev = this.pending.get(hash.toLowerCase());
-      if (!prev) throw new Error(`no pending tx to replace: ${hash}`);
       const bump = (value: bigint) => value + (value * BigInt(bumpBps)) / 10_000n + 1n;
       const maxFeePerGas = bump(prev.maxFeePerGas);
       const maxPriorityFeePerGas = bump(prev.maxPriorityFeePerGas);

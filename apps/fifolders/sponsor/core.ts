@@ -23,7 +23,7 @@
 //
 // Runtime-neutral core: `handle()` takes a plain request and returns a plain response. server.ts wraps it in node:http
 // with a JSON state file; worker.ts runs it inside a Durable Object (Cloudflare) with DO storage.
-import { encodeAbiParameters, encodeFunctionData, encodePacked, erc20Abi, formatUnits, getAddress, isAddress, isHex, parseAbi, parseUnits, recoverAddress, type Address, type Hex, type PublicClient } from "viem";
+import { encodeAbiParameters, encodeFunctionData, encodePacked, erc20Abi, formatUnits, getAddress, isAddress, isHex, parseAbi, parseUnits, recoverAddress, toFunctionSelector, type Address, type Hex, type PublicClient } from "viem";
 import { createDataSetApiRequest } from "@filoz/synapse-core/sp";
 import { getPDPProvider } from "@filoz/synapse-core/sp-registry";
 import { lockedAccountAbi, lockedFactoryAbi, type SponsorOwner } from "../src/sponsored-abi.js";
@@ -34,7 +34,7 @@ import { SponsorWalletRelayer, chainFor, publicClient, type Relayer } from "./re
 import { sweepAccount, type SweepResult } from "./sweeplib.js";
 import { assertStripeMode, checkoutSessionIdForPaymentIntent, createCheckoutSession, estimateStripeFeeCents, fakeCheckoutSession, refundPayment, retrieveCheckoutSession, stripeFeeCents, verifyStripeSignature, type CheckoutSession, type Network } from "./stripe.js";
 import { FINALITY_EPOCHS, receiptFate, receiptRpcUrls, waitForReceipt, waitForTxInHead, type RecordedInclusion } from "../src/receipt.js";
-import { emptyGasState, gasStatus, lifetimeCapWei, limitsFromEnv, releaseGas, reserveGas, reservedCostWei, settleGas, GasBudgetError, type GasBudgetLimits, type GasBudgetState } from "./gas-budget.js";
+import { assertRelayAllowed, blockAccount, emptyGasState, gasStatus, lifetimeCapWei, limitsFromEnv, recordRelayFailure, releaseGas, reserveGas, reservedCostWei, settleGas, GasBudgetError, type GasBudgetLimits, type GasBudgetState } from "./gas-budget.js";
 import { EXECUTE_TYPES, executeDomain } from "../src/sponsored-abi.js";
 import { privateKeyToAccount } from "viem/accounts";
 import {
@@ -94,7 +94,7 @@ export interface SponsorConfig {
   registry?: Address;
   providerId: bigint;
   statePath?: string;
-  contracts: { pay: Address; usdfc: Address; fwss: Address; pdp: Address };
+  contracts: { pay: Address; usdfc: Address; fwss: Address; pdp: Address; skr?: Address };
   pricing?: Pricing;
   /** Warm pool: ready accounts to keep (0 disables) and the USDFC each holds. */
   pool?: { size: number; seedUsdfc: string };
@@ -117,7 +117,7 @@ export interface SponsorConfig {
     /** success/cancel URLs must start with one of these (empty = any, Calibration only). */
     allowedOrigins: string[];
   };
-  limits?: { executePerMinute?: number; setupPerHour?: number; checkoutPerHour?: number };
+  limits?: { executePerMinute?: number; executeIpPerMinute?: number; setupPerHour?: number; checkoutPerHour?: number; checkoutIpPerHour?: number };
   /** Accounts to retry `sweep` on (cron), until something is swept. */
   sweepAccounts?: Address[];
   gasLimits?: GasBudgetLimits;
@@ -188,8 +188,23 @@ export interface CreditRecord {
   /** Head block when the current handover tx was broadcast or last rebroadcast. */
   sentAtBlock?: string;
   rebroadcasts?: number;
+  /** Signed fields (incl. nonce) of every tx sent for this credit, keyed by lower-case hash: resends reuse the nonce. */
+  sentTxs?: Record<string, StoredTx>;
   /** End-to-end handover timestamps (ISO) and durations (ms) for latency traces. */
   timing?: Record<string, string | number | undefined>;
+}
+
+/** A broadcast tx, JSON-safe (bigints as decimal strings). */
+export interface StoredTx {
+  label: string;
+  hash: Hex;
+  nonce: number;
+  gas: string;
+  to?: Address;
+  data: Hex;
+  value: string;
+  maxFeePerGas: string;
+  maxPriorityFeePerGas: string;
 }
 
 export interface SponsorState {
@@ -247,6 +262,7 @@ export function configFromEnv(env: Record<string, string | undefined>, opts: { s
       usdfc: getAddress(contracts.usdfc!.address),
       fwss: getAddress(contracts.fwss!.address),
       pdp: getAddress(contracts.pdp!.address),
+      ...(contracts.sessionKeyRegistry?.address ? { skr: getAddress(contracts.sessionKeyRegistry.address) } : {}),
     },
     pricing: pricingFromEnv(env),
     pool: { size: Number(env.SPONSOR_POOL_SIZE ?? 2), seedUsdfc: env.SPONSOR_POOL_SEED_USDFC ?? "1" },
@@ -364,9 +380,11 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
   const save = () => deps.persist?.(state);
   const seen = new Map<string, number>();
   const limits = {
-    execute: new RateLimiter(config.limits?.executePerMinute ?? 30, 60_000),
-    setup: new RateLimiter(config.limits?.setupPerHour ?? 20, 3_600_000),
-    checkout: new RateLimiter(config.limits?.checkoutPerHour ?? 10, 3_600_000),
+    execute: new RateLimiter(config.limits?.executePerMinute ?? 30, 60_000, now),
+    executeIp: new RateLimiter(config.limits?.executeIpPerMinute ?? 120, 60_000, now),
+    checkoutIp: new RateLimiter(config.limits?.checkoutIpPerHour ?? 30, 3_600_000, now),
+    setup: new RateLimiter(config.limits?.setupPerHour ?? 20, 3_600_000, now),
+    checkout: new RateLimiter(config.limits?.checkoutPerHour ?? 10, 3_600_000, now),
   };
 
   const recordFor = (identity: Identity): UserRecord | undefined =>
@@ -402,9 +420,10 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
     if (allowance < amount) await relayer.relay({ to: USDFC, label: `USDFC approve ${spender}`, data: encodeFunctionData({ abi: erc20Abi, functionName: "approve", args: [spender, parseUnits("1000000", 18)] }) });
   }
 
-  async function deposit(account: Address, amount: bigint, label: string): Promise<Hex> {
+  async function deposit(account: Address, amount: bigint, label: string, onSent?: (hash: Hex) => void): Promise<Hex> {
     await ensureAllowance(PAY, amount);
     const hash = await relayer.send({ to: PAY, label, data: encodeFunctionData({ abi: payAbi, functionName: "deposit", args: [USDFC, account, amount] }) });
+    onSent?.(hash);
     const receipt = await receiptWait(hash);
     if (receipt.status !== "success") throw new Error(`deposit reverted: ${hash}`);
     return hash;
@@ -655,10 +674,68 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
     save();
   }
 
+  function rememberTx(credit: CreditRecord, hash: Hex): void {
+    const tx = relayer.sentTx?.(hash);
+    if (!tx) return;
+    credit.sentTxs = {
+      ...(credit.sentTxs ?? {}),
+      [hash.toLowerCase()]: { label: tx.label, hash: tx.hash, nonce: tx.nonce, gas: tx.gas.toString(), to: tx.to, data: tx.data, value: tx.value.toString(), maxFeePerGas: tx.maxFeePerGas.toString(), maxPriorityFeePerGas: tx.maxPriorityFeePerGas.toString() },
+    };
+  }
+
+  const pendingOf = (tx: StoredTx) => ({ ...tx, gas: BigInt(tx.gas), value: BigInt(tx.value), maxFeePerGas: BigInt(tx.maxFeePerGas), maxPriorityFeePerGas: BigInt(tx.maxPriorityFeePerGas) });
+
+  /** Same-nonce fee bump: from the relayer's memory, or from the credit's persisted record after a restart. */
+  async function replaceSameNonce(credit: CreditRecord, hash: Hex): Promise<Hex> {
+    const stored = credit.sentTxs?.[hash.toLowerCase()];
+    let next: Hex;
+    if (relayer.sentTx?.(hash) || !stored || !relayer.resend) next = await relayer.replace!(hash);
+    else next = await relayer.resend(pendingOf(stored));
+    rememberTx(credit, next);
+    if (!credit.sentTxs?.[next.toLowerCase()] && stored) credit.sentTxs = { ...credit.sentTxs, [next.toLowerCase()]: { ...stored, hash: next } };
+    return next;
+  }
+
+  /**
+   * M1: before sending a credit again with FRESH nonces, prove none of its earlier txs can still land. Any earlier nonce
+   * not yet consumed on chain → bump that same nonce instead ("rebroadcast"). All consumed and one of them succeeded →
+   * it landed ("landed"). All consumed, none succeeded → they can never land, a resubmit is safe ("resubmit").
+   * Relayers without nonce records (tests) → "resubmit" (previous behavior).
+   */
+  async function resubmitGate(credit: CreditRecord): Promise<"resubmit" | "rebroadcast" | "landed"> {
+    const txs = Object.values(credit.sentTxs ?? {});
+    if (!txs.length || !relayer.resend) return "resubmit";
+    const latest = Number(await pub.getTransactionCount({ address: relayer.address, blockTag: "latest" }));
+    const open = txs.filter((tx) => tx.nonce >= latest);
+    if (open.length) {
+      // Bump only the newest record per open nonce.
+      const byNonce = new Map<number, StoredTx>();
+      for (const tx of open) byNonce.set(tx.nonce, tx);
+      for (const tx of byNonce.values()) {
+        try {
+          const next = await relayer.resend(pendingOf(tx));
+          credit.sentTxs = { ...credit.sentTxs, [next.toLowerCase()]: { ...tx, hash: next } };
+          if (credit.hash?.toLowerCase() === tx.hash.toLowerCase()) credit.hash = next;
+          credit.hashes = [...credit.hashes, next];
+        } catch (error) {
+          console.warn("[sponsor] same-nonce resend", tx.hash, error);
+        }
+      }
+      save();
+      return "rebroadcast";
+    }
+    for (const tx of txs) {
+      if (!/^(assign|create|credit) /.test(tx.label)) continue;
+      const receipt = await pub.getTransactionReceipt({ hash: tx.hash }).catch(() => undefined);
+      if (receipt?.status === "success") return "landed";
+    }
+    return "resubmit";
+  }
+
   async function rebroadcastHandover(credit: CreditRecord, hash: Hex): Promise<Hex | undefined> {
     if (!relayer.replace) return undefined;
     if ((credit.rebroadcasts ?? 0) >= maxRebroadcasts) return undefined;
-    const next = await relayer.replace(hash);
+    const next = await replaceSameNonce(credit, hash);
     credit.hashes = [...(credit.hashes ?? []).filter((h) => h.toLowerCase() !== hash.toLowerCase()), next];
     credit.hash = next;
     credit.rebroadcasts = (credit.rebroadcasts ?? 0) + 1;
@@ -764,7 +841,7 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
           credit.path = "topup";
           credit.account = record.account;
           if (amount > 0n) {
-            credit.hashes.push((credit.hash = await deposit(record.account, amount, `credit ${record.account} (${sessionId})`)));
+            credit.hashes.push((credit.hash = await deposit(record.account, amount, `credit ${record.account} (${sessionId})`, (h) => rememberTx(credit, h))));
             const receipt = await pub.getTransactionReceipt({ hash: credit.hash }).catch(() => undefined);
             if (receipt) recordInclusion(credit, "deposit", receipt);
           }
@@ -793,6 +870,7 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
                 gas: PREPARE_SESSION_GAS,
               });
               credit.hashes.push(prep);
+              rememberTx(credit, prep);
               markTiming(credit, "prepareSent", { session: sessionId, prepareHash: prep });
               save();
             }
@@ -803,6 +881,7 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
               gas: ASSIGN_GAS,
             });
             credit.hashes.push((credit.hash = assignHash));
+            rememberTx(credit, assignHash);
             markTiming(credit, "assignSent", { session: sessionId, assignHash });
             pooled.status = "assigned";
             record = state.users[credit.identity] = { owner: ownerOf(identity), account: pooled.account, sessionExpiry: pooled.sessionExpiry, dataSetId: pooled.dataSetId, providerId: pooled.providerId, dataSetTx: pooled.dataSetTx, via: "pool", ...(credential ? { credentialId: credential } : {}) };
@@ -822,6 +901,7 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
             const account = getAddress((await pub.readContract({ address: config.factory, abi: lockedFactoryAbi, functionName: "predict", args: [...args, 0n, sessionExpiry] })) as Address);
             const createHash = await relayer.send({ to: config.factory, label: `create account for ${credit.identity}`, data: encodeFunctionData({ abi: lockedFactoryAbi, functionName: "create", args: [...args, 0n, sessionExpiry] }) });
             credit.hashes.push((credit.hash = createHash));
+            rememberTx(credit, createHash);
             record = state.users[credit.identity] = { owner: ownerOf(identity), account, sessionExpiry: sessionExpiry.toString(), via: "create", ...(credential ? { credentialId: credential } : {}) };
             await markUsableAtSend(credit, account, "create", sessionId);
             void ensureHandoverLanding(credit).then(async () => {
@@ -833,7 +913,7 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
               console.warn("[sponsor] create landing", error);
             }
             if (amount > 0n) {
-              credit.hashes.push((credit.hash = await deposit(account, amount, `credit ${account} (${sessionId})`)));
+              credit.hashes.push((credit.hash = await deposit(account, amount, `credit ${account} (${sessionId})`, (h) => rememberTx(credit, h))));
               const receipt = await pub.getTransactionReceipt({ hash: credit.hash }).catch(() => undefined);
               if (receipt) recordInclusion(credit, "deposit", receipt);
             }
@@ -980,19 +1060,37 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
     return Object.values(state.credits).filter((credit) => credit.status === "done" && credit.account?.toLowerCase() === id).length;
   }
 
-  const FUND_SELECTORS = new Set([
-    "0xa9059cbb", // transfer
-    "0x23b872dd", // transferFrom
-    "0x095ea7b3", // approve
-    "0x39509351", // increaseAllowance
-    "0xa457c2d7", // decreaseAllowance
-    "0xd505accf", // permit
-    "0x47e7ef24", // deposit(address,address,uint256)
-    "0x2d83993e", // withdraw(address,uint256) — computed later if needed; also match prefix checks in-contract
-  ]);
+  // Defense in depth only (the account contract enforces policy): ERC-20, permit and every Filecoin Pay fund selector.
+  const FUND_SELECTORS = new Set(
+    [
+      "transfer(address,uint256)",
+      "transferFrom(address,address,uint256)",
+      "approve(address,uint256)",
+      "increaseAllowance(address,uint256)",
+      "decreaseAllowance(address,uint256)",
+      "permit(address,address,uint256,uint256,uint8,bytes32,bytes32)",
+      "deposit(address,address,uint256)",
+      "depositWithPermit(address,address,uint256,uint256,uint8,bytes32,bytes32)",
+      "depositWithPermitAndApproveOperator(address,address,uint256,uint256,uint8,bytes32,bytes32,address,bool,uint256,uint256,uint256)",
+      "withdraw(address,uint256)",
+      "withdrawTo(address,address,uint256)",
+      "setOperatorApproval(address,address,bool,uint256,uint256,uint256)",
+      "increaseOperatorApproval(address,address,uint256,uint256)",
+    ].map((sig) => toFunctionSelector(`function ${sig}`).toLowerCase()),
+  );
+
+  /** Sponsored gas is only for accounts handed to a paying customer (C2): never for self-created factory accounts. */
+  function isPaidAccount(account: Address): boolean {
+    return Boolean(identityOfAccount(account)) || purchasesFor(account) > 0;
+  }
 
   async function ownerSignedExecute(account: Address, target: Address, value: bigint, data: Hex, nonce: bigint, deadline: bigint, signature: Hex): Promise<{ asOwner: boolean; signer?: Address }> {
-    if (signature.length !== 132) return { asOwner: true }; // passkey assertion is always the owner
+    if (signature.length !== 132) {
+      // A passkey assertion can only be the owner, and only on an account that has a passkey.
+      const qx = (await pub.readContract({ address: account, abi: lockedAccountAbi, functionName: "passkeyX" }).catch(() => ZERO32)) as Hex;
+      if (!qx || BigInt(qx) === 0n) throw new HttpError(400, "account has no passkey owner");
+      return { asOwner: true };
+    }
     try {
       const digest = (await pub.readContract({
         address: account,
@@ -1032,8 +1130,9 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
   /** Relay a signed Execute to a v1 or v2 factory account. Session-key calls that would move funds are refused. */
   async function relayExecute(body: Record<string, unknown>, ip?: string): Promise<{ hash: Hex }> {
     const account = asAddress(body.account, "account");
-    if (!limits.execute.take(`execute:${account}`)) throw new HttpError(429, "rate limited");
+    if (ip && !limits.executeIp.take(`execute-ip:${ip}`)) throw new HttpError(429, "rate limited");
     if (!(await isSponsoredAccount(account))) throw new HttpError(404, "not a sponsored account");
+    if (!isPaidAccount(account)) throw new HttpError(403, "gas is sponsored only for accounts with a storage purchase");
     const target = asAddress(body.target, "target");
     const data = String(body.data) as Hex;
     if (!isHex(data) || data.length < 10) throw new HttpError(400, "data must be calldata");
@@ -1041,8 +1140,14 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
     const nonce = BigInt(String(body.nonce));
     const deadline = BigInt(String(body.deadline));
     const signature = String(body.signature) as Hex;
+    if (!state.gas) state.gas = { budget: emptyGasState() };
+    assertRelayAllowed(state.gas.budget, account, target, now());
     const signed = await ownerSignedExecute(account, target, value, data, nonce, deadline, signature);
     const asOwner = signed.asOwner;
+    // Rate limit per (account, signer) so garbage requests for someone else's account cannot lock its owner out.
+    if (!limits.execute.take(`execute:${account}:${asOwner ? "owner" : (signed.signer ?? "?")}`)) throw new HttpError(429, "rate limited");
+    // Nobody (owner or session key) may log third-party keys into the SessionKeyRegistry through the sponsor (C1).
+    if (config.contracts.skr && target.toLowerCase() === config.contracts.skr.toLowerCase()) throw new HttpError(403, `call not allowed: ${target}`);
     if (!asOwner) {
       if (value !== 0n) throw new HttpError(400, "value must be 0");
       const selector = data.slice(0, 10).toLowerCase();
@@ -1065,39 +1170,57 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
       throw new HttpError(403, "execute would change a balance");
     }
     const gas = await pub.estimateGas({ account: relayer.address, to: account, data: call, value: 0n } as never);
+    // H2: the relayer signs exactly this limit (estimate × 1.3), never a second, uncapped estimate.
+    const gasLimit = (gas * 13n) / 10n;
     const fees = await pub.estimateFeesPerGas();
     const maxFee = fees.maxFeePerGas ?? fees.gasPrice ?? 0n;
     const cost = reservedCostWei(gas, maxFee);
     const funds = await sponsorFunds();
     const reservationId = `${account}:${nonce}:${now()}`;
-    if (!state.gas) state.gas = { budget: emptyGasState() };
+    const purchases = purchasesFor(account);
     reserveGas(state.gas.budget, gasLimits, {
       account,
       reservationId,
       costWei: cost,
-      gas,
+      gas: gasLimit,
       maxFeePerGas: maxFee,
-      lifetimeCapWei: lifetimeCapWei(purchasesFor(account), gasLimits),
+      lifetimeCapWei: purchases > 0 || identityOfAccount(account) ? lifetimeCapWei(Math.max(1, purchases), gasLimits) : 0n,
       sponsorFilWei: funds.fil,
       sessionKey: asOwner ? null : signed.signer ?? null,
       ip: ip ?? null,
       now: now(),
     });
     save();
+    let hash: Hex;
     try {
-      const receipt = await relayer.relay({ to: account, data: call, label: `execute ${target} ${data.slice(0, 10)}` });
-      const priced = receipt as { gasUsed?: bigint | number; effectiveGasPrice?: bigint | number; gasPrice?: bigint | number };
-      const actual = priced.gasUsed && (priced.effectiveGasPrice || priced.gasPrice)
-        ? BigInt(priced.gasUsed) * BigInt(priced.effectiveGasPrice ?? priced.gasPrice ?? maxFee)
-        : cost;
-      settleGas(state.gas.budget, reservationId, actual);
-      save();
-      return { hash: receipt.transactionHash };
+      hash = await relayer.send({ to: account, data: call, gas: gasLimit, label: `execute ${target} ${data.slice(0, 10)}` });
     } catch (error) {
+      // Nothing was broadcast: give the reservation back.
       releaseGas(state.gas.budget, reservationId);
       save();
       throw error;
     }
+    let receipt: { status?: string; gasUsed?: bigint | number; effectiveGasPrice?: bigint | number; gasPrice?: bigint | number } | undefined;
+    try {
+      receipt = (await receiptWait(hash)) as typeof receipt;
+    } catch {
+      // Broadcast but not confirmed in time: keep the full reservation charged (the sponsor may still pay it).
+      settleGas(state.gas.budget, reservationId, cost);
+      save();
+      throw new HttpError(504, `execute sent but not confirmed yet: ${hash}`);
+    }
+    const actual = receipt?.gasUsed && (receipt.effectiveGasPrice || receipt.gasPrice)
+      ? BigInt(receipt.gasUsed) * BigInt(receipt.effectiveGasPrice ?? receipt.gasPrice ?? maxFee)
+      : cost;
+    // H1: a mined revert still cost the sponsor gas, so it is charged like a success and counted toward a block.
+    settleGas(state.gas.budget, reservationId, actual);
+    if (receipt?.status !== "success") {
+      recordRelayFailure(state.gas.budget, account, target, now());
+      save();
+      throw new HttpError(422, `execute reverted on chain: ${hash}`);
+    }
+    save();
+    return { hash };
   }
 
   // ---------------------------------------------------------------- deferred sweeps
@@ -1380,6 +1503,18 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
     const account = credit.account;
     credit.error = reason === "reverted" ? "handover tx reverted; retrying" : "handover tx dropped or reorged; retrying";
     save();
+    const gate = await resubmitGate(credit).catch(() => "rebroadcast" as const);
+    if (gate === "rebroadcast") {
+      out.stuck.push(id);
+      return; // an earlier nonce is still open: it was re-sent with the same nonce; check again next tick
+    }
+    if (gate === "landed") {
+      credit.status = "done";
+      credit.finality = "included";
+      delete credit.error;
+      save();
+      return;
+    }
     if (credit.path === "pool" && account) {
       let unassigned = true;
       try {

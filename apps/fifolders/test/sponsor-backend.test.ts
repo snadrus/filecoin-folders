@@ -269,7 +269,7 @@ describe("sponsor server (fake chain)", () => {
         poolCare: { minRunwayDays: 0, topUpMonths: 3, maxAgeDays: 0, ...opts.poolCare },
         alerts: opts.alerts,
         stripe: opts.noStripe ? { allowedOrigins: [] } : { webhookSecret: WHSEC, ...(opts.secretKey ? { secretKey: opts.secretKey } : { fake: true }), allowedOrigins: ["http://localhost"] },
-        limits: { executePerMinute: 2 },
+        limits: { executePerMinute: 2, executeIpPerMinute: 1000 },
       },
       {
         pub: pub as never,
@@ -308,7 +308,7 @@ describe("sponsor server (fake chain)", () => {
       const response = await fetch(`${base}${path}`);
       return { status: response.status, json: (await response.json()) as Record<string, unknown> };
     };
-    return { sponsor, sends, post, get, as, pay, opened, factoryAccounts, sponsorUsdfc, sponsorFil, payAccounts, terminated, clock, onChainUnassigned, droppedReceipts, revertedReceipts, receiptsHidden, blockTxs, block, holdInclusion, relayer, emails };
+    return { pub, sponsor, sends, post, get, as, pay, opened, factoryAccounts, sponsorUsdfc, sponsorFil, payAccounts, terminated, clock, onChainUnassigned, droppedReceipts, revertedReceipts, receiptsHidden, blockTxs, block, holdInclusion, relayer, emails };
   }
 
   const newUser = () => {
@@ -553,15 +553,51 @@ describe("sponsor server (fake chain)", () => {
     expect(sponsor.state.credits.cs_test_real).toMatchObject({ feeCents: 175, netCents: 825, creditCents: 575 });
   });
 
-  it("relays only to factory accounts, rate limited per account", async () => {
-    const { sponsor, post } = await start({ pool: 1 });
+  it("relays only to paid factory accounts, rate limited per account", async () => {
+    const { sponsor, post, as, pay } = await start({ pool: 2 });
     await sponsor.refillPool();
-    const account = Object.values(sponsor.state.pool)[0]!.account;
-    const exec = (to: Address) => ({ account: to, target: to, value: "0", data: "0x12345678", nonce: "0", deadline: String(now() + 60), signature: "0x" });
+    const [spare] = Object.values(sponsor.state.pool).map((entry) => entry.account);
+    const exec = (to: Address, target: Address = to) => ({ account: to, target, value: "0", data: "0x12345678", nonce: "0", deadline: String(now() + 60), signature: `0x${"11".repeat(65)}` });
     expect((await post("/execute", exec(getAddress("0x00000000000000000000000000000000000000cc")))).status).toBe(404);
+    // C2: a factory account nobody paid for gets no sponsored gas.
+    expect((await post("/execute", exec(spare!))).status).toBe(403);
+    const user = newUser();
+    const checkout = await as(user.signed)("checkout", checkoutBody(5));
+    await pay(String(checkout.json.id), user.id, 500);
+    await sponsor.settled();
+    const account = sponsor.state.credits[String(checkout.json.id)]!.account!;
     expect((await post("/execute", exec(account))).status).toBe(200);
     expect((await post("/execute", exec(account))).status).toBe(200);
     expect((await post("/execute", exec(account))).status).toBe(429);
+  });
+
+  it("refuses SessionKeyRegistry targets and blocks accounts after repeated mined reverts", async () => {
+    const { sponsor, post, as, pay, revertedReceipts, relayer, clock } = await start({ pool: 1 });
+    await sponsor.refillPool();
+    const user = newUser();
+    const checkout = await as(user.signed)("checkout", checkoutBody(5));
+    await pay(String(checkout.json.id), user.id, 500);
+    await sponsor.settled();
+    const account = sponsor.state.credits[String(checkout.json.id)]!.account!;
+    sponsor.config.contracts.skr = getAddress("0x00000000000000000000000000000000000000dd");
+    const body = (target: Address, n: number) => ({ account, target, value: "0", data: "0x12345678", nonce: String(n), deadline: String(now() + 60), signature: `0x${"11".repeat(65)}` });
+    expect((await post("/execute", body(sponsor.config.contracts.skr, 0))).status).toBe(403);
+    // Every relay now reverts on chain: charged, counted, then the account is refused.
+    const send = relayer.send.bind(relayer);
+    relayer.send = async (call: never) => {
+      const hash = await send(call);
+      revertedReceipts.add(hash.toLowerCase());
+      return hash;
+    };
+    const target = getAddress("0x00000000000000000000000000000000000000ee");
+    const statuses: number[] = [];
+    for (let i = 0; i < 4; i += 1) {
+      clock.value += 61_000; // past the per-minute limiter
+      statuses.push((await post("/execute", body(target, i))).status);
+    }
+    expect(statuses).toEqual([422, 422, 422, 429]);
+    const row = sponsor.state.gas!.budget.accounts[account.toLowerCase()] as { life?: string };
+    expect(BigInt(row.life ?? "0")).toBeGreaterThan(0n);
   });
 
   it("refuses fake Stripe and test keys on mainnet", () => {
@@ -625,6 +661,56 @@ describe("sponsor server (fake chain)", () => {
       expect(after.account).toBeUndefined();
       expect((await get("/credits?session=cs_drop")).json).toMatchObject({ status: "pending" });
     }
+  });
+
+  it("M1: a dropped top-up deposit is re-sent with the same nonce, never a second fresh deposit", async () => {
+    const { pub, sponsor, as, pay, sends, droppedReceipts, blockTxs, block, relayer } = await start({ pool: 1 });
+    await sponsor.refillPool();
+    const nonces = new Map<string, number>();
+    let nextNonce = 0;
+    let latest = 0;
+    const resent: number[] = [];
+    const send = relayer.send.bind(relayer);
+    Object.assign(relayer, {
+      async send(call: never) {
+        const hash = await send(call);
+        nonces.set(hash.toLowerCase(), nextNonce++);
+        return hash;
+      },
+      sentTx(hash: Hex) {
+        const nonce = nonces.get(hash.toLowerCase());
+        return nonce === undefined ? undefined : { label: "credit x", hash, nonce, gas: 1n, data: "0x" as Hex, value: 0n, maxFeePerGas: 1n, maxPriorityFeePerGas: 1n };
+      },
+      async resend(prev: { nonce: number }) {
+        resent.push(prev.nonce);
+        return `0x${"ab".repeat(32)}` as Hex;
+      },
+    });
+    Object.assign(pub, { async getTransactionCount() { return BigInt(latest); } });
+    const user = newUser();
+    await as(user.signed)("checkout", checkoutBody(5));
+    await pay("cs_first", user.id, 500);
+    await sponsor.settled();
+    await as(user.signed)("checkout", checkoutBody(5));
+    await pay("cs_top", user.id, 500);
+    await sponsor.settled();
+    const credit = sponsor.state.credits.cs_top!;
+    expect(credit.path).toBe("topup");
+    const depositHash = credit.hash!;
+    const depositNonce = nonces.get(depositHash.toLowerCase())!;
+    expect(credit.sentTxs?.[depositHash.toLowerCase()]?.nonce).toBe(depositNonce);
+    // The deposit vanishes from the chain view while its nonce is still open; fee bumps are exhausted.
+    latest = depositNonce;
+    credit.rebroadcasts = 99;
+    droppedReceipts.add(depositHash.toLowerCase());
+    const idx = blockTxs.indexOf(depositHash);
+    if (idx >= 0) blockTxs.splice(idx, 1);
+    block.hash = `0x${"ce".repeat(32)}` as typeof block.hash;
+    const depositsBefore = sends.filter((call) => call.label.startsWith("credit ")).length;
+    await sponsor.checkHandoverFinality();
+    await sponsor.settled();
+    expect(resent).toContain(depositNonce);
+    expect(sends.filter((call) => call.label.startsWith("credit ")).length).toBe(depositsBefore);
   });
 
   it("marks a credit ready when the assign tx is in a new head before a receipt exists", async () => {
