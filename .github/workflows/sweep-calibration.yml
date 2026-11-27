@@ -51,17 +51,7 @@ jobs:
           fi
 
           # Normalize to a space-separated argv list and refuse current ready pool spares.
-          mapfile -t ACCT_ARR < <(python3 -c 'import json,os,sys,urllib.request
-want=[a.strip() for a in os.environ["ACCOUNTS"].replace(","," ").split() if a.strip()]
-if not want: raise SystemExit("no accounts")
-req=urllib.request.Request("https://fast.scionbase.ai/pool", headers={"User-Agent":"Mozilla/5.0"})
-pool=json.load(urllib.request.urlopen(req, timeout=30))
-ready={str(e.get("account","")).lower() for e in pool.get("entries") or [] if e.get("status")=="ready"}
-blocked=[a for a in want if a.lower() in ready]
-if blocked:
-    print("refusing to sweep ready pool accounts:", ", ".join(blocked), file=sys.stderr); raise SystemExit(2)
-print("sweeping", len(want), "accounts; ready pool left untouched:", ", ".join(sorted(ready)) or "(none)", file=sys.stderr)
-print("\n".join(want))')
+          mapfile -t ACCT_ARR < <(python3 apps/fifolders/sponsor/refuse-ready-pool.py)
 
           set +e
           ./node_modules/.bin/tsx apps/fifolders/sponsor/sweep.ts "${ACCT_ARR[@]}" > "$RUNNER_TEMP/sweep.out" 2> "$RUNNER_TEMP/sweep.err"
