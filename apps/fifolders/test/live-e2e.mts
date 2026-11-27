@@ -1,7 +1,7 @@
 // Live e2e: Pages + Calibration Worker, virtual passkey, Stripe 4242, v2 handover, drive/identity/fipen/person.
 import { chmodSync, writeFileSync } from "node:fs";
 import { chromium, type Page } from "@playwright/test";
-import { payOnPage } from "./support/stripe-pay.ts";
+import { payOnPage } from "./support/stripe-pay.js";
 
 const OUT = "/workspace/fil-gasless/live";
 const SITE = "https://fifolders.scionbase.ai";
@@ -130,8 +130,9 @@ try {
   const creds = await cdp.send("WebAuthn.getCredentials", { authenticatorId });
   writeFileSync(CRED_FILE, JSON.stringify({ authenticatorId, rpId: "fifolders.scionbase.ai", credentials: creds.credentials }));
   chmodSync(CRED_FILE, 0o600);
-  log.passkey = { count: creds.credentials.length, discoverable: creds.credentials.every((c) => c.isResidentCredential) };
-  say(`signed in, ${log.passkey.count} passkey(s); credential saved`);
+  const passkeyMeta = { count: creds.credentials.length, discoverable: creds.credentials.every((c) => c.isResidentCredential) };
+  log.passkey = passkeyMeta;
+  say(`signed in, ${passkeyMeta.count} passkey(s); credential saved`);
 
   await Promise.all([
     page.waitForURL(/checkout\.stripe\.com/, { timeout: 90_000 }),
@@ -180,10 +181,11 @@ try {
     }
     return false;
   });
-  steps.handover = { ok: true, seconds: Math.round((Date.now() - tHandover) / 1000) };
+  const handover = { ok: true, seconds: Math.round((Date.now() - tHandover) / 1000), text: "" };
   await snap(page, "paid-ready");
-  steps.handover.text = await textOf(page);
-  say(`payments ready after ${steps.handover.seconds}s`);
+  handover.text = await textOf(page);
+  steps.handover = handover;
+  say(`payments ready after ${handover.seconds}s`);
 
   // Finish setup: authorize / open drive. file-input is sr-only and present during setup, so it is not a ready signal.
   let clickedCreate = false;
@@ -387,8 +389,9 @@ try {
   const personName = (await page.getByTestId("person-name").innerText().catch(() => "")).trim();
   const personBio = (await page.getByTestId("person-bio").innerText().catch(() => "")).trim();
   await snap(page, "person-page");
-  steps.person = { ok: /Live E2E/i.test(personName), name: personName, bio: personBio, id: payer };
-  if (!steps.person.ok) throw new Error(`person page name mismatch: ${personName}`);
+  const person = { ok: /Live E2E/i.test(personName), name: personName, bio: personBio, id: payer };
+  steps.person = person;
+  if (!person.ok) throw new Error(`person page name mismatch: ${personName}`);
   say(`person page shows ${personName}`);
 
   log.ok = true;
