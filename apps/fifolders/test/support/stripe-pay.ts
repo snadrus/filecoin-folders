@@ -18,10 +18,20 @@ export async function payOnPage(page: import("@playwright/test").Page, opts: { e
   if (!/^https:\/\/checkout\.stripe\.com\/.*cs_test_/.test(page.url())) throw new Error(`not a test-mode Stripe Checkout page: ${page.url()}`);
   try {
     // Checkout renders its form inside the Payment Element iframe.
+    // 429 / "Something went wrong" on first load is common; reload a few times.
     let frame: import("@playwright/test").Frame | undefined;
-    for (let i = 0; !frame && i < 90; i += 1) {
-      for (const candidate of page.frames()) if ((await candidate.locator("#linkAuthentication-emailInput").count().catch(() => 0)) > 0) frame = candidate;
-      if (!frame) await page.waitForTimeout(500);
+    const broken = async () => /something went wrong/i.test(await page.locator("body").innerText().catch(() => ""));
+    for (let attempt = 0; !frame && attempt < 4; attempt += 1) {
+      for (let i = 0; !frame && i < 40; i += 1) {
+        if (await broken()) break;
+        for (const candidate of page.frames()) if ((await candidate.locator("#linkAuthentication-emailInput").count().catch(() => 0)) > 0) frame = candidate;
+        if (!frame) await page.waitForTimeout(500);
+      }
+      if (frame) break;
+      if (attempt < 3) {
+        await page.waitForTimeout(8_000 + attempt * 8_000);
+        await page.reload({ waitUntil: "domcontentloaded" });
+      }
     }
     if (!frame) throw new Error("Stripe Payment Element did not load");
     await frame.locator("#linkAuthentication-emailInput").fill(opts.email ?? "fifolders-e2e@example.com");
