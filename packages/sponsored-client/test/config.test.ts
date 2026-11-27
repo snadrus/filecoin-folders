@@ -2,11 +2,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   CALIBRATION_RPC,
   DEFAULT_VOLUME,
+  FALLBACK_SPONSOR_CONFIG,
+  fetchSponsorConfig,
   isSponsored,
   MAINNET_RPC,
   registryConfig,
   sponsorUrl,
 } from "../src/config.js";
+import { SponsorRateLimitError } from "../src/http.js";
 import { CALIBRATION_REGISTRY_V1, MAINNET_REGISTRY_V2, MAINNET_REGISTRY_V2_FROM_BLOCK } from "fil-folders";
 
 afterEach(() => {
@@ -46,5 +49,24 @@ describe("registryConfig", () => {
   it("uses the public Filecoin RPCs", () => {
     expect(CALIBRATION_RPC).toContain("calibration");
     expect(MAINNET_RPC).toContain("api.node.glif.io");
+  });
+});
+
+describe("fetchSponsorConfig", () => {
+  it("falls back to the compiled Calibration addresses when the sponsor is offline", async () => {
+    vi.stubEnv("VITE_SPONSOR_URL", "");
+    const cfg = await fetchSponsorConfig("calibration");
+    expect(cfg.factory).toBe(FALLBACK_SPONSOR_CONFIG.calibration.factory);
+    expect(cfg.registry).toBe(FALLBACK_SPONSOR_CONFIG.calibration.registry);
+    expect(cfg.allowlist.pay).toMatch(/^0x09a0/);
+  });
+});
+
+describe("SponsorRateLimitError", () => {
+  it("carries Retry-After and the limit that tripped", () => {
+    const error = new SponsorRateLimitError("hourly cap", 30, "hourly");
+    expect(error.status).toBe(429);
+    expect(error.retryAfter).toBe(30);
+    expect(error.limit).toBe("hourly");
   });
 });

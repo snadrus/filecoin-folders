@@ -157,3 +157,41 @@ export async function recoverAll(chain: RecoveryChain, opts: RecoveryOptions): P
   }
   return report;
 }
+
+export const beaconAbi = parseAbi([
+  "function owner() view returns (address)",
+  "function transferOwnership(address newOwner)",
+  "function implementation() view returns (address)",
+]);
+
+export const factoryBeaconAbi = parseAbi(["function beacon() view returns (address)"]);
+
+/**
+ * Transfer UpgradeableBeacon ownership to a key-holding 0x address (Andy's Ledger, once provided).
+ * The f1 recovery masked-ID cannot be the beacon owner: it cannot sign EVM upgrade transactions.
+ */
+export async function handBeaconOwnership(
+  chain: Pick<RecoveryChain, "address" | "send"> & { readBeacon?(factory: Address): Promise<Address>; readBeaconOwner?(beacon: Address): Promise<Address> },
+  opts: { factory: Address; newOwner: Address; dryRun: boolean; log?: (line: string) => void },
+): Promise<{ beacon: Address; from: Address; to: Address; hash?: Hex }> {
+  const log = opts.log ?? (() => undefined);
+  if (!isAddress(opts.newOwner) || opts.newOwner.toLowerCase().startsWith("0xff" + "00".repeat(11))) {
+    throw new Error("--hand-beacon needs a 0x EOA that can sign EVM transactions (not an f1 masked-ID)");
+  }
+  const beacon = getAddress(await (chain.readBeacon ? chain.readBeacon(opts.factory) : Promise.reject(new Error("readBeacon required"))));
+  const from = getAddress(await (chain.readBeaconOwner ? chain.readBeaconOwner(beacon) : Promise.reject(new Error("readBeaconOwner required"))));
+  if (from === getAddress(opts.newOwner)) {
+    log(`beacon ${beacon}: already owned by ${from}`);
+    return { beacon, from, to: opts.newOwner };
+  }
+  if (getAddress(from) !== getAddress(chain.address)) {
+    throw new Error(`beacon owner is ${from}, not this wallet (${chain.address})`);
+  }
+  if (opts.dryRun) {
+    log(`beacon ${beacon}: would transfer ownership ${from} → ${opts.newOwner}`);
+    return { beacon, from, to: opts.newOwner };
+  }
+  const hash = await chain.send({ to: beacon, data: encodeFunctionData({ abi: beaconAbi, functionName: "transferOwnership", args: [opts.newOwner] }), label: "transferBeaconOwnership" });
+  log(`beacon ${beacon}: ${from} → ${opts.newOwner} (${hash})`);
+  return { beacon, from, to: opts.newOwner, hash };
+}

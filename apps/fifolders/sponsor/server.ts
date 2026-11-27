@@ -31,7 +31,7 @@ export function createSponsor(config: SponsorConfig, deps: SponsorDeps = {}) {
       return res.end(JSON.stringify({ error: (error as Error).message }));
     }
     const out = await core.handle({ method: req.method ?? "GET", url: req.url ?? "/", header: (name) => req.headers[name.toLowerCase()] as string | undefined, body });
-    res.writeHead(out.status, CORS_HEADERS);
+    res.writeHead(out.status, { ...CORS_HEADERS, ...out.headers });
     res.end(JSON.stringify(out.body));
   });
   return { ...core, server };

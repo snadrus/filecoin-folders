@@ -12,6 +12,8 @@
     "example": "tsx examples/cli.ts",
     "sponsor": "tsx apps/fifolders/sponsor/server.ts",
     "sponsor:deploy": "forge build --root contracts && tsx apps/fifolders/sponsor/deploy.ts",
+    "sponsor:deploy-v2": "forge build --root contracts && tsx apps/fifolders/sponsor/deploy-v2.ts",
+    "sponsor:deploy-v2:estimate": "forge build --root contracts && tsx apps/fifolders/sponsor/deploy-v2.ts --estimate",
     "deploy:calibration": "cd contracts && forge create src/FolderRegistry.sol:FolderRegistry --rpc-url calibration --broadcast --private-key \"$PRIVATE_KEY\" --constructor-args $(cast wallet address --private-key \"$PRIVATE_KEY\") 0x518411c2062E119Aaf7A8B12A2eDf9a939347655",
     "deploy:mainnet": "cd contracts && forge create src/FolderRegistry.sol:FolderRegistry --rpc-url filecoin --broadcast --private-key \"$PRIVATE_KEY\" --constructor-args $(cast wallet address --private-key \"$PRIVATE_KEY\") 0x74FD50525A958aF5d484601E252271f9625231aB",
     "deploy:ficlub:calibration": "cd contracts && forge create src/FiClub.sol:FiClub --rpc-url calibration --broadcast --private-key \"$PRIVATE_KEY\"",

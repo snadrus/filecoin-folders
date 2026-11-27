@@ -124,3 +124,75 @@ export function registryConfig(chain: ChainChoice): { address: Address; fromBloc
   }
   throw new Error("Set VITE_REGISTRY_FROM_BLOCK to the deployment block of VITE_FOLDER_REGISTRY.");
 }
+
+export interface SponsorChainConfig {
+  network: ChainChoice;
+  chainId: number;
+  factory: Address;
+  legacyFactory: Address | null;
+  beacon: Address | null;
+  implementation: Address | null;
+  registry: Address | null;
+  allowlist: { pay: Address; fwss: Address; token: Address };
+}
+
+/** Hard-coded fallbacks when /config is unreachable. Updated when a v2 factory is deployed. */
+export const FALLBACK_SPONSOR_CONFIG: Record<ChainChoice, Omit<SponsorChainConfig, "network">> = {
+  calibration: {
+    chainId: 314159,
+    factory: "0xCBb99E41C173B06D15212A135ba9F46AAB19DEE5",
+    legacyFactory: null,
+    beacon: null,
+    implementation: null,
+    registry: "0x9C06335D7DE588Caa104ee4FC3bb7cd8Aba62443",
+    allowlist: {
+      pay: "0x09a0fDc2723fAd1A7b8e3e00eE5DF73841df55a0",
+      fwss: "0x02925630df557F957f70E112bA06e50965417CA0",
+      token: "0xb3042734b608a1B16e9e86B374A3f3e389B4cDf0",
+    },
+  },
+  mainnet: {
+    chainId: 314,
+    factory: "0xaaA1795A150BA01F7A5894A3D1A95334B695F067",
+    legacyFactory: null,
+    beacon: null,
+    implementation: null,
+    registry: "0x0ADf3E4fc709EAC4973Ca5D17FCfEB10eB7b01EB",
+    allowlist: {
+      pay: "0x23b1e018F08BB982348b15a86ee926eEBf7F4DAa",
+      fwss: "0x8408502033C418E1bbC97cE9ac48E5528F371A9f",
+      token: "0x80B98d3aa09ffff255c3ba4A241111Ff1262F045",
+    },
+  },
+};
+
+const configCache = new Map<ChainChoice, SponsorChainConfig>();
+
+/** Fetch factory, beacon, registry and payment allowlist from the sponsor; fall back to hard-coded values. */
+export async function fetchSponsorConfig(chain: ChainChoice = readNetworkPreference()): Promise<SponsorChainConfig> {
+  const cached = configCache.get(chain);
+  if (cached) return cached;
+  const fallback: SponsorChainConfig = { network: chain, ...FALLBACK_SPONSOR_CONFIG[chain] };
+  try {
+    const { sponsorCall } = await import("./http.js");
+    const remote = await sponsorCall<Partial<SponsorChainConfig>>("/config", undefined, chain);
+    if (remote.factory) {
+      const next: SponsorChainConfig = {
+        network: chain,
+        chainId: remote.chainId ?? fallback.chainId,
+        factory: remote.factory,
+        legacyFactory: remote.legacyFactory ?? fallback.legacyFactory,
+        beacon: remote.beacon ?? fallback.beacon,
+        implementation: remote.implementation ?? fallback.implementation,
+        registry: remote.registry ?? fallback.registry,
+        allowlist: { ...fallback.allowlist, ...remote.allowlist },
+      };
+      configCache.set(chain, next);
+      return next;
+    }
+  } catch {
+    // Sponsor unreachable or old Worker without /config: use the compiled fallback.
+  }
+  configCache.set(chain, fallback);
+  return fallback;
+}

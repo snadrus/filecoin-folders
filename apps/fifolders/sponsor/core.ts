@@ -23,7 +23,7 @@
 //
 // Runtime-neutral core: `handle()` takes a plain request and returns a plain response. server.ts wraps it in node:http
 // with a JSON state file; worker.ts runs it inside a Durable Object (Cloudflare) with DO storage.
-import { encodeAbiParameters, encodeFunctionData, encodePacked, erc20Abi, formatUnits, getAddress, isAddress, isHex, parseAbi, parseUnits, type Address, type Hex, type PublicClient } from "viem";
+import { encodeAbiParameters, encodeFunctionData, encodePacked, erc20Abi, formatUnits, getAddress, isAddress, isHex, parseAbi, parseUnits, recoverAddress, type Address, type Hex, type PublicClient } from "viem";
 import { createDataSetApiRequest } from "@filoz/synapse-core/sp";
 import { getPDPProvider } from "@filoz/synapse-core/sp-registry";
 import { lockedAccountAbi, lockedFactoryAbi, type SponsorOwner } from "../src/sponsored-abi.js";
@@ -34,6 +34,7 @@ import { SponsorWalletRelayer, chainFor, publicClient, type Relayer } from "./re
 import { sweepAccount, type SweepResult } from "./sweeplib.js";
 import { assertStripeMode, createCheckoutSession, estimateStripeFeeCents, fakeCheckoutSession, refundPayment, stripeFeeCents, verifyStripeSignature, type CheckoutSession, type Network } from "./stripe.js";
 import { waitForReceipt } from "../src/receipt.js";
+import { emptyGasState, gasStatus, lifetimeCapWei, limitsFromEnv, releaseGas, reserveGas, reservedCostWei, settleGas, GasBudgetError, type GasBudgetLimits, type GasBudgetState } from "./gas-budget.js";
 
 const ZERO32 = `0x${"0".repeat(64)}` as Hex;
 const ZERO_ADDRESS = getAddress(`0x${"0".repeat(40)}`);
@@ -48,6 +49,10 @@ export interface SponsorConfig {
   network: Network;
   chainId: number;
   factory: Address;
+  /** Previous (v1 clone) factory; /execute still accepts those accounts. */
+  legacyFactory?: Address;
+  beacon?: Address;
+  registry?: Address;
   providerId: bigint;
   statePath?: string;
   contracts: { pay: Address; usdfc: Address; fwss: Address; pdp: Address };
@@ -72,6 +77,7 @@ export interface SponsorConfig {
   limits?: { executePerMinute?: number; setupPerHour?: number; checkoutPerHour?: number };
   /** Accounts to retry `sweep` on (cron), until something is swept. */
   sweepAccounts?: Address[];
+  gasLimits?: GasBudgetLimits;
 }
 
 export interface UserRecord {
@@ -132,6 +138,8 @@ export interface SponsorState {
   pool: Record<string, PoolEntry>;
   /** Deferred sweeps: last attempt per account. */
   sweeps: Record<string, SweepResult & { at: string }>;
+  /** Per-account sponsor gas budget (Durable Object). */
+  gas?: { budget: GasBudgetState };
 }
 
 export interface SponsorRequest {
@@ -145,6 +153,7 @@ export interface SponsorRequest {
 export interface SponsorResponse {
   status: number;
   body: unknown;
+  headers?: Record<string, string>;
 }
 
 export const CORS_HEADERS = { "content-type": "application/json", "access-control-allow-origin": "*", "access-control-allow-headers": "content-type" } as const;
@@ -165,6 +174,9 @@ export function configFromEnv(env: Record<string, string | undefined>, opts: { s
     network,
     chainId: chain.id,
     factory: getAddress(factory),
+    legacyFactory: env.SPONSOR_FACTORY_LEGACY && isAddress(env.SPONSOR_FACTORY_LEGACY) ? getAddress(env.SPONSOR_FACTORY_LEGACY) : undefined,
+    beacon: env.SPONSOR_BEACON && isAddress(env.SPONSOR_BEACON) ? getAddress(env.SPONSOR_BEACON) : undefined,
+    registry: env.SPONSOR_REGISTRY && isAddress(env.SPONSOR_REGISTRY) ? getAddress(env.SPONSOR_REGISTRY) : undefined,
     providerId: BigInt(env.SPONSOR_PROVIDER_ID ?? "2"),
     statePath: env.SPONSOR_STATE ?? opts.statePath,
     contracts: {
@@ -186,6 +198,7 @@ export function configFromEnv(env: Record<string, string | undefined>, opts: { s
       allowedOrigins: (env.SPONSOR_ALLOWED_ORIGINS ?? "").split(",").map((value) => value.trim()).filter(Boolean),
     },
     sweepAccounts: (env.SPONSOR_SWEEP_ACCOUNTS ?? "").split(",").map((value) => value.trim()).filter((value) => isAddress(value)).map((value) => getAddress(value)),
+    gasLimits: limitsFromEnv(env),
   };
   validateConfig(config);
   return config;
@@ -255,7 +268,15 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
   const relayer = deps.relayer ?? new SponsorWalletRelayer(deps.sponsorKey!, { network: config.network, rpc: deps.rpc });
   const { pay: PAY, usdfc: USDFC, fwss: FWSS, pdp: PDP } = config.contracts;
   const loaded = deps.state ?? {};
-  const state: SponsorState = { users: loaded.users ?? {}, checkouts: loaded.checkouts ?? {}, credits: loaded.credits ?? {}, pool: loaded.pool ?? {}, sweeps: loaded.sweeps ?? {} };
+  const state: SponsorState = {
+    users: loaded.users ?? {},
+    checkouts: loaded.checkouts ?? {},
+    credits: loaded.credits ?? {},
+    pool: loaded.pool ?? {},
+    sweeps: loaded.sweeps ?? {},
+    gas: { budget: loaded.gas?.budget ?? emptyGasState() },
+  };
+  const gasLimits = config.gasLimits ?? limitsFromEnv();
   // A pool build interrupted by a restart (or an evicted Durable Object) is not resumable: park it for a sweep.
   for (const entry of Object.values(state.pool)) {
     if (entry.status === "seeding") Object.assign(entry, { status: "failed", error: "interrupted while seeding" });
@@ -605,28 +626,137 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
     return { dataSetId: record.dataSetId!, providerId: record.providerId ?? "", hash: record.dataSetTx };
   }
 
-  /** Relay a signed Execute, only to accounts this factory deployed (checked on chain), within the fixed policy. */
-  async function relayExecute(body: Record<string, unknown>): Promise<{ hash: Hex }> {
+  async function isSponsoredAccount(account: Address): Promise<boolean> {
+    const check = async (factory: Address) =>
+      pub.readContract({ address: factory, abi: lockedFactoryAbi, functionName: "isAccount", args: [account] }) as Promise<boolean>;
+    if (await check(config.factory).catch(() => false)) return true;
+    if (config.legacyFactory && (await check(config.legacyFactory).catch(() => false))) return true;
+    return false;
+  }
+
+  function purchasesFor(account: Address): number {
+    const id = account.toLowerCase();
+    return Object.values(state.credits).filter((credit) => credit.status === "done" && credit.account?.toLowerCase() === id).length;
+  }
+
+  const FUND_SELECTORS = new Set([
+    "0xa9059cbb", // transfer
+    "0x23b872dd", // transferFrom
+    "0x095ea7b3", // approve
+    "0x39509351", // increaseAllowance
+    "0xa457c2d7", // decreaseAllowance
+    "0xd505accf", // permit
+    "0x47e7ef24", // deposit(address,address,uint256)
+    "0x2d83993e", // withdraw(address,uint256) — computed later if needed; also match prefix checks in-contract
+  ]);
+
+  async function ownerSignedExecute(account: Address, target: Address, value: bigint, data: Hex, nonce: bigint, deadline: bigint, signature: Hex): Promise<{ asOwner: boolean; signer?: Address }> {
+    if (signature.length !== 132) return { asOwner: true }; // passkey assertion is always the owner
+    try {
+      const digest = (await pub.readContract({
+        address: account,
+        abi: lockedAccountAbi,
+        functionName: "executeDigest" as never,
+        args: [target, value, data, nonce, deadline] as never,
+      })) as Hex;
+      const signer = getAddress(await recoverAddress({ hash: digest, signature }));
+      const owner = (await pub.readContract({ address: account, abi: lockedAccountAbi, functionName: "owner" })) as Address;
+      const asOwner = Boolean(owner) && owner !== "0x0000000000000000000000000000000000000000" && signer === getAddress(owner);
+      return { asOwner, signer };
+    } catch {
+      return { asOwner: false };
+    }
+  }
+
+  /** Refuse a session-key relay if a debug trace shows any native/token balance change. Nodes without tracers skip this. */
+  async function traceShowsBalanceChange(from: Address, to: Address, data: Hex): Promise<boolean> {
+    try {
+      const trace = (await (pub.request as (args: { method: string; params: unknown }) => Promise<unknown>)({
+        method: "debug_traceCall",
+        params: [{ from, to, data }, "latest", { tracer: "prestateTracer", tracerConfig: { diffMode: true } }],
+      })) as { post?: Record<string, { balance?: string }>; pre?: Record<string, { balance?: string }> };
+      const post = trace?.post ?? {};
+      const pre = trace?.pre ?? {};
+      for (const [addr, next] of Object.entries(post)) {
+        const before = pre[addr]?.balance;
+        if (next?.balance !== undefined && before !== undefined && next.balance !== before) return true;
+        if (next?.balance !== undefined && before === undefined && next.balance !== "0x0" && next.balance !== "0x") return true;
+      }
+      return false;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Relay a signed Execute to a v1 or v2 factory account. Session-key calls that would move funds are refused. */
+  async function relayExecute(body: Record<string, unknown>, ip?: string): Promise<{ hash: Hex }> {
     const account = asAddress(body.account, "account");
     if (!limits.execute.take(`execute:${account}`)) throw new HttpError(429, "rate limited");
-    if (!(await pub.readContract({ address: config.factory, abi: lockedFactoryAbi, functionName: "isAccount", args: [account] }))) throw new HttpError(404, "not a sponsored account");
+    if (!(await isSponsoredAccount(account))) throw new HttpError(404, "not a sponsored account");
     const target = asAddress(body.target, "target");
     const data = String(body.data) as Hex;
     if (!isHex(data) || data.length < 10) throw new HttpError(400, "data must be calldata");
-    const allowed = await pub.readContract({ address: account, abi: lockedAccountAbi, functionName: "isAllowed", args: [target, data.slice(0, 10) as Hex] });
-    if (!allowed) throw new HttpError(403, `call not allowed: ${target} ${data.slice(0, 10)}`);
-    if (BigInt(String(body.value ?? 0)) !== 0n) throw new HttpError(400, "value must be 0");
+    const value = BigInt(String(body.value ?? 0));
+    const nonce = BigInt(String(body.nonce));
+    const deadline = BigInt(String(body.deadline));
+    const signature = String(body.signature) as Hex;
+    const signed = await ownerSignedExecute(account, target, value, data, nonce, deadline, signature);
+    const asOwner = signed.asOwner;
+    if (!asOwner) {
+      if (value !== 0n) throw new HttpError(400, "value must be 0");
+      const selector = data.slice(0, 10).toLowerCase();
+      const tokenOrPay = [config.contracts.usdfc, config.contracts.pay].map((a) => a.toLowerCase());
+      if (tokenOrPay.includes(target.toLowerCase()) || FUND_SELECTORS.has(selector)) {
+        throw new HttpError(403, `call not allowed: ${target} ${selector}`);
+      }
+    }
     const call = encodeFunctionData({
       abi: lockedAccountAbi,
       functionName: "execute",
-      args: [target, 0n, data, BigInt(String(body.nonce)), BigInt(String(body.deadline)), String(body.signature) as Hex],
+      args: [target, value, data, nonce, deadline, signature],
     });
     try {
       await pub.call({ account: relayer.address, to: account, data: call });
     } catch (error) {
       throw new HttpError(422, `execute would revert: ${(error as { shortMessage?: string }).shortMessage ?? String(error)}`);
     }
-    return { hash: await relayer.send({ to: account, data: call, label: `execute ${target} ${data.slice(0, 10)}` }) };
+    if (!asOwner && (await traceShowsBalanceChange(relayer.address, account, call))) {
+      throw new HttpError(403, "execute would change a balance");
+    }
+    const gas = await pub.estimateGas({ account: relayer.address, to: account, data: call, value: 0n } as never);
+    const fees = await pub.estimateFeesPerGas();
+    const maxFee = fees.maxFeePerGas ?? fees.gasPrice ?? 0n;
+    const cost = reservedCostWei(gas, maxFee);
+    const funds = await sponsorFunds();
+    const reservationId = `${account}:${nonce}:${now()}`;
+    if (!state.gas) state.gas = { budget: emptyGasState() };
+    reserveGas(state.gas.budget, gasLimits, {
+      account,
+      reservationId,
+      costWei: cost,
+      gas,
+      maxFeePerGas: maxFee,
+      lifetimeCapWei: lifetimeCapWei(purchasesFor(account), gasLimits),
+      sponsorFilWei: funds.fil,
+      sessionKey: asOwner ? null : signed.signer ?? null,
+      ip: ip ?? null,
+      now: now(),
+    });
+    save();
+    try {
+      const receipt = await relayer.relay({ to: account, data: call, label: `execute ${target} ${data.slice(0, 10)}` });
+      const priced = receipt as { gasUsed?: bigint | number; effectiveGasPrice?: bigint | number; gasPrice?: bigint | number };
+      const actual = priced.gasUsed && (priced.effectiveGasPrice || priced.gasPrice)
+        ? BigInt(priced.gasUsed) * BigInt(priced.effectiveGasPrice ?? priced.gasPrice ?? maxFee)
+        : cost;
+      settleGas(state.gas.budget, reservationId, actual);
+      save();
+      return { hash: receipt.transactionHash };
+    } catch (error) {
+      releaseGas(state.gas.budget, reservationId);
+      save();
+      throw error;
+    }
   }
 
   // ---------------------------------------------------------------- deferred sweeps
@@ -845,6 +975,34 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
       pool: poolStatus().counts,
       credits,
       refundAfterHours: config.refundAfterHours ?? 24,
+      contracts: await chainContracts(),
+      gas: gasStatus(state.gas?.budget ?? emptyGasState(), gasLimits, funds?.fil ?? null),
+    };
+  }
+
+  async function chainContracts() {
+    const factory = config.factory;
+    const read = async (fn: "beacon" | "implementation" | "REGISTRY" | "PAY" | "FWSS" | "TOKEN") =>
+      pub.readContract({ address: factory, abi: lockedFactoryAbi, functionName: fn } as never).catch(() => undefined) as Promise<Address | undefined>;
+    const [beacon, implementation, registry, pay, fwss, token] = await Promise.all([
+      config.beacon ? Promise.resolve(config.beacon) : read("beacon"),
+      read("implementation"),
+      config.registry ? Promise.resolve(config.registry) : read("REGISTRY"),
+      read("PAY"),
+      read("FWSS"),
+      read("TOKEN"),
+    ]);
+    return {
+      factory,
+      legacyFactory: config.legacyFactory ?? null,
+      beacon: beacon ?? null,
+      implementation: implementation ?? null,
+      registry: registry ?? null,
+      allowlist: {
+        pay: pay ?? config.contracts.pay,
+        fwss: fwss ?? config.contracts.fwss,
+        token: token ?? config.contracts.usdfc,
+      },
     };
   }
 
@@ -889,6 +1047,7 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
       if (req.method === "GET" && url.pathname === "/health") return ok(await health());
       if (req.method === "GET" && url.pathname === "/pool") return ok(poolStatus());
       if (req.method === "GET" && url.pathname === "/status") return ok(await status());
+      if (req.method === "GET" && url.pathname === "/config") return ok({ network: config.network, chainId: config.chainId, ...(await chainContracts()) });
       if (req.method === "GET" && url.pathname === "/pricing") {
         return ok({ minFirstUsd: pricing.minFirstCents / 100, minTopUpUsd: pricing.minTopUpCents / 100, maxUsd: pricing.maxCents / 100, suggestedUsd: pricing.suggestedCents / 100, setupFeeUsd: pricing.setupCents / 100, reserveUsd: pricing.reserveCents / 100, minCreditUsd: pricing.minCreditCents / 100, minNetUsd: pricing.minNetCents / 100, stripeFee: { pct: pricing.stripeFeeBps / 100, fixedUsd: pricing.stripeFeeFixedCents / 100 }, usdfcPerUsd: pricing.usdfcPerUsd, testMode: config.network !== "mainnet" });
       }
@@ -907,12 +1066,19 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
         const body = parseJson(req.body);
         return ok(await ensureDataset(await authenticate("dataset", body, limits.setup)));
       }
-      if (req.method === "POST" && url.pathname === "/execute") return ok(await relayExecute(parseJson(req.body)));
+      if (req.method === "POST" && url.pathname === "/execute") {
+        const ip = req.header("cf-connecting-ip") || req.header("x-forwarded-for")?.split(",")[0]?.trim();
+        return ok(await relayExecute(parseJson(req.body), ip));
+      }
       return { status: 404, body: { error: "not found" } };
     } catch (error) {
+      if (error instanceof GasBudgetError) {
+        return { status: 429, body: { error: error.message, limit: error.limit, retryAfter: error.retryAfter }, headers: { "Retry-After": String(error.retryAfter) } };
+      }
       const status = error instanceof HttpError ? error.status : 500;
+      const headers = error instanceof HttpError && error.status === 429 ? { "Retry-After": "60" } : undefined;
       console.error(`[sponsor] ${req.method} ${req.url}:`, error instanceof Error ? error.message : error);
-      return { status, body: { error: error instanceof Error ? error.message : String(error) } };
+      return { status, body: { error: error instanceof Error ? error.message : String(error) }, headers };
     }
   }
 

@@ -24,7 +24,7 @@ export interface Env {
   [name: string]: unknown;
 }
 
-const COLLECTIONS = ["users", "checkouts", "credits", "pool", "sweeps"] as const;
+const COLLECTIONS = ["users", "checkouts", "credits", "pool", "sweeps", "gas"] as const;
 const POOL_BUILDS_PER_ALARM = 1;
 
 function stringEnv(env: Env): Record<string, string | undefined> {
@@ -45,10 +45,13 @@ export function networkEnv(env: Record<string, string | undefined>, network: "ca
     SPONSOR_POOL_SEED_USDFC: env.SPONSOR_POOL_SEED_USDFC,
     SPONSOR_ALLOWED_ORIGINS: env.SPONSOR_ALLOWED_ORIGINS_MAINNET,
     SPONSOR_SWEEP_ACCOUNTS: env.SPONSOR_SWEEP_ACCOUNTS_MAINNET,
+    SPONSOR_FACTORY_LEGACY: env.SPONSOR_FACTORY_LEGACY_MAINNET,
+    SPONSOR_BEACON: env.SPONSOR_BEACON_MAINNET,
+    SPONSOR_REGISTRY: env.SPONSOR_REGISTRY_MAINNET,
     SPONSOR_RPC: env.SPONSOR_RPC_MAINNET,
     STRIPE_SECRET_KEY: env.STRIPE_LIVE_SECRET_KEY,
     STRIPE_WEBHOOK_SECRET: env.STRIPE_LIVE_WEBHOOK_SECRET,
-    ...Object.fromEntries(Object.entries(env).filter(([key]) => /^SPONSOR_(RESERVE|SETUP_FEE|MIN_|MAX_|STRIPE_FEE|USDFC_PER|LOW_|REFUND_)/.test(key))),
+    ...Object.fromEntries(Object.entries(env).filter(([key]) => /^SPONSOR_(RESERVE|SETUP_FEE|MIN_|MAX_|STRIPE_FEE|USDFC_PER|LOW_|REFUND_|GAS_)/.test(key))),
   };
 }
 
@@ -64,7 +67,7 @@ export class SponsorDO extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     ctx.blockConcurrencyWhile(async () => {
-      const state: Partial<SponsorState> = { users: {}, checkouts: {}, credits: {}, pool: {}, sweeps: {} };
+      const state: Partial<SponsorState> = { users: {}, checkouts: {}, credits: {}, pool: {}, sweeps: {}, gas: { budget: { accounts: {}, ips: {}, reservations: {} } } };
       for (const [key, value] of await ctx.storage.list<string>({ prefix: "s:" })) {
         const [, collection, ...rest] = key.split(":");
         const bucket = (state as Record<string, Record<string, unknown>>)[collection!];
@@ -91,7 +94,7 @@ export class SponsorDO extends DurableObject<Env> {
   /** Write changed records (and drop removed ones); DO output gates hold responses until the writes are durable. */
   private persist(state: SponsorState): void {
     const next = new Map<string, string>();
-    for (const collection of COLLECTIONS) for (const [id, record] of Object.entries(state[collection])) next.set(`s:${collection}:${id}`, JSON.stringify(record));
+    for (const collection of COLLECTIONS) for (const [id, record] of Object.entries((state[collection] ?? {}) as Record<string, unknown>)) next.set(`s:${collection}:${id}`, JSON.stringify(record));
     const changed: Record<string, string> = {};
     for (const [key, value] of next) if (this.saved.get(key) !== value) changed[key] = value;
     const removed = [...this.saved.keys()].filter((key) => !next.has(key));
@@ -160,7 +163,7 @@ export class SponsorDO extends DurableObject<Env> {
       const alarm = await this.ctx.storage.getAlarm();
       body = { ...(out.body as object), alarm: alarm === null ? null : new Date(alarm).toISOString(), lastAlarm: this.lastAlarm };
     }
-    return new Response(out.status === 204 ? null : JSON.stringify(body), { status: out.status, headers: CORS_HEADERS });
+    return new Response(out.status === 204 ? null : JSON.stringify(body), { status: out.status, headers: { ...CORS_HEADERS, ...out.headers } });
   }
 }
 

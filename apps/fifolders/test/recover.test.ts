@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { decodeFunctionData, erc20Abi, getAddress, type Address, type Hex } from "viem";
-import { factoryAdminAbi, filSendPlan, maskedIdAddress, maskedIdOf, recoverAll, resolveRecipient, type RecoveryChain } from "../sponsor/recoverlib.js";
+import { factoryAdminAbi, filSendPlan, handBeaconOwnership, maskedIdAddress, maskedIdOf, recoverAll, resolveRecipient, type RecoveryChain } from "../sponsor/recoverlib.js";
 
 const ANDY_F1 = "f1ncgcm7zu25ouka3tnbvuscjcpl3spqg7rdl63wa";
 const ANDY_MASKED = getAddress("0xff00000000000000000000000000000000399a90");
@@ -106,5 +106,34 @@ describe("recoverAll", () => {
     const g = fakeChain({ fil: 10n ** 16n, usdfc: 0n, treasury: SPONSOR });
     await recoverAll(g.chain, { filTo: ANDY_MASKED, usdfcTo: other, usdfc: USDFC, factory: FACTORY, newAdmin: other, dryRun: false });
     expect(g.admin).toBe(other);
+  });
+});
+
+describe("handBeaconOwnership", () => {
+  const beacon = getAddress(`0x${"be".repeat(20)}`);
+  const ledger = getAddress(`0x${"1d".repeat(20)}`);
+  const chainOf = (owner: Address, drySent: { label?: string }[] = []) => ({
+    address: owner,
+    async send(call: { label?: string }) {
+      drySent.push(call);
+      return `0x${"ab".repeat(32)}` as Hex;
+    },
+    async readBeacon() { return beacon; },
+    async readBeaconOwner() { return owner; },
+  });
+
+  it("dry-run does not send, and rejects the f1 masked-ID", async () => {
+    const sent: { label?: string }[] = [];
+    const report = await handBeaconOwnership(chainOf(SPONSOR, sent), { factory: FACTORY, newOwner: ledger, dryRun: true });
+    expect(report).toMatchObject({ beacon, from: SPONSOR, to: ledger });
+    expect(sent).toEqual([]);
+    await expect(handBeaconOwnership(chainOf(SPONSOR), { factory: FACTORY, newOwner: ANDY_MASKED, dryRun: true })).rejects.toThrow(/masked-ID/);
+  });
+
+  it("sends transferOwnership from the sponsor to a Ledger 0x", async () => {
+    const sent: { label?: string }[] = [];
+    const report = await handBeaconOwnership(chainOf(SPONSOR, sent), { factory: FACTORY, newOwner: ledger, dryRun: false });
+    expect(sent.map((s) => s.label)).toEqual(["transferBeaconOwnership"]);
+    expect(report.hash).toMatch(/^0xab/);
   });
 });

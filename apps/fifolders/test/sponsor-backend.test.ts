@@ -196,6 +196,12 @@ describe("sponsor server (fake chain)", () => {
       async call() {
         return { data: "0x" };
       },
+      async estimateGas() {
+        return 21_000n;
+      },
+      async estimateFeesPerGas() {
+        return { maxFeePerGas: 1n, maxPriorityFeePerGas: 1n, gasPrice: 1n };
+      },
     };
     let n = 0;
     const relayer = {

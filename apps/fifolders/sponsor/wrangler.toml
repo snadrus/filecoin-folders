@@ -17,6 +17,21 @@ SPONSOR_POOL_SIZE = "2"
 SPONSOR_POOL_SEED_USDFC = "1"
 SPONSOR_SWEEP_ACCOUNTS = "0x2CcbFfB44b410BDa7Fcb7708d1649bA2887370d2"
 SPONSOR_ALLOWED_ORIGINS = "https://fifolders.scionbase.ai/,http://localhost"
+# v2 beacon factory is filled in after `pnpm sponsor:deploy-v2`. Until then FACTORY stays the v1 clone factory.
+# SPONSOR_FACTORY_LEGACY = v1 factory once FACTORY switches to the beacon factory.
+SPONSOR_REGISTRY = "0x9C06335D7DE588Caa104ee4FC3bb7cd8Aba62443"
+# Beacon owner starts as the sponsor key; hand to Andy's Ledger 0x with recover.ts --hand-beacon (never the f1 masked-ID).
+# SPONSOR_BEACON = "0x…"
+SPONSOR_GAS_HOURLY_FIL = "0.01"
+SPONSOR_GAS_BURST_FIL = "0.03"
+SPONSOR_GAS_DAILY_FIL = "0.05"
+SPONSOR_GAS_LIFETIME_BASE_FIL = "0.01"
+SPONSOR_GAS_LIFETIME_PER_PURCHASE_FIL = "0.002"
+SPONSOR_GAS_TX_MAX_GAS = "10000000"
+SPONSOR_GAS_TX_MAX_FEE_FIL = "0.01"
+SPONSOR_GAS_SESSION_DAILY_FIL = "0.02"
+SPONSOR_GAS_IP_HOURLY_FIL = "0.03"
+SPONSOR_GAS_FIL_FLOOR_FIL = "0.05"
 # Mainnet (/mainnet). Factory deployed 2026-11-26 (deployments/mainnet-factory.json): admin = sponsor 0xa69A…08Db,
 # treasury = recovery f03775120 (masked ID). SPONSOR_KEY_MAINNET is a secret. The pool and checkout stay idle until
 # the sponsor holds USDFC (refill and checkout both check balances first).
@@ -24,6 +39,8 @@ SPONSOR_FACTORY_MAINNET = "0xaaA1795A150BA01F7A5894A3D1A95334B695F067"
 SPONSOR_PROVIDER_ID_MAINNET = "5"
 SPONSOR_POOL_SIZE_MAINNET = "5"
 SPONSOR_ALLOWED_ORIGINS_MAINNET = "https://fifolders.scionbase.ai/"
+SPONSOR_REGISTRY_MAINNET = "0x0ADf3E4fc709EAC4973Ca5D17FCfEB10eB7b01EB"
+# SPONSOR_FACTORY_LEGACY_MAINNET / SPONSOR_BEACON_MAINNET filled after a mainnet v2 deploy.
 
 [[durable_objects.bindings]]
 name = "SPONSOR"

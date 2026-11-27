@@ -1,7 +1,7 @@
 import { createPublicClient, custom, encodeFunctionData, getAddress, http, numberToHex, type Address, type Hex, type PublicClient } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { EXECUTE_TYPES, executeDomain, lockedAccountAbi } from "./abi.js";
-import { sponsorCall } from "./http.js";
+import { sponsorCallRetry } from "./http.js";
 import { readNetworkPreference, type ChainChoice } from "./config.js";
 
 export type TypedSigner = (typed: {
@@ -35,7 +35,7 @@ export async function relayExecute(input: {
   const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600);
   const message = { target: getAddress(input.target), value: 0n, data: input.data, nonce, deadline };
   const signature = await input.sign({ domain: executeDomain(input.chainId, input.account), types: EXECUTE_TYPES, primaryType: "Execute", message });
-  const out = await sponsorCall<{ hash: Hex }>("/execute", { account: input.account, ...message, signature }, input.chain ?? readNetworkPreference());
+  const out = await sponsorCallRetry<{ hash: Hex }>("/execute", { account: input.account, ...message, signature }, input.chain ?? readNetworkPreference());
   return out.hash;
 }
 

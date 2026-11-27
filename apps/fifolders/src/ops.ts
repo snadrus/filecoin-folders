@@ -130,3 +130,16 @@ function writeFile(file: OpsFile, notify: boolean): void {
     // BroadcastChannel is missing in a few test realms; the storage event still covers other tabs.
   }
 }
+
+/** Drop older pending commits so a retry only submits the latest tree (CAS). */
+export function foldPendingCommits(keepId: string, volume?: string): void {
+  const file = readFile();
+  const keep = file.ops.find((op) => op.id === keepId);
+  const scope = volume ?? keep?.volume;
+  const ops = file.ops.filter((op) => {
+    if (op.id === keepId) return true;
+    if (op.kind === "commit" && op.status === "pending" && (!scope || !op.volume || op.volume === scope)) return false;
+    return true;
+  });
+  if (ops.length !== file.ops.length) writeFile({ v: 1, ops }, true);
+}

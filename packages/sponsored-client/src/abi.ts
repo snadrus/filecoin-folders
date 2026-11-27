@@ -10,6 +10,8 @@ export const lockedAccountAbi = parseAbi([
   "function sessionExpiry() view returns (uint256)",
   "function sessionSigners(address) view returns (uint256)",
   "function isAllowed(address target, bytes4 selector) view returns (bool)",
+  "function isSessionAllowed(address target, bytes4 selector) view returns (bool)",
+  "function executeDigest(address target, uint256 value, bytes data, uint256 nonce, uint256 deadline) view returns (bytes32)",
   "function execute(address target, uint256 value, bytes data, uint256 nonce, uint256 deadline, bytes signature) returns (bytes)",
   "function addSessionKey(address key, uint256 expiry)",
   "function removeSessionKey(address key)",
@@ -32,7 +34,13 @@ export const lockedFactoryAbi = parseAbi([
   "function createPooled(uint256 salt, uint256 sessionExpiry) returns (address)",
   "function assign(address account, address owner, bytes32 qx, bytes32 qy, uint256 topUp)",
   "function admin() view returns (address)",
+  "function treasury() view returns (address)",
   "function REGISTRY() view returns (address)",
+  "function FWSS() view returns (address)",
+  "function PAY() view returns (address)",
+  "function TOKEN() view returns (address)",
+  "function beacon() view returns (address)",
+  "function implementation() view returns (address)",
 ]);
 
 /** EIP-712 `Execute` the account verifies (domain: name "LockedSignerAccount", version "1", verifyingContract = account). */

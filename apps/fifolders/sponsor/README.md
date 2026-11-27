@@ -124,6 +124,15 @@ The steps run in this order:
 Pause the Worker first, by setting `SPONSOR_POOL_SIZE_MAINNET=0` and removing mainnet from `VITE_SPONSOR_NETWORKS`,
 so it does not spend while you drain.
 
+The v2 UpgradeableBeacon (account implementation upgrades) is owned by the sponsor key until Andy provides his Ledger 0x address. Do not transfer it to the f1 masked-ID recovery address (it cannot sign EVM upgrade transactions). Hand it over with a dry run first:
+
+```sh
+SPONSOR_NETWORK=calibration SPONSOR_KEY_FILE=/path/to/calibration-sponsor.key \
+  tsx apps/fifolders/sponsor/recover.ts --factory 0x… --hand-beacon 0xLedger [--yes]
+```
+
+Deploy a Calibration v2 factory (beacon owner = sponsor) with `pnpm sponsor:deploy-v2`. Estimate only: `pnpm sponsor:deploy-v2:estimate`. After deploy, set `SPONSOR_FACTORY` to the new factory, `SPONSOR_FACTORY_LEGACY` to the v1 factory, and `SPONSOR_BEACON` in wrangler.toml.
+
 You can give a Filecoin-native address (`f1…`, `f3…`, `f0…`) for either recipient. It resolves through
 `StateLookupID` to its masked-ID form, `0xff00…<actor id>`. For example, `f1ncgcm7…` is `f03775120`, which is
 `0xff00000000000000000000000000000000399a90`.

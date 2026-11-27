@@ -55,7 +55,8 @@ import {
   type ViewMode,
 } from "./model.js";
 import { isSessionPermissionError, type SessionGate, type WalletPanel } from "./onboarding-logic.js";
-import { dropFelPlaceholders, dropOp, isBlankFelContent, loadOps, newOp, OPS_CHANNEL, OPS_KEY, patchOp, upsertOp, type FifoldersOp, type OpKind } from "./ops.js";
+import { SponsorRateLimitError } from "@fifolders/sponsored-client";
+import { dropFelPlaceholders, dropOp, foldPendingCommits, isBlankFelContent, loadOps, newOp, OPS_CHANNEL, OPS_KEY, patchOp, upsertOp, type FifoldersOp, type OpKind } from "./ops.js";
 import {
   datasetBlurb,
   depositBlurb,
@@ -780,6 +781,7 @@ export class DriveApp {
       return false;
     }
     this.busy = true;
+    this.#lastError = undefined;
     this.cas.takeMerged();
     this.render();
     try {
@@ -787,6 +789,16 @@ export class DriveApp {
       await task();
       return await this.finishRun();
     } catch (error) {
+      if (error instanceof SponsorRateLimitError) {
+        const wait = Math.min(120_000, Math.max(500, error.retryAfter * 1000));
+        await new Promise((resolve) => setTimeout(resolve, wait));
+        try {
+          await task();
+          return await this.finishRun();
+        } catch (retryError) {
+          return this.failRun(retryError);
+        }
+      }
       if (!isSessionPermissionError(error)) {
         return this.failRun(error);
       }
@@ -808,7 +820,9 @@ export class DriveApp {
     return true;
   }
 
+  #lastError: unknown;
   private async failRun(error: unknown): Promise<boolean> {
+    this.#lastError = error;
     this.cas.takeMerged();
     this.busy = false;
     this.toast(isSessionPermissionError(error) ? "Wallet session ended — reconnect from the Transaction log (1 signature)." : errorText(error));
@@ -2303,6 +2317,25 @@ export class DriveApp {
     if (this.root) this.render();
   }
 
+  /** Keep the op queued on a sponsor 429, drop older pending commits, and retry after Retry-After. */
+  private deferRateLimited(id: string): boolean {
+    const error = this.#lastError;
+    if (!(error instanceof SponsorRateLimitError)) return false;
+    foldPendingCommits(id, this.volumeName);
+    const seconds = Math.max(1, error.retryAfter);
+    patchOp(id, { status: "pending", stage: "waiting", error: "", detail: `Waiting ${seconds}s (${error.limit ?? "rate limit"})` });
+    this.toast(`Sponsor is rate-limited (${error.limit ?? "limit"}) — retrying in ${seconds}s`);
+    setTimeout(() => {
+      void this.enqueue(async () => {
+        const op = loadOps().find((item) => item.id === id);
+        if (!op || op.status !== "pending") return;
+        if (op.kind === "commit" && this.staged.length) await this.saveStaged();
+      });
+    }, Math.min(120_000, seconds * 1000));
+    if (this.root) this.render();
+    return true;
+  }
+
   private rememberDone(op: FifoldersOp): void {
     const label = op.kind === "fel-save" ? `Saved “${op.name ?? op.label}” to My Folders` : cleanOpLabel(op.label);
     const row: ActivityRow = { id: op.id, label, status: "done", ...(op.detail ? { detail: op.detail } : {}) };
@@ -2620,7 +2653,7 @@ export class DriveApp {
     }
     const items = adoptItems(this.looseRows.filter((row) => cids.includes(row.pieceCid)), base);
     if (!items.length) return;
-    const id = this.beginOp({ kind: "commit", label: `Add ${items.length} Filecoin Drive ${items.length === 1 ? "file" : "files"} to your folders`, stage: "saving" });
+    const id = this.beginOp({ kind: "commit", label: `Add ${items.length} Filecoin Drive ${items.length === 1 ? "file" : "files"} to your folders`, stage: "saving", volume: this.volumeName });
     const ok = await this.run(async () => {
       await withWalletIntent(INTENTS.adopt(items.length), () => this.volume!.adopt(items));
       this.#draft = null;
@@ -2629,7 +2662,7 @@ export class DriveApp {
     if (ok) {
       this.finishOp(id);
       this.toast(`Added ${items.length} ${items.length === 1 ? "file" : "files"} to your folders.`);
-    } else this.failOp(id, "Couldn't add to your folders");
+    } else if (!this.deferRateLimited(id)) this.failOp(id, "Couldn't add to your folders");
     await this.refresh();
   }
   /** Filecoin Drive directory pieces expanded in the Loose pieces view. */
@@ -2940,7 +2973,7 @@ export class DriveApp {
     }
     const ops = this.staged.slice();
     const label = saveLabel(ops.length);
-    const id = this.beginOp({ kind: "commit", label, stage: "saving" });
+    const id = this.beginOp({ kind: "commit", label, stage: "saving", volume: this.volumeName });
     const ok = await this.run(async () => {
       // Pieces the live tree used before a Delete forever: the ones it releases are removed now.
       const before = ops.some((op) => op.op === "rm") ? new Set(await this.volume!.referencedPieces().catch(() => [] as string[])) : null;
@@ -2980,7 +3013,7 @@ export class DriveApp {
       row.progress = 100;
     }
     if (ok) this.finishOp(id);
-    else this.failOp(id, "Couldn't save");
+    else if (!this.deferRateLimited(id)) this.failOp(id, "Couldn't save");
   }
 
   private scopeKey(): string {
