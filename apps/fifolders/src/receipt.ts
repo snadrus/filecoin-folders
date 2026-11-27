@@ -10,7 +10,7 @@ export async function waitForReceipt(
   opts: { timeoutMs?: number; pollMs?: number } = {},
 ): Promise<TransactionReceipt> {
   const deadline = Date.now() + (opts.timeoutMs ?? 10 * 60_000);
-  const poll = opts.pollMs ?? 5_000;
+  const poll = opts.pollMs ?? 1_000;
   let last: unknown;
   for (;;) {
     try {

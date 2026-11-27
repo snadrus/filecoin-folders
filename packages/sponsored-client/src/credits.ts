@@ -27,7 +27,7 @@ export async function buySponsoredCredits(
 export async function sponsoredCreditStatus(
   sessionId: string,
   chain?: ChainChoice,
-): Promise<{ status: string; account?: Address; usdfc?: string; path?: string | null; hash?: Hex | null; hashes?: Hex[]; finality?: string | null }> {
+): Promise<{ status: string; account?: Address; usdfc?: string; path?: string | null; hash?: Hex | null; hashes?: Hex[]; finality?: string | null; timing?: Record<string, unknown>; inclusion?: unknown[] }> {
   return sponsorCall(`/credits?session=${encodeURIComponent(sessionId)}`, undefined, chain ?? readNetworkPreference());
 }
 
@@ -42,7 +42,7 @@ export async function waitForCredit(
     // Ready on inclusion: the sponsor sets `account` as soon as assign is in a block (not F3 finality).
     if (status.account && (status.status === "done" || status.status === "included")) return status;
     if (status.status === "failed" || status.status === "unknown" || status.status === "refunded" || Date.now() > end) return status;
-    await new Promise((resolve) => setTimeout(resolve, opts.intervalMs ?? 4_000));
+    await new Promise((resolve) => setTimeout(resolve, opts.intervalMs ?? 1_000));
   }
 }
 

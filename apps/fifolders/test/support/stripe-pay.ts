@@ -14,7 +14,7 @@ export async function payTestCheckout(url: string, opts: { email?: string; scree
 }
 
 /** Pay the test-mode Checkout already open in `page` and wait for Stripe's redirect to the success URL. */
-export async function payOnPage(page: import("@playwright/test").Page, opts: { email?: string; screenshot?: string } = {}): Promise<void> {
+export async function payOnPage(page: import("@playwright/test").Page, opts: { email?: string; screenshot?: string; onSubmit?: () => void } = {}): Promise<void> {
   if (!/^https:\/\/checkout\.stripe\.com\/.*cs_test_/.test(page.url())) throw new Error(`not a test-mode Stripe Checkout page: ${page.url()}`);
   try {
     // Checkout renders its form inside the Payment Element iframe.
@@ -40,6 +40,7 @@ export async function payOnPage(page: import("@playwright/test").Page, opts: { e
       .waitForURL((next) => !next.href.startsWith("https://checkout.stripe.com/"), { timeout: 150_000, waitUntil: "commit" })
       .then(() => true, () => left());
     await page.waitForTimeout(1_500); // let Elements finish validating the filled fields
+    opts.onSubmit?.();
     await frame.getByTestId("payment-form-submit-button").click();
     for (let i = 0; i < 3 && !left(); i += 1) {
       const done = await Promise.race([redirected, page.waitForTimeout(25_000).then(() => false)]);

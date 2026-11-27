@@ -86,11 +86,53 @@ async function loadSavedPasskey(authenticatorId: string, cdp: { send: (method: n
   return list.length;
 }
 
-async function continuePasskey(p: Page) {
-  if (Date.now() - lastPasskeyClick < 8_000) return null;
-  const kind = (await clickIf(p, "passkey-continue")) ? "continue" : (await clickIf(p, "passkey-existing")) ? "existing" : null;
+async function continuePasskey(p: Page, preferExisting = false) {
+  if (Date.now() - lastPasskeyClick < (preferExisting ? 2_000 : 8_000)) return null;
+  const kind = preferExisting
+    ? ((await clickIf(p, "passkey-existing")) ? "existing" : (await clickIf(p, "passkey-continue")) ? "continue" : null)
+    : ((await clickIf(p, "passkey-continue")) ? "continue" : (await clickIf(p, "passkey-existing")) ? "existing" : null);
   if (kind) lastPasskeyClick = Date.now();
   return kind;
+}
+
+/** Background /credits poll so worker-ready is measured even if the UI is still on the passkey screen. */
+function startCreditPoll(sessionId: string, rec: Record<string, unknown>, since: { submit?: number; return?: number }) {
+  if (!sessionId) return () => undefined;
+  let stop = false;
+  let last = "";
+  void (async () => {
+    while (!stop) {
+      try {
+        const res = await fetch(`${WORKER}/credits?session=${encodeURIComponent(sessionId)}`, { headers: { "user-agent": "Mozilla/5.0" } });
+        const body = (await res.json()) as Record<string, unknown>;
+        const stamp = `${body.status}:${body.account ?? ""}:${body.finality ?? ""}`;
+        if (stamp !== last) {
+          last = stamp;
+          const acct = typeof body.account === "string" ? `${body.account.slice(0, 6)}…` : "none";
+          say(`credits poll status=${body.status} finality=${body.finality ?? "none"} account=${acct}`);
+          if (body.status === "pending" && !rec.tWorkerPending) {
+            rec.tWorkerPending = new Date().toISOString();
+            if (since.submit) rec.secSubmitToPending = Math.round((Date.now() - since.submit) / 1000);
+          }
+          if (body.account && (body.status === "done" || body.status === "included") && !rec.tWorkerReady) {
+            rec.tWorkerReady = new Date().toISOString();
+            rec.creditTiming = body.timing ?? null;
+            rec.creditInclusion = body.inclusion ?? null;
+            rec.paidAt = body.paidAt ?? null;
+            if (since.submit) rec.secSubmitToWorkerReady = Math.round((Date.now() - since.submit) / 1000);
+            if (since.return) rec.secReturnToWorkerReady = Math.round((Date.now() - since.return) / 1000);
+            say(`worker marked ready after submit ${rec.secSubmitToWorkerReady ?? "?"}s return ${rec.secReturnToWorkerReady ?? "?"}s`);
+          }
+        }
+      } catch {
+        /* ignore transient poll errors */
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+    }
+  })();
+  return () => {
+    stop = true;
+  };
 }
 
 async function ethCall(to: string, data: string) {
@@ -219,11 +261,24 @@ try {
   steps.checkout = { testMode: checkoutTest, session: session ? "cs_test_…" : "" };
   if (!checkoutTest) throw new Error("checkout was not Stripe test mode");
   say("on Stripe test checkout");
-  await payOnPage(page, { email: "fifolders-live-e2e@example.com", screenshot: `${OUT}/stripe-fail.png` });
+  log.tCheckoutPage = new Date().toISOString();
+  const creditSince: { submit?: number; return?: number } = {};
+  const stopCreditPoll = startCreditPoll(session, log, creditSince);
+  await payOnPage(page, {
+    email: "fifolders-live-e2e@example.com",
+    screenshot: `${OUT}/stripe-fail.png`,
+    onSubmit: () => {
+      creditSince.submit = Date.now();
+      log.tCheckoutSubmit = new Date(creditSince.submit).toISOString();
+      say("Stripe checkout submitted");
+    },
+  });
   await page.waitForURL(/fifolders\.scionbase\.ai/, { timeout: 150_000 });
   log.returnedTo = page.url().replace(/session_id=[^&]+/, "session_id=…");
   tPayment = Date.now();
+  creditSince.return = tPayment;
   log.tPayment = new Date(tPayment).toISOString();
+  if (creditSince.submit) log.secSubmitToReturn = Math.round((tPayment - creditSince.submit) / 1000);
   await snap(page, "after-stripe");
   say(`returned from Stripe: ${log.returnedTo}`);
 
@@ -234,8 +289,12 @@ try {
     (await visible(page, "payment-status")) || (await visible(page, "credit-balance")) || (await visible(page, "add-credits"));
   await waitUntil(12 * 60_000, "payments ready after passkey resume", async () => {
     if (await paymentsReady()) return true;
-    const clicked = await continuePasskey(page);
+    const clicked = await continuePasskey(page, true);
     if (clicked) say(`clicked passkey ${clicked} after redirect`);
+    if (!log.tPasskeyIn && (await paymentsReady() || ((await visible(page, "account") || await visible(page, "setup-address")) && !(await visible(page, "passkey-continue") || await visible(page, "passkey-existing"))))) {
+      log.tPasskeyIn = new Date().toISOString();
+      say(`passkey accepted ${Math.round((Date.now() - tPayment) / 1000)}s after return`);
+    }
     // Gasless setup uses credit-balance/add-credits; open the account menu if we are signed in but the setup card is hidden.
     if ((await visible(page, "account")) && !(await visible(page, "setup-address")) && !(await paymentsReady())) {
       await page.getByTestId("account").click().catch(() => undefined);
@@ -266,6 +325,18 @@ try {
   say(`payments ready after ${handover.seconds}s`);
   log.tPaymentsReady = new Date().toISOString();
   log.secPaymentToPaymentsReady = Math.round((Date.now() - tPayment) / 1000);
+  const stages: Record<string, unknown> = {
+    secSubmitToReturn: log.secSubmitToReturn ?? null,
+    secSubmitToPending: log.secSubmitToPending ?? null,
+    secSubmitToWorkerReady: log.secSubmitToWorkerReady ?? null,
+    secReturnToWorkerReady: log.secReturnToWorkerReady ?? null,
+    secReturnToPasskey: log.tPasskeyIn && tPayment ? Math.round((Date.parse(String(log.tPasskeyIn)) - tPayment) / 1000) : null,
+    secReturnToUiReady: log.secPaymentToPaymentsReady,
+    creditTiming: log.creditTiming ?? null,
+  };
+  log.stages = stages;
+  say(`stage table ${JSON.stringify(stages)}`);
+  stopCreditPoll();
   }
 
   // Finish setup: authorize / open drive. file-input is sr-only and present during setup, so it is not a ready signal.

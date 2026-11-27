@@ -9,6 +9,8 @@ export interface RelayCall {
   to?: Address;
   data: Hex;
   value?: bigint;
+  /** Skip eth_estimateGas when set (Filecoin estimates can be slow; use a padded known limit). */
+  gas?: bigint;
   label: string;
 }
 
@@ -56,6 +58,8 @@ export class SponsorWalletRelayer implements Relayer {
   readonly sent: { label: string; hash: Hex }[] = [];
   /** One sender, one nonce sequence: serialize submissions. */
   private queue: Promise<unknown> = Promise.resolve();
+  /** Local pending nonce so back-to-back sends do not wait for a getTransaction round trip. */
+  private nextNonce: number | undefined;
 
   constructor(privateKey: Hex, opts: ChainOptions = {}) {
     const account = privateKeyToAccount(privateKey);
@@ -67,17 +71,33 @@ export class SponsorWalletRelayer implements Relayer {
 
   send(call: RelayCall): Promise<Hex> {
     const next = this.queue.then(async () => {
-      // FEVM estimates run tight (a relayed terminateService ran out of gas at the estimate): add 30%.
-      const estimate = await this.pub.estimateGas({ account: this.address, to: call.to ?? undefined, data: call.data, value: call.value ?? 0n } as never);
-      const hash = (await this.wallet.sendTransaction({ to: call.to ?? null, data: call.data, value: call.value ?? 0n, gas: (estimate * 13n) / 10n } as never)) as Hex;
+      const started = Date.now();
+      let estimateMs = 0;
+      let gas = call.gas;
+      if (gas == null) {
+        const t0 = Date.now();
+        // FEVM estimates run tight (a relayed terminateService ran out of gas at the estimate): add 30%.
+        const estimate = await this.pub.estimateGas({ account: this.address, to: call.to ?? undefined, data: call.data, value: call.value ?? 0n } as never);
+        estimateMs = Date.now() - t0;
+        gas = (estimate * 13n) / 10n;
+      }
+      if (this.nextNonce == null) {
+        this.nextNonce = Number(await this.pub.getTransactionCount({ address: this.address, blockTag: "pending" }));
+      }
+      const nonce = this.nextNonce;
+      const tSend = Date.now();
+      const hash = (await this.wallet.sendTransaction({ to: call.to ?? null, data: call.data, value: call.value ?? 0n, gas, nonce } as never)) as Hex;
+      const sendMs = Date.now() - tSend;
+      this.nextNonce = nonce + 1;
       console.log(`[relay:${this.name}] ${call.label}: ${hash}`);
+      console.log(`[relay-timing] ${JSON.stringify({ label: call.label, hash, estimateMs, sendMs, totalMs: Date.now() - started, gas: gas.toString(), nonce })}`);
       this.sent.push({ label: call.label, hash });
       if (this.sent.length > 500) this.sent.splice(0, this.sent.length - 500);
-      // FEVM: wait until the node has the tx so the next nonce read is fresh.
-      await this.pub.getTransaction({ hash }).catch(() => undefined);
       return hash;
     });
-    this.queue = next.catch(() => undefined);
+    this.queue = next.catch(() => {
+      this.nextNonce = undefined;
+    });
     return next;
   }
 

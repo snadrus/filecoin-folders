@@ -39,6 +39,18 @@ import { emptyGasState, gasStatus, lifetimeCapWei, limitsFromEnv, releaseGas, re
 const ZERO32 = `0x${"0".repeat(64)}` as Hex;
 const ZERO_ADDRESS = getAddress(`0x${"0".repeat(40)}`);
 const ACCOUNT_TTL_SEC = 365n * 86400n;
+// Padded FEVM gas for the warm-path handover (Calibration assign used ~53M; skip slow eth_estimateGas).
+const PREPARE_SESSION_GAS = 40_000_000n;
+const ASSIGN_GAS = 120_000_000n;
+
+function markTiming(credit: CreditRecord, stage: string, extra: Record<string, string | number | undefined> = {}): void {
+  const at = new Date().toISOString();
+  const session = extra.session;
+  const rest = { ...extra };
+  delete rest.session;
+  credit.timing = { ...(credit.timing ?? {}), [`${stage}At`]: at, ...rest };
+  console.log(`[handover-timing] ${JSON.stringify({ stage, at, ...rest, session: typeof session === "string" ? `…${session.slice(-8)}` : undefined })}`);
+}
 const poolAccountAbi = parseAbi(["function unassigned() view returns (bool)"]);
 const payAbi = parseAbi([
   "function deposit(address token, address to, uint256 amount) payable",
@@ -136,6 +148,8 @@ export interface CreditRecord {
   /** Included handover txs, recorded at inclusion (not finality). */
   inclusion?: { kind: string; hash: Hex; blockNumber: string; blockHash: Hex }[];
   finality?: "included" | "finalized" | "dropped";
+  /** End-to-end handover timestamps (ISO) and durations (ms) for latency traces. */
+  timing?: Record<string, string | number | undefined>;
 }
 
 export interface SponsorState {
@@ -571,11 +585,14 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
       let inFlight: string | undefined;
       const identity = parseIdentityId(credit.identity);
       try {
+        markTiming(credit, "queueStart", { session: sessionId });
+        save();
         // Pre-flight: if the sponsor is short, park the credit before sending anything (so a retry is always safe).
         const amount0 = BigInt(credit.usdfc);
         const viaPool = !state.users[credit.identity] && (await poolOnCurrentFactory("ready")).length > 0;
         const needUsdfc = viaPool ? poolTopUp(amount0, seed) : amount0;
         const funds = await sponsorFunds();
+        markTiming(credit, "fundsChecked", { session: sessionId, viaPool: viaPool ? 1 : 0 });
         if (funds.usdfc < needUsdfc || funds.fil < minFil()) {
           credit.status = "awaiting-funds";
           credit.error = "sponsor wallet short of funds; will retry";
@@ -606,6 +623,7 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
             save();
             const topUp = poolTopUp(amount, seed);
             await ensureAllowance(config.factory, topUp);
+            markTiming(credit, "allowance", { session: sessionId });
             const sessionExpiry = BigInt(credit.sessionExpiry ?? pooled.sessionExpiry);
             // Same sponsor-nonce batch: prepareSession then factory.assign (owner + top-up). Ready when assign is included.
             if (credit.sessionKey) {
@@ -613,18 +631,23 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
                 to: pooled.account,
                 label: `prepareSession ${pooled.account} (${sessionId})`,
                 data: encodeFunctionData({ abi: lockedAccountAbi, functionName: "prepareSession", args: [credit.sessionKey, sessionExpiry] }),
+                gas: PREPARE_SESSION_GAS,
               });
               credit.hashes.push(prep);
+              markTiming(credit, "prepareSent", { session: sessionId, prepareHash: prep });
               save();
             }
             const assignHash = await relayer.send({
               to: config.factory,
               label: `assign ${pooled.account} (${sessionId})`,
               data: encodeFunctionData({ abi: lockedFactoryAbi, functionName: "assign", args: [pooled.account, ...ownerArgs(identity), topUp] }),
+              gas: ASSIGN_GAS,
             });
             credit.hashes.push((credit.hash = assignHash));
+            markTiming(credit, "assignSent", { session: sessionId, assignHash });
             save();
-            await waitAndRecord(credit, "assign", assignHash);
+            const included = await waitAndRecord(credit, "assign", assignHash);
+            markTiming(credit, "assignIncluded", { session: sessionId, assignBlock: included.blockNumber != null ? included.blockNumber.toString() : undefined, assignBlockHash: included.blockHash });
             pooled.status = "assigned";
             record = state.users[credit.identity] = { owner: ownerOf(identity), account: pooled.account, sessionExpiry: pooled.sessionExpiry, dataSetId: pooled.dataSetId, providerId: pooled.providerId, dataSetTx: pooled.dataSetTx, via: "pool", ...(credential ? { credentialId: credential } : {}) };
             credit.account = pooled.account;
@@ -633,6 +656,7 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
             credit.status = "done";
             credit.finality = "included";
             delete credit.error;
+            markTiming(credit, "ready", { session: sessionId, path: "pool" });
             save();
             void maybeInstallSession(credit, pooled.account);
             void refillPool();
@@ -689,7 +713,7 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
     return { sessionKey, ...( /^\d+$/.test(expiry) ? { sessionExpiry: expiry } : {}) };
   }
 
-  async function applyPaidCheckout(session: Record<string, unknown>, livemode: boolean): Promise<{ received: true; credited?: string; duplicate?: boolean; ignored?: string }> {
+  async function applyPaidCheckout(session: Record<string, unknown>, livemode: boolean, meta: { webhookAt?: string; eventType?: string } = {}): Promise<{ received: true; credited?: string; duplicate?: boolean; ignored?: string }> {
     const id = String(session.id ?? "");
     if (!id) throw new HttpError(400, "event without session id");
     const paid = session.payment_status === "paid" || session.status === "succeeded" || session.status === "complete";
@@ -704,14 +728,27 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
     if (!parseIdentityId(identityId)) throw new HttpError(400, "metadata.identity missing");
     const chargeCents = Number(session.amount_total ?? session.amount);
     if (!Number.isInteger(chargeCents) || chargeCents <= 0) throw new HttpError(400, "bad amount_total");
-    const feeCents = config.stripe.secretKey ? await stripeFeeCents(config.stripe.secretKey, id, deps.fetch) : estimateStripeFeeCents(chargeCents, pricing);
+    const feeStarted = Date.now();
+    let feeCents = estimateStripeFeeCents(chargeCents, pricing);
+    let feeSource = "estimate";
+    if (config.stripe.secretKey) {
+      // Do not retry/wait on the balance-transaction lag: handover starts immediately on an estimate.
+      try {
+        feeCents = await stripeFeeCents(config.stripe.secretKey, id, deps.fetch, { attempts: 1, delayMs: 0 });
+        feeSource = "stripe";
+      } catch {
+        feeSource = "estimate-fallback";
+      }
+    }
+    const feeMs = Date.now() - feeStarted;
     const raced = state.credits[id] as CreditRecord | undefined;
     if (raced) return { received: true, duplicate: true, credited: raced.usdfc };
     const first = !state.users[identityId]?.dataSetId;
     const { creditUsdfc, ...quote } = creditFor(pricing, { chargeCents, feeCents, first });
     const paymentIntent = typeof session.payment_intent === "string" ? session.payment_intent : undefined;
     const sessionKey = sessionKeyFromMetadata(metadata);
-    state.credits[id] = { identity: identityId, ...quote, usdfc: creditUsdfc.toString(), depositUsdfc: "0", status: "pending", hashes: [], paidAt: new Date(now()).toISOString(), ...(paymentIntent ? { paymentIntent } : {}), ...(metadata.credential ? { credential: metadata.credential } : {}), ...sessionKey };
+    state.credits[id] = { identity: identityId, ...quote, usdfc: creditUsdfc.toString(), depositUsdfc: "0", status: "pending", hashes: [], paidAt: new Date(now()).toISOString(), ...(paymentIntent ? { paymentIntent } : {}), ...(metadata.credential ? { credential: metadata.credential } : {}), ...sessionKey, timing: { ...(meta.webhookAt ? { webhookAt: meta.webhookAt } : {}), ...(meta.eventType ? { eventType: meta.eventType } : {}), feeMs, feeSource } };
+    markTiming(state.credits[id]!, "queued", { session: id, feeMs, feeSource, eventType: meta.eventType, webhookAt: meta.webhookAt });
     save();
     void queueCredit(id, metadata.credential);
     return { received: true, credited: creditUsdfc.toString() };
@@ -737,6 +774,8 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
       throw new HttpError(400, (error as Error).message);
     }
     const event = JSON.parse(raw) as { type?: string; livemode?: boolean; data?: { object?: Record<string, unknown> } };
+    const webhookAt = new Date().toISOString();
+    console.log(`[handover-timing] ${JSON.stringify({ stage: "webhook", at: webhookAt, type: event.type })}`);
     if (event.type === "payment_intent.succeeded") {
       const pi = event.data?.object ?? {};
       const sessionId = await checkoutIdFromPaymentIntent(pi);
@@ -752,10 +791,10 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
       }
       if (!session.id) session.id = sessionId;
       if (session.payment_status !== "paid") session.payment_status = "paid";
-      return applyPaidCheckout(session, Boolean(event.livemode));
+      return applyPaidCheckout(session, Boolean(event.livemode), { webhookAt, eventType: event.type });
     }
     if (event.type !== "checkout.session.completed" && event.type !== "checkout.session.async_payment_succeeded") return { received: true, ignored: event.type };
-    return applyPaidCheckout(event.data?.object ?? {}, Boolean(event.livemode));
+    return applyPaidCheckout(event.data?.object ?? {}, Boolean(event.livemode), { webhookAt, eventType: event.type });
   }
 
   /** Dataset for an account that has none (normally made by the pool or the slow path). */
@@ -1301,7 +1340,7 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
       if (req.method === "GET" && url.pathname === "/credits") {
         const id = url.searchParams.get("session") ?? "";
         const credit = state.credits[id];
-        return ok(credit ? { status: credit.status, account: credit.account ?? null, usdfc: credit.usdfc, path: credit.path ?? null, hash: credit.hash ?? null, hashes: credit.hashes, error: credit.error ?? null, finality: credit.finality ?? null, sessionKey: credit.sessionKey ?? null, inclusion: credit.inclusion ?? [] } : { status: state.checkouts[id] ? "awaiting-payment" : "unknown" });
+        return ok(credit ? { status: credit.status, account: credit.account ?? null, usdfc: credit.usdfc, path: credit.path ?? null, hash: credit.hash ?? null, hashes: credit.hashes, error: credit.error ?? null, finality: credit.finality ?? null, sessionKey: credit.sessionKey ?? null, inclusion: credit.inclusion ?? [], timing: credit.timing ?? null, paidAt: credit.paidAt ?? null } : { status: state.checkouts[id] ? "awaiting-payment" : "unknown" });
       }
       if (req.method === "POST" && url.pathname === "/stripe/webhook") return ok(await onStripeEvent(req.body, req.header("stripe-signature")));
       if (req.method === "POST" && url.pathname === "/checkout") {
