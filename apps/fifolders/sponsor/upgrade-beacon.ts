@@ -39,7 +39,14 @@ if (implementation.toLowerCase() === current.toLowerCase()) {
   throw new Error("new implementation address matches the current one; aborting");
 }
 const upgraded = await relayer.relay({ to: beacon, label: `beacon.upgradeTo ${implementation}`, data: encodeFunctionData({ abi: beaconAbi, functionName: "upgradeTo", args: [implementation] }) });
-const live = getAddress((await pub.readContract({ address: beacon, abi: beaconAbi, functionName: "implementation" })) as Address);
+// Filecoin RPCs can lag one head read after inclusion; poll until the beacon reports the new implementation.
+let live = current;
+const deadline = Date.now() + 120_000;
+while (Date.now() < deadline) {
+  live = getAddress((await pub.readContract({ address: beacon, abi: beaconAbi, functionName: "implementation" })) as Address);
+  if (live.toLowerCase() === implementation.toLowerCase()) break;
+  await new Promise((resolve) => setTimeout(resolve, 3_000));
+}
 if (live.toLowerCase() !== implementation.toLowerCase()) throw new Error(`beacon still points at ${live}`);
 
 const dest = new URL("../../../deployments/calibration-factory-v2.json", import.meta.url);
