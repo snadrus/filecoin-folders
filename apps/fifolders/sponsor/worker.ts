@@ -108,6 +108,7 @@ export class SponsorDO extends DurableObject<Env> {
     if (this.disabled) return false;
     const state = this.core.state;
     const pending = Object.values(state.credits).some((credit) => credit.status === "pending");
+    const landing = Object.values(state.credits).some((credit) => credit.status === "done" && credit.finality === "sent");
     const size = this.core.config.pool?.size ?? 0;
     const factory = this.core.config.factory;
     const legacy = this.core.config.legacyFactory;
@@ -119,7 +120,7 @@ export class SponsorDO extends DurableObject<Env> {
     const ready = !legacy && !Object.values(state.pool).some((entry) => entry.factory)
       ? Object.values(state.pool).filter((entry) => entry.status === "ready" || entry.status === "seeding").length
       : currentReady;
-    return pending || ready < size || needsClassify;
+    return pending || landing || ready < size || needsClassify;
   }
 
   /** Keep an alarm armed while there is background work (pending credits or a short pool). */
@@ -146,6 +147,7 @@ export class SponsorDO extends DurableObject<Env> {
 
   private async runAlarm(): Promise<void> {
     await this.core.settled();
+    await this.core.checkHandoverFinality();
     await this.core.trimPool();
     await this.core.refillPool({ max: POOL_BUILDS_PER_ALARM });
     await this.core.settled();

@@ -4,8 +4,8 @@ export const OPS_KEY = "fifolders:ops";
 export const OPS_CHANNEL = "fifolders-ops";
 export const OPS_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 
-export type OpKind = "upload" | "dataset" | "session" | "deposit" | "commit" | "fel-save" | "wallet";
-export type OpStatus = "pending" | "done" | "error";
+export type OpKind = "upload" | "dataset" | "session" | "deposit" | "commit" | "handover" | "fel-save" | "wallet";
+export type OpStatus = "pending" | "sent" | "retrying" | "done" | "error";
 
 export interface FifoldersOp {
   id: string;
@@ -138,7 +138,7 @@ export function foldPendingCommits(keepId: string, volume?: string): void {
   const scope = volume ?? keep?.volume;
   const ops = file.ops.filter((op) => {
     if (op.id === keepId) return true;
-    if (op.kind === "commit" && op.status === "pending" && (!scope || !op.volume || op.volume === scope)) return false;
+    if (op.kind === "commit" && (op.status === "pending" || op.status === "sent" || op.status === "retrying") && (!scope || !op.volume || op.volume === scope)) return false;
     return true;
   });
   if (ops.length !== file.ops.length) writeFile({ v: 1, ops }, true);

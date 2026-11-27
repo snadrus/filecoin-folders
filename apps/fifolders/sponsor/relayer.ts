@@ -14,6 +14,18 @@ export interface RelayCall {
   label: string;
 }
 
+export type PendingRelay = {
+  label: string;
+  hash: Hex;
+  nonce: number;
+  gas: bigint;
+  to?: Address;
+  data: Hex;
+  value: bigint;
+  maxFeePerGas: bigint;
+  maxPriorityFeePerGas: bigint;
+};
+
 export interface Relayer {
   readonly name: string;
   readonly address: Address;
@@ -21,6 +33,8 @@ export interface Relayer {
   send(call: RelayCall): Promise<Hex>;
   /** Submit and wait; throws on revert. */
   relay(call: RelayCall): Promise<TransactionReceipt>;
+  /** Same nonce, bumped fees; used when a broadcast tx is not included in time. */
+  replace?(hash: Hex, bumpBps?: number): Promise<Hex>;
 }
 
 export type SponsorNetwork = "calibration" | "mainnet";
@@ -62,6 +76,8 @@ export class SponsorWalletRelayer implements Relayer {
   private queue: Promise<unknown> = Promise.resolve();
   /** Local pending nonce so back-to-back sends do not wait for a getTransaction round trip. */
   private nextNonce: number | undefined;
+  /** Broadcast txs that have not been replaced, keyed by lower-case hash. */
+  private pending = new Map<string, PendingRelay>();
 
   private network: SponsorNetwork;
   private rpcUrl: string;
@@ -111,6 +127,17 @@ export class SponsorWalletRelayer implements Relayer {
       const hash = await this.broadcastRaw(signed, urls);
       const sendMs = Date.now() - tSend;
       this.nextNonce = nonce + 1;
+      this.pending.set(hash.toLowerCase(), {
+        label: call.label,
+        hash,
+        nonce,
+        gas,
+        to: call.to,
+        data: call.data,
+        value: call.value ?? 0n,
+        maxFeePerGas: fees.maxFeePerGas,
+        maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
+      });
       console.log(`[relay:${this.name}] ${call.label}: ${hash}`);
       console.log(`[relay-timing] ${JSON.stringify({ label: call.label, hash, estimateMs, feeMs, sendMs, totalMs: Date.now() - started, gas: gas.toString(), nonce })}`);
       this.sent.push({ label: call.label, hash });
@@ -127,7 +154,37 @@ export class SponsorWalletRelayer implements Relayer {
     const hash = await this.send(call);
     const receipt = await waitForReceipt(this.pub, hash, { rpcUrls: receiptRpcUrls(this.network, this.rpcUrl) });
     if (receipt.status !== "success") throw new Error(`${call.label} reverted: ${hash}`);
+    this.pending.delete(hash.toLowerCase());
     return receipt;
+  }
+
+  async replace(hash: Hex, bumpBps = 2_500): Promise<Hex> {
+    const next = this.queue.then(async () => {
+      const prev = this.pending.get(hash.toLowerCase());
+      if (!prev) throw new Error(`no pending tx to replace: ${hash}`);
+      const bump = (value: bigint) => value + (value * BigInt(bumpBps)) / 10_000n + 1n;
+      const maxFeePerGas = bump(prev.maxFeePerGas);
+      const maxPriorityFeePerGas = bump(prev.maxPriorityFeePerGas);
+      const signed = await this.wallet.signTransaction({
+        type: "eip1559",
+        to: prev.to ?? null,
+        data: prev.data,
+        value: prev.value,
+        gas: prev.gas,
+        nonce: prev.nonce,
+        maxFeePerGas,
+        maxPriorityFeePerGas,
+      } as never);
+      const urls = receiptRpcUrls(this.network, this.rpcUrl);
+      const nextHash = await this.broadcastRaw(signed, urls);
+      this.pending.delete(hash.toLowerCase());
+      this.pending.set(nextHash.toLowerCase(), { ...prev, hash: nextHash, maxFeePerGas, maxPriorityFeePerGas });
+      this.sent.push({ label: `${prev.label} (rebroadcast)`, hash: nextHash });
+      console.log(`[relay:${this.name}] rebroadcast ${prev.label}: ${hash} -> ${nextHash} nonce=${prev.nonce}`);
+      return nextHash;
+    });
+    this.queue = next.catch(() => undefined);
+    return next;
   }
 
   /** Pad current tip so we skip a slow fee-oracle round trip inside sendTransaction and still clear the next tipset. */

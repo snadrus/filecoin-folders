@@ -21,7 +21,8 @@ import {
 import { createPublicClient, createWalletClient, custom, getAddress, hashTypedData, http, type Address, type Hex, type PublicClient } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { CHAIN_IDS, DEFAULT_VOLUME, DEFAULT_SPONSOR_LIMITS, registryConfig, rpcOf, sponsoredPurchaseUsd, type ChainChoice } from "./config.js";
-import { buySponsoredCredits, createSponsoredDataset, sponsorPricing } from "./credits.js";
+import { buySponsoredCredits, createSponsoredDataset, sponsorPricing, rememberedCheckoutSession, withHandoverRetry, type HandoverRetryStatus } from "./credits.js";
+import { trackSponsoredOp } from "./ops-log.js";
 import { findPasskeyAccount, findSponsoredAccount, passkeySponsorSigner, sessionSponsorSigner, walletSponsorSigner, type SponsorSigner, type SponsorTyped } from "./auth.js";
 import { guardSponsoredSynapse, guardStorage } from "./guards.js";
 import {
@@ -37,6 +38,21 @@ import {
 } from "./persist.js";
 import { passkeyAssert, encodeContractAssertion, type PasskeyPublicKey } from "./passkey.js";
 import { addSessionKeyData, liveRemovalAdapters, relayExecute, sponsoredTransport, type RemovalAdapters } from "./relay.js";
+
+
+function handoverCall<T>(id: string, kind: "upload" | "commit" | "dataset", label: string, action: () => Promise<T>): Promise<T> {
+  const sessionId = rememberedCheckoutSession();
+  trackSponsoredOp({ id, kind, label, state: "sent" });
+  const onStatus = (state: HandoverRetryStatus, detail?: string) => trackSponsoredOp({ id, kind, label, state, detail });
+  return withHandoverRetry(action, { sessionId, onStatus });
+}
+
+function withHandoverCalls(storage: Storage, registry: Registry): { storage: Storage; registry: Registry } {
+  return {
+    storage: { ...storage, put: (data, opts) => handoverCall(`addpieces:${Date.now()}`, "upload", "Add pieces to storage", () => storage.put(data, opts)) },
+    registry: { ...registry, commit: (input) => handoverCall(`commit:${Date.now()}`, "commit", "Commit folder registry", () => registry.commit(input)) },
+  };
+}
 
 export const SESSION_PERMISSION_ERROR =
   "Session key does not have the required permissions. Please login and sync expirations with the session key first.";
@@ -232,6 +248,7 @@ export async function openSponsoredVolume(opts: OpenSponsoredVolumeOptions): Pro
     ...(opts.wrapMigration ? { wrapMigration: opts.wrapMigration } : {}),
   });
   if (opts.wrapRegistry) registry = opts.wrapRegistry(registry);
+  ({ storage, registry } = withHandoverCalls(storage, registry));
 
   const volume = await openVolume({ storage, registry, owner: payer, name: volumeName, encryption: opts.encryption });
   const identity = opts.identity;

@@ -40,6 +40,8 @@ import {
   sponsoredCreditStatus,
   creditLooksReady,
   creditReturnedToPending,
+  creditHandoverConfirmed,
+  trackSponsoredOp,
   CHECKOUT_SESSION_KEY,
   rememberCheckoutSession,
   rememberedCheckoutSession,
@@ -170,6 +172,39 @@ export function createLiveOnboarding(options: LiveOnboardingOptions = {}): Onboa
   let checkoutSessionId: string | null = rememberedCheckoutSession();
   let sponsoredCreditReady = false;
 
+  function followHandover(sessionId: string, account?: string | null, finality?: string | null): void {
+    const handoverId = `handover:${sessionId}`;
+    const sessionOpId = `session-key:${sessionId}`;
+    const mark = (state: "sent" | "retrying" | "confirmed" | "failed", detail?: string) => {
+      trackSponsoredOp({ id: handoverId, kind: "handover", label: "Set up storage account", state, detail });
+      trackSponsoredOp({ id: sessionOpId, kind: "session", label: "Register session key", state, detail });
+    };
+    if (creditHandoverConfirmed({ finality })) {
+      mark("confirmed");
+      return;
+    }
+    mark("sent", account ? "Broadcast" : "Sending");
+    const tick = async () => {
+      const status = await sponsoredCreditStatus(sessionId).catch(() => undefined);
+      if (!status) {
+        setTimeout(() => void tick(), 2000);
+        return;
+      }
+      if (creditHandoverConfirmed(status)) {
+        mark("confirmed");
+        return;
+      }
+      if (status.status === "failed") {
+        mark("failed", "Account setup failed");
+        return;
+      }
+      if (creditReturnedToPending(status)) mark("retrying", "Resubmitting account setup");
+      else mark(status.finality === "sent" ? "sent" : "retrying");
+      setTimeout(() => void tick(), 2000);
+    };
+    void tick();
+  }
+
   async function refreshSponsoredCredit(): Promise<void> {
     if (!checkoutSessionId) return;
     const status = await sponsoredCreditStatus(checkoutSessionId).catch(() => undefined);
@@ -222,10 +257,15 @@ export function createLiveOnboarding(options: LiveOnboardingOptions = {}): Onboa
         sponsoredCreditReady = true;
         payer = getAddress(status.account);
         for (const chainId of [calibration.id, mainnet.id]) {
-          if (loadPendingSession(chainId)) bindPendingSession(chainId, payer);
+          if (loadPendingSession(chainId)) {
+            const stored = bindPendingSession(chainId, payer);
+            if (stored) confirmedLogins.set(stored.sessionAddress.toLowerCase(), Date.now());
+          }
         }
+        followHandover(sessionId, status.account, status.finality);
       } else if (status && creditReturnedToPending(status)) {
         sponsoredCreditReady = false;
+        followHandover(sessionId, null, status.finality);
       }
       params.delete("checkout");
       params.delete("session_id");
@@ -657,7 +697,7 @@ export function createLiveOnboarding(options: LiveOnboardingOptions = {}): Onboa
           gate = sessionUsable(stored, now) ? "ok" : "expired";
         }
       }
-      const sessionReady = Boolean(stored && gate !== "expired");
+      const sessionReady = Boolean(stored && (gate !== "expired" || (isSponsored() && sessionUsable(stored, now))));
       const remembered = selectedDataset || loadLastDataset(chain.id, address);
       const chosen = chooseDataset(datasets, remembered);
       const autoPicked = wasAutoPicked(datasets, remembered, chosen.selectedId);

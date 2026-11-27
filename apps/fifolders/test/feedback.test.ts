@@ -410,3 +410,38 @@ describe("editor title names the file (item 8)", () => {
     expect(new TextDecoder().decode(await session.volume.get("/FiPen/Trip plan.fipen"))).toContain("three");
   });
 });
+
+describe("transaction log outstanding work", () => {
+  it("shows sent, retrying, confirmed, and failed-with-retry for unconfirmed actions", async () => {
+    for (const op of [
+      newOp({ id: "handover-1", kind: "handover" as never, label: "Set up storage account", stage: "sent", status: "sent" as never }),
+      newOp({ id: "session-1", kind: "session", label: "Register session key", stage: "retrying", status: "retrying" as never }),
+      newOp({ id: "addpieces-1", kind: "upload", label: "Add pieces to storage", stage: "sent", status: "sent" as never }),
+      newOp({ id: "commit-1", kind: "commit", label: "Commit folder registry", stage: "failed", status: "error", error: "reverted" }),
+    ]) upsertOp(op);
+    const session = await openMockSession();
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const app = new DriveApp({
+      volume: session.volume,
+      owner: session.owner,
+      chain: "calibration",
+      encrypted: false,
+      volumeName: session.volumeName,
+      cas: session.cas,
+      felarumiUrl: "./felarumi/",
+      felanumioUrl: "./felanumio/",
+    });
+    app.mount(root);
+    await settle(app);
+    (app as unknown as { finishOp: (id: string) => void }).finishOp("addpieces-1");
+    (app as unknown as { txlogOpen: boolean }).txlogOpen = true;
+    app.mount(root);
+    const items = [...root.querySelectorAll("[data-testid=activity-item]")];
+    const states = items.map((item) => (item as HTMLElement).dataset.state);
+    expect(states).toEqual(expect.arrayContaining(["sent", "retrying", "confirmed", "failed"]));
+    expect(root.querySelector("[data-testid=txlog] [data-state=failed] [data-testid=retry-activity]")).toBeTruthy();
+    expect(root.querySelector("[data-testid=setup-note]")).toBeNull();
+    expect(root.querySelector("[data-testid=txlog]")).toBeTruthy();
+  });
+});

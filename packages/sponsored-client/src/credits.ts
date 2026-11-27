@@ -40,6 +40,55 @@ export function creditReturnedToPending(status: { status?: string }): boolean {
   return status.status === "pending" || status.status === "failed";
 }
 
+/** Worker has confirmed the handover landed (not merely broadcast). After this, call failures are real errors. */
+export function creditHandoverConfirmed(status: { finality?: string | null }): boolean {
+  return status.finality === "included" || status.finality === "finalized";
+}
+
+export type HandoverRetryStatus = "sent" | "retrying" | "confirmed" | "failed";
+
+/**
+ * Fire a sponsor-relayed contract call immediately. If it rejects and the worker has never
+ * confirmed handover, treat it as not-ready and retry with backoff. After confirmation,
+ * the rejection is surfaced as a real error.
+ */
+export async function withHandoverRetry<T>(
+  action: () => Promise<T>,
+  opts: {
+    sessionId?: string | null;
+    chain?: ChainChoice;
+    isConfirmed?: () => boolean | Promise<boolean>;
+    onStatus?: (state: HandoverRetryStatus, detail?: string) => void;
+    timeoutMs?: number;
+    intervalMs?: number;
+  } = {},
+): Promise<T> {
+  const end = Date.now() + (opts.timeoutMs ?? 5 * 60_000);
+  let delay = opts.intervalMs ?? 800;
+  let attempt = 0;
+  for (;;) {
+    try {
+      const result = await action();
+      opts.onStatus?.("confirmed");
+      return result;
+    } catch (error) {
+      const confirmed = opts.isConfirmed
+        ? await opts.isConfirmed()
+        : opts.sessionId
+          ? creditHandoverConfirmed(await sponsoredCreditStatus(opts.sessionId, opts.chain).catch(() => ({})))
+          : false;
+      if (confirmed || Date.now() > end) {
+        opts.onStatus?.("failed", error instanceof Error ? error.message : String(error));
+        throw error;
+      }
+      attempt += 1;
+      opts.onStatus?.("retrying", `Waiting for account setup (try ${attempt})`);
+      await new Promise((resolve) => setTimeout(resolve, delay));
+      delay = Math.min(delay * 2, 8_000);
+    }
+  }
+}
+
 export const CHECKOUT_SESSION_KEY = "fifolders.sponsoredCheckout";
 
 export function rememberCheckoutSession(sessionId: string): void {
@@ -60,11 +109,11 @@ export async function waitForCredit(
 
   sessionId: string,
   opts: { timeoutMs?: number; intervalMs?: number; chain?: ChainChoice } = {},
-): Promise<{ status: string; account?: Address }> {
+): Promise<{ status: string; account?: Address; finality?: string | null }> {
   const end = Date.now() + (opts.timeoutMs ?? 15 * 60_000);
   for (;;) {
     const status = await sponsoredCreditStatus(sessionId, opts.chain);
-    // Ready when assign appears in a new head (optimistic; a later pending means revert/drop/reorg).
+    // Ready when the sponsor has broadcast prepareSession + factory.assign (later pending means unwind).
     if (creditLooksReady(status)) return status;
     if (status.status === "failed" || status.status === "unknown" || status.status === "refunded" || Date.now() > end) return status;
     await new Promise((resolve) => setTimeout(resolve, opts.intervalMs ?? 1_000));
@@ -82,7 +131,7 @@ export async function createSponsoredDataset(
 }
 
 /** After Stripe redirects back (`?checkout=success&session_id=`), wait for the credit and clean the URL. */
-export async function settleReturnedCheckout(opts: { chain?: ChainChoice; timeoutMs?: number } = {}): Promise<{ status: string; account?: Address } | null> {
+export async function settleReturnedCheckout(opts: { chain?: ChainChoice; timeoutMs?: number } = {}): Promise<{ status: string; account?: Address; finality?: string | null } | null> {
   if (typeof window === "undefined" || !window.location?.search) return null;
   const params = new URLSearchParams(window.location.search);
   const sessionId = params.get("session_id");

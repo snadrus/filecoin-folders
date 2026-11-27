@@ -147,7 +147,10 @@ export interface CreditRecord {
   sessionExpiry?: string;
   /** Included handover txs, recorded at inclusion (not finality). */
   inclusion?: { kind: string; hash: Hex; blockNumber: string; blockHash: Hex }[];
-  finality?: "included" | "finalized" | "dropped";
+  finality?: "sent" | "included" | "finalized" | "dropped";
+  /** Head block when the current handover tx was broadcast or last rebroadcast. */
+  sentAtBlock?: string;
+  rebroadcasts?: number;
   /** End-to-end handover timestamps (ISO) and durations (ms) for latency traces. */
   timing?: Record<string, string | number | undefined>;
 }
@@ -272,6 +275,8 @@ export interface SponsorDeps {
   persist?: (state: SponsorState) => void;
   /** Clock (tests). */
   now?: () => number;
+  /** Rebroadcast a still-pending handover tx if it is not in a head within this many epochs. Default 2. */
+  includeWithinEpochs?: number;
 }
 
 function randomHex(bytes: number): string {
@@ -287,6 +292,8 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
   const pub = deps.pub ?? publicClient({ network: config.network, rpc: deps.rpc });
   if (!deps.relayer && !deps.sponsorKey) throw new Error("Set SPONSOR_KEY");
   const relayer = deps.relayer ?? new SponsorWalletRelayer(deps.sponsorKey!, { network: config.network, rpc: deps.rpc });
+  const includeWithinEpochs = deps.includeWithinEpochs ?? 2;
+  const maxRebroadcasts = 8;
   const receiptWait = (hash: Hex) => waitForReceipt(pub, hash, { rpcUrls: deps.pub ? undefined : receiptRpcUrls(config.network, deps.rpc) });
   const { pay: PAY, usdfc: USDFC, fwss: FWSS, pdp: PDP } = config.contracts;
   const loaded = deps.state ?? {};
@@ -550,13 +557,96 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
     }
   }
 
+  async function headNumber(): Promise<bigint> {
+    try {
+      return await pub.getBlockNumber();
+    } catch {
+      return 0n;
+    }
+  }
+
+  async function peekHandoverInclusion(hash: Hex): Promise<{ blockNumber: bigint; blockHash: Hex; reverted?: boolean } | undefined> {
+    const want = hash.toLowerCase();
+    try {
+      const receipt = await pub.getTransactionReceipt({ hash });
+      if (receipt?.blockHash) {
+        return { blockNumber: BigInt(receipt.blockNumber), blockHash: receipt.blockHash as Hex, reverted: receipt.status === "reverted" };
+      }
+    } catch { /* not mined yet */ }
+    try {
+      const block = await pub.getBlock({ blockTag: "latest", includeTransactions: true } as never);
+      const txs = ((block as { transactions?: unknown[] }).transactions ?? []).map((item) => {
+        if (typeof item === "string") return item.toLowerCase();
+        if (item && typeof item === "object" && "hash" in item && typeof (item as { hash: unknown }).hash === "string") return ((item as { hash: string }).hash).toLowerCase();
+        return "";
+      });
+      if (txs.includes(want) && block?.hash && block.number != null) {
+        return { blockNumber: BigInt(block.number), blockHash: block.hash as Hex };
+      }
+    } catch { /* head not available */ }
+    return undefined;
+  }
+
+  function latestHandoverHash(credit: CreditRecord): Hex | undefined {
+    const included = (credit.inclusion ?? []).filter((row) => row.kind === "assign" || row.kind === "create");
+    if (credit.hash && (credit.finality === "sent" || !included.length)) return credit.hash;
+    return included.at(-1)?.hash ?? credit.hash ?? credit.hashes.at(-1);
+  }
+
+  async function markUsableAtSend(credit: CreditRecord, account: Address, path: "pool" | "create" | "topup", sessionId: string): Promise<void> {
+    credit.account = account;
+    credit.status = "done";
+    credit.path = path;
+    credit.finality = credit.finality === "finalized" || credit.finality === "included" ? credit.finality : "sent";
+    credit.sentAtBlock = (await headNumber()).toString();
+    delete credit.error;
+    markTiming(credit, "ready", { session: sessionId, path });
+    save();
+  }
+
+  async function rebroadcastHandover(credit: CreditRecord, hash: Hex): Promise<Hex | undefined> {
+    if (!relayer.replace) return undefined;
+    if ((credit.rebroadcasts ?? 0) >= maxRebroadcasts) return undefined;
+    const next = await relayer.replace(hash);
+    credit.hashes = [...(credit.hashes ?? []).filter((h) => h.toLowerCase() !== hash.toLowerCase()), next];
+    credit.hash = next;
+    credit.rebroadcasts = (credit.rebroadcasts ?? 0) + 1;
+    credit.sentAtBlock = (await headNumber()).toString();
+    credit.finality = "sent";
+    markTiming(credit, "rebroadcast", { from: hash, to: next, n: credit.rebroadcasts });
+    save();
+    console.warn("[sponsor] rebroadcast handover", hash, "->", next);
+    return next;
+  }
+
   async function waitAndRecord(credit: CreditRecord, kind: string, hash: Hex): Promise<{ transactionHash: Hex; status: string; blockNumber?: bigint; blockHash?: Hex }> {
     const included = await waitForTxInHead(pub, hash, { rpcUrls: deps.pub ? undefined : receiptRpcUrls(config.network, deps.rpc) });
     if (included.reverted) throw new Error(`${kind} reverted: ${hash}`);
     recordInclusion(credit, kind, { transactionHash: hash, blockNumber: included.blockNumber, blockHash: included.blockHash });
-    // Cron is every 10 minutes; confirm the execution receipt in the background and unwind on revert/drop.
     void confirmOptimisticReceipt(credit, kind, hash);
     return { transactionHash: hash, status: "success", blockNumber: included.blockNumber, blockHash: included.blockHash };
+  }
+
+  /** Watch tipsets after a broadcast-as-usable handover; bump fees / resubmit rather than waiting on cron. */
+  async function ensureHandoverLanding(credit: CreditRecord): Promise<void> {
+    const deadline = Date.now() + 20 * 60_000;
+    const landed = () => credit.finality === "included" || credit.finality === "finalized";
+    while (Date.now() < deadline) {
+      if (landed()) return;
+      if (credit.status === "failed" || credit.status === "pending") return;
+      try {
+        await checkHandoverFinality();
+      } catch (error) {
+        console.warn("[sponsor] landing watch", error);
+      }
+      if (landed()) return;
+      await new Promise((resolve) => setTimeout(resolve, 1_500));
+    }
+    if (!landed()) {
+      credit.error = "handover not yet included; still retrying";
+      save();
+      console.warn("[sponsor] handover stuck", credit.hash, "rebroadcasts", credit.rebroadcasts ?? 0);
+    }
   }
 
   async function confirmOptimisticReceipt(credit: CreditRecord, kind: string, hash: Hex): Promise<void> {
@@ -594,7 +684,7 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
     }
   }
 
-  /** Apply one paid session, at most once. Handover txs are sent back-to-back (nonce-ordered) and marked ready once the assign tx appears in a new head, before an execution receipt. */
+  /** Apply one paid session, at most once. Handover txs are sent back-to-back (nonce-ordered) and marked ready as soon as prepareSession + factory.assign are broadcast. Inclusion is watched in the background with fee bumps and resubmits. */
   function queueCredit(sessionId: string, credentialArg?: string): Promise<unknown> {
     creditQueue = creditQueue.then(async () => {
       const credit = state.credits[sessionId];
@@ -663,20 +753,15 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
             });
             credit.hashes.push((credit.hash = assignHash));
             markTiming(credit, "assignSent", { session: sessionId, assignHash });
-            save();
-            const included = await waitAndRecord(credit, "assign", assignHash);
-            markTiming(credit, "assignIncluded", { session: sessionId, assignBlock: included.blockNumber != null ? included.blockNumber.toString() : undefined, assignBlockHash: included.blockHash });
             pooled.status = "assigned";
             record = state.users[credit.identity] = { owner: ownerOf(identity), account: pooled.account, sessionExpiry: pooled.sessionExpiry, dataSetId: pooled.dataSetId, providerId: pooled.providerId, dataSetTx: pooled.dataSetTx, via: "pool", ...(credential ? { credentialId: credential } : {}) };
-            credit.account = pooled.account;
             credit.depositUsdfc = topUp.toString();
             credit.usdfc = (amount > seed ? amount : seed).toString();
-            credit.status = "done";
-            credit.finality = "included";
-            delete credit.error;
-            markTiming(credit, "ready", { session: sessionId, path: "pool" });
-            save();
-            void maybeInstallSession(credit, pooled.account);
+            // Usable as soon as prepareSession + factory.assign are broadcast; landing is watched in the background.
+            await markUsableAtSend(credit, pooled.account, "pool", sessionId);
+            void ensureHandoverLanding(credit).then(() => {
+              if (credit.account) void maybeInstallSession(credit, credit.account);
+            });
             void refillPool();
           } else {
             // Slow path: create, fund, open the dataset.
@@ -685,13 +770,17 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
             const args = ownerArgs(identity);
             const account = getAddress((await pub.readContract({ address: config.factory, abi: lockedFactoryAbi, functionName: "predict", args: [...args, 0n, sessionExpiry] })) as Address);
             const createHash = await relayer.send({ to: config.factory, label: `create account for ${credit.identity}`, data: encodeFunctionData({ abi: lockedFactoryAbi, functionName: "create", args: [...args, 0n, sessionExpiry] }) });
-            credit.hashes.push(createHash);
-            save();
-            await waitAndRecord(credit, "create", createHash);
+            credit.hashes.push((credit.hash = createHash));
             record = state.users[credit.identity] = { owner: ownerOf(identity), account, sessionExpiry: sessionExpiry.toString(), via: "create", ...(credential ? { credentialId: credential } : {}) };
-            credit.account = account;
-            save();
-            if (credit.sessionKey) void maybeInstallSession(credit, account);
+            await markUsableAtSend(credit, account, "create", sessionId);
+            void ensureHandoverLanding(credit).then(async () => {
+              if (credit.sessionKey && credit.account) void maybeInstallSession(credit, credit.account);
+            });
+            try {
+              await waitAndRecord(credit, "create", createHash);
+            } catch (error) {
+              console.warn("[sponsor] create landing", error);
+            }
             if (amount > 0n) {
               credit.hashes.push((credit.hash = await deposit(account, amount, `credit ${account} (${sessionId})`)));
               const receipt = await pub.getTransactionReceipt({ hash: credit.hash }).catch(() => undefined);
@@ -1128,18 +1217,70 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
   }
 
   /**
-   * Re-check included handover txs until F3/`finalized` or head >= block+900.
-   * Dropped, reorged, or reverted execution receipts are resubmitted (if the account is still unassigned) or unwound, and the credit
-   * is flipped back to pending so /status and the client stop showing it as ready.
+   * Watch broadcast and included handover txs: bump fees if a tipset does not include them in time,
+   * resubmit on drop/reorg/revert, and unwind only when a resubmit is impossible.
    */
-  async function checkHandoverFinality(): Promise<{ finalized: string[]; dropped: string[]; reverted: string[]; resubmitted: string[]; unwound: string[] }> {
-    const out = { finalized: [] as string[], dropped: [] as string[], reverted: [] as string[], resubmitted: [] as string[], unwound: [] as string[] };
+  let landingTail = Promise.resolve();
+  async function checkHandoverFinality(): Promise<{ finalized: string[]; dropped: string[]; reverted: string[]; resubmitted: string[]; unwound: string[]; rebroadcast: string[]; stuck: string[] }> {
+    const run = landingTail.then(runHandoverFinality, runHandoverFinality);
+    landingTail = run.then(() => undefined, () => undefined);
+    return run;
+  }
+  async function runHandoverFinality(): Promise<{ finalized: string[]; dropped: string[]; reverted: string[]; resubmitted: string[]; unwound: string[]; rebroadcast: string[]; stuck: string[] }> {
+    const out = { finalized: [] as string[], dropped: [] as string[], reverted: [] as string[], resubmitted: [] as string[], unwound: [] as string[], rebroadcast: [] as string[], stuck: [] as string[] };
+    try {
+    const head = await headNumber();
     for (const [id, credit] of Object.entries(state.credits)) {
-      if (!credit.inclusion?.length) continue;
       if (credit.finality === "finalized") continue;
-      if (credit.status !== "done" && credit.finality !== "included") continue;
+      if (credit.status !== "done" && credit.finality !== "included" && credit.finality !== "sent") continue;
+      const hash = latestHandoverHash(credit);
+      if (!hash && !credit.inclusion?.length) continue;
+
+      if (credit.finality === "sent" || !credit.inclusion?.length) {
+        if (!hash) continue;
+        let found: { blockNumber: bigint; blockHash: Hex; reverted?: boolean } | undefined;
+        try {
+          found = await peekHandoverInclusion(hash);
+        } catch {
+          found = undefined;
+        }
+        if (found && !found.reverted) {
+          recordInclusion(credit, credit.path === "create" ? "create" : "assign", { transactionHash: hash, blockNumber: found.blockNumber, blockHash: found.blockHash });
+          credit.finality = "included";
+          delete credit.error;
+          markTiming(credit, "assignIncluded", { session: id, assignBlock: found.blockNumber.toString(), assignBlockHash: found.blockHash });
+          save();
+          if (credit.account) void maybeInstallSession(credit, credit.account);
+          continue;
+        }
+        if (found?.reverted) {
+          out.reverted.push(id);
+          await recoverHandover(id, credit, "reverted", out);
+          continue;
+        }
+        const sentAt = BigInt(credit.sentAtBlock ?? "0");
+        if (sentAt && head >= sentAt + BigInt(includeWithinEpochs)) {
+          try {
+            const next = await rebroadcastHandover(credit, hash);
+            if (next) {
+              out.rebroadcast.push(id);
+              continue;
+            }
+          } catch (error) {
+            console.warn("[sponsor] rebroadcast failed", error);
+          }
+          if ((credit.rebroadcasts ?? 0) >= maxRebroadcasts) {
+            credit.error = "handover not included after fee bumps; retrying";
+            out.stuck.push(id);
+            save();
+            await recoverHandover(id, credit, "dropped", out);
+          }
+        }
+        continue;
+      }
+
       let worst: "finalized" | "included" | "dropped" | "reverted" = "finalized";
-      for (const row of credit.inclusion) {
+      for (const row of credit.inclusion ?? []) {
         const recorded: RecordedInclusion = { hash: row.hash, blockNumber: row.blockNumber, blockHash: row.blockHash };
         const result = await receiptFate(pub, recorded, { finalityEpochs: FINALITY_EPOCHS });
         if (result.fate === "dropped" || result.fate === "reverted") {
@@ -1163,65 +1304,89 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
         save();
         continue;
       }
-      credit.finality = "dropped";
-      credit.status = "pending";
-      credit.error = worst === "reverted" ? "handover tx reverted; retrying" : "handover tx dropped or reorged; retrying";
-      const account = credit.account;
-      delete credit.account;
+      if (worst === "dropped" && hash) {
+        try {
+          const next = await rebroadcastHandover(credit, hash);
+          if (next) {
+            out.rebroadcast.push(id);
+            out.dropped.push(id);
+            continue;
+          }
+        } catch (error) {
+          console.warn("[sponsor] rebroadcast after drop failed", error);
+        }
+      }
       out.dropped.push(id);
       if (worst === "reverted") out.reverted.push(id);
-      save();
-      if (credit.path === "pool" && account) {
-        let unassigned = true;
-        try {
-          unassigned = (await pub.readContract({ address: account, abi: poolAccountAbi, functionName: "unassigned" })) as boolean;
-        } catch {
-          unassigned = true;
+      await recoverHandover(id, credit, worst, out);
+    }
+    } finally { /* serialized via landingTail */ }
+    return out;
+  }
+
+  /** Resubmit a failed handover. Unwind the pool account only when that is required to send again. */
+  async function recoverHandover(id: string, credit: CreditRecord, reason: "dropped" | "reverted", out: { resubmitted: string[]; unwound: string[]; stuck: string[] }): Promise<void> {
+    const account = credit.account;
+    credit.error = reason === "reverted" ? "handover tx reverted; retrying" : "handover tx dropped or reorged; retrying";
+    save();
+    if (credit.path === "pool" && account) {
+      let unassigned = true;
+      try {
+        unassigned = (await pub.readContract({ address: account, abi: poolAccountAbi, functionName: "unassigned" })) as boolean;
+      } catch {
+        unassigned = true;
+      }
+      const entry = Object.values(state.pool).find((item) => item.account.toLowerCase() === account.toLowerCase());
+      if (!unassigned && entry) {
+        // Still assigned on-chain — keep the credit ready; a receipt drop was a false read.
+        credit.account = account;
+        credit.status = "done";
+        credit.finality = "included";
+        delete credit.error;
+        entry.status = "assigned";
+        save();
+        return;
+      }
+      if (unassigned) {
+        if (entry) {
+          entry.status = "ready";
+          delete entry.assignedTo;
         }
-        const entry = Object.values(state.pool).find((item) => item.account.toLowerCase() === account.toLowerCase());
-        if (unassigned) {
-          if (entry) {
-            entry.status = "ready";
-            delete entry.assignedTo;
-          }
-          if (credit.identity && state.users[credit.identity]?.account?.toLowerCase() === account.toLowerCase()) {
-            delete state.users[credit.identity];
-          }
-          out.unwound.push(id);
-          save();
-          try {
-            await queueCredit(id, credit.credential);
-            if (state.credits[id]?.status === "done") out.resubmitted.push(id);
-          } catch (error) {
-            credit.status = "pending";
-            credit.error = `resubmit: ${error instanceof Error ? error.message : String(error)}`;
-            save();
-          }
-        } else if (entry) {
-          // Chain still has the assignment; receipt drop was a false read — restore ready.
-          credit.account = account;
-          credit.status = "done";
-          credit.finality = "included";
-          delete credit.error;
-          entry.status = "assigned";
-          if (credit.identity && !state.users[credit.identity]) {
-            const identity = parseIdentityId(credit.identity);
-            if (identity) state.users[credit.identity] = { owner: ownerOf(identity), account, sessionExpiry: entry.sessionExpiry, dataSetId: entry.dataSetId, providerId: entry.providerId, dataSetTx: entry.dataSetTx, via: "pool", ...(credit.credential ? { credentialId: credit.credential } : {}) };
-          }
-          save();
+        if (credit.identity && state.users[credit.identity]?.account?.toLowerCase() === account.toLowerCase()) {
+          delete state.users[credit.identity];
         }
-      } else {
+        credit.status = "pending";
+        delete credit.account;
+        delete credit.inclusion;
+        delete credit.hash;
+        credit.finality = "dropped";
+        out.unwound.push(id);
+        save();
         try {
           await queueCredit(id, credit.credential);
           if (state.credits[id]?.status === "done") out.resubmitted.push(id);
         } catch (error) {
-          credit.status = "pending";
+          credit.status = "failed";
           credit.error = `resubmit: ${error instanceof Error ? error.message : String(error)}`;
+          out.stuck.push(id);
           save();
         }
+        return;
       }
     }
-    return out;
+    credit.status = "pending";
+    delete credit.account;
+    credit.finality = "dropped";
+    save();
+    try {
+      await queueCredit(id, credit.credential);
+      if (state.credits[id]?.status === "done") out.resubmitted.push(id);
+    } catch (error) {
+      credit.status = "failed";
+      credit.error = `resubmit: ${error instanceof Error ? error.message : String(error)}`;
+      out.stuck.push(id);
+      save();
+    }
   }
 
   /** Background tick (Worker cron / Node interval): owed credits first, then the pool, then deferred sweeps. */

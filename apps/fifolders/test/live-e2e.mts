@@ -3,7 +3,7 @@ import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { chromium, type Page } from "@playwright/test";
 import { payOnPage } from "./support/stripe-pay.js";
 
-const OUT = "/workspace/fil-gasless/live";
+const OUT = process.env.LIVE_E2E_OUT || "/workspace/fil-gasless/live";
 const SITE = "https://fifolders.scionbase.ai";
 const PURCHASE_USD = 3.91;
 const CRED_FILE = `${OUT}/webauthn.credential.json`;
@@ -63,6 +63,18 @@ const snap = async (p: Page, name: string) => {
 };
 const textOf = async (p: Page) => (await p.locator("body").innerText()).replace(/\s+/g, " ").slice(0, 800);
 const visible = async (p: Page, testId: string) => p.getByTestId(testId).first().isVisible().catch(() => false);
+const openTxlog = async (p: Page) => {
+  if (!(await visible(p, "txlog"))) await clickIf(p, "txlog-toggle");
+};
+const snapTxlog = async (p: Page, name: string) => {
+  await openTxlog(p);
+  const states = await p.locator("[data-testid=activity-item]").evaluateAll((els) =>
+    els.map((el) => `${(el as HTMLElement).dataset.state ?? (el as HTMLElement).dataset.status}:${el.textContent?.replace(/\s+/g, " ").trim()}`),
+  );
+  say(`txlog ${name}: ${states.join(" | ") || "empty"}`);
+  log[`txlog_${name}`] = states;
+  await snap(p, name);
+};
 
 async function clickIf(p: Page, testId: string) {
   if (await visible(p, testId)) {
@@ -328,6 +340,7 @@ try {
   }, 500);
   const handover = { ok: true, seconds: Math.round((Date.now() - tHandover) / 1000), text: "" };
   await snap(page, "paid-ready");
+  await snapTxlog(page, "txlog-handover");
   handover.text = await textOf(page);
   steps.handover = handover;
   say(`payments ready after ${handover.seconds}s`);
@@ -340,6 +353,11 @@ try {
     secReturnToWorkerReady: log.secReturnToWorkerReady ?? null,
     secReturnToPasskey: log.tPasskeyIn && tPayment ? Math.round((Date.parse(String(log.tPasskeyIn)) - tPayment) / 1000) : null,
     secReturnToUiReady: log.secPaymentToPaymentsReady,
+    secReturnToUploadStart: log.secReturnToUploadStart ?? null,
+    secReturnToAddPieces: log.secReturnToAddPieces ?? null,
+    secReturnToSave: log.secPaymentToFirstSave ?? null,
+    prevReturnToUiReady61s: 61,
+    prevReturnToUiReady71s: 71,
     creditTiming: log.creditTiming ?? null,
   };
   log.stages = stages;
@@ -444,12 +462,21 @@ try {
     await page.keyboard.press("Escape").catch(() => undefined);
   }
   const putFile = async (reason: string) => {
+    const beforeExecute = executeBodies.length;
     await page.getByTestId("file-input").setInputFiles({ name: fileName, mimeType: "text/plain", buffer: fileBytes });
+    if (!log.tUploadStart) {
+      log.tUploadStart = new Date().toISOString();
+      log.secReturnToUploadStart = Math.round((Date.now() - tPayment) / 1000);
+      say(`upload started ${log.secReturnToUploadStart}s after Stripe return (${reason})`);
+    }
     say(`setInputFiles live-e2e.txt (${reason})`);
+    void beforeExecute;
   };
   await putFile("initial");
   await snap(page, "after-upload");
+  await snapTxlog(page, "txlog-addpieces");
   const tSave = Date.now();
+  const executeAtUpload = executeBodies.length;
   let lastSaveMark = 0;
   let retriedUpload = false;
   // The first resume's setInputFiles already committed this file (dataset 45 B, 10:32 PM CT).
@@ -480,6 +507,14 @@ try {
     const done = await page.locator('[data-testid=activity-item][data-status=done]').count().catch(() => 0);
     const err = await page.locator('[data-testid=activity-item][data-status=error]').count().catch(() => 0);
     const elapsed = Date.now() - tSave;
+    if (!log.tAddPieces) {
+      const added = executeBodies.length > executeAtUpload || /pieces added|Add pieces|confirming/i.test(activity);
+      if (added) {
+        log.tAddPieces = new Date().toISOString();
+        log.secReturnToAddPieces = Math.round((Date.now() - tPayment) / 1000);
+        say(`AddPieces accepted ${log.secReturnToAddPieces}s after Stripe return`);
+      }
+    }
     if (entryN === 0 && uploadN === 0 && elapsed > 15_000 && !retriedUpload) {
       retriedUpload = true;
       say(`no entry or upload row after 15s; toast=${toast || "none"}; retrying upload`);
@@ -514,8 +549,17 @@ try {
   steps.driveSave = { ok: true, file: fileName, activity: (await page.getByTestId("activity").innerText().catch(() => "")).slice(0, 400) };
   log.tFirstSave = new Date().toISOString();
   log.secPaymentToFirstSave = Math.round((Date.now() - tPayment) / 1000);
+  log.secReturnToSave = log.secPaymentToFirstSave;
   log.secSessionToFirstSave = Math.round((Date.now() - Date.parse(String(log.tSessionReady))) / 1000);
-  say(`drive file saved; payment→ready ${log.secPaymentToSessionReady}s, ready→save ${log.secSessionToFirstSave}s, payment→save ${log.secPaymentToFirstSave}s`);
+  if (log.stages && typeof log.stages === "object") {
+    Object.assign(log.stages, {
+      secReturnToUploadStart: log.secReturnToUploadStart ?? null,
+      secReturnToAddPieces: log.secReturnToAddPieces ?? null,
+      secReturnToSave: log.secReturnToSave ?? null,
+    });
+  }
+  await snapTxlog(page, "txlog-saved");
+  say(`drive file saved; return→upload ${log.secReturnToUploadStart}s, return→AddPieces ${log.secReturnToAddPieces}s, return→save ${log.secReturnToSave}s (prev UI 71s / 61s)`);
 
   // --- Identity profile ---
   await page.goto(`${SITE}/identity/`, { waitUntil: "networkidle" });

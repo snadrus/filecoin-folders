@@ -177,6 +177,7 @@ describe("sponsor server (fake chain)", () => {
     const receiptsHidden = { value: false };
     const factoryAccounts = new Set<string>();
     const block = { number: 1000n, hash: (`0x${"ab".repeat(32)}`) as Hex };
+    const holdInclusion = { value: false };
     const predicted = (args: readonly unknown[]) => getAddress(keccak256(toHex(JSON.stringify(args, (_, v) => (typeof v === "bigint" ? v.toString() : v)))).slice(0, 42));
     const pub = {
       async readContract({ functionName, args, address }: { functionName: string; args?: readonly unknown[]; address?: Address }) {
@@ -203,7 +204,10 @@ describe("sponsor server (fake chain)", () => {
       async getBlockNumber() {
         return block.number;
       },
-      async getBlock() {
+      async getBlock(args?: { blockTag?: string }) {
+        if (args?.blockTag === "finalized" || args?.blockTag === "safe") {
+          return { number: 0n, hash: (`0x${"00".repeat(32)}`) as Hex, transactions: [] };
+        }
         return { number: block.number, hash: block.hash, transactions: blockTxs.slice() };
       },
       async call() {
@@ -229,8 +233,15 @@ describe("sponsor server (fake chain)", () => {
           if (decoded.functionName === "create") factoryAccounts.add(predicted(decoded.args as readonly unknown[]).toLowerCase());
         }
         const sentHash = `0x${(++n).toString(16).padStart(64, "0")}` as Hex;
-        blockTxs.push(sentHash);
+        if (!holdInclusion.value) blockTxs.push(sentHash);
         return sentHash;
+      },
+      async replace(hash: Hex) {
+        const next = `0x${(++n).toString(16).padStart(64, "0")}` as Hex;
+        const idx = blockTxs.findIndex((item) => item.toLowerCase() === hash.toLowerCase());
+        if (idx >= 0) blockTxs.splice(idx, 1, next);
+        else if (!holdInclusion.value) blockTxs.push(next);
+        return next;
       },
       async relay(call: { label: string; to?: Address; data: Hex }) {
         const hash = await this.send(call);
@@ -277,7 +288,7 @@ describe("sponsor server (fake chain)", () => {
       const response = await fetch(`${base}${path}`);
       return { status: response.status, json: (await response.json()) as Record<string, unknown> };
     };
-    return { sponsor, sends, post, get, as, pay, opened, factoryAccounts, sponsorUsdfc, clock, onChainUnassigned, droppedReceipts, revertedReceipts, receiptsHidden, blockTxs, block };
+    return { sponsor, sends, post, get, as, pay, opened, factoryAccounts, sponsorUsdfc, clock, onChainUnassigned, droppedReceipts, revertedReceipts, receiptsHidden, blockTxs, block, holdInclusion, relayer };
   }
 
   const newUser = () => {
@@ -556,8 +567,10 @@ describe("sponsor server (fake chain)", () => {
     expect(hook.status).toBe(200);
     expect(hook.json).toMatchObject({ received: true });
     await sponsor.settled();
-    expect(sponsor.state.credits[sessionId]).toMatchObject({ status: "done", path: "pool", sessionKey: user.key.address, finality: "included" });
-    expect((await get(`/credits?session=${sessionId}`)).json).toMatchObject({ status: "done", account: expect.any(String), finality: "included" });
+    await sponsor.checkHandoverFinality();
+    expect(sponsor.state.credits[sessionId]).toMatchObject({ status: "done", path: "pool", sessionKey: user.key.address });
+    expect(["included", "finalized"]).toContain(sponsor.state.credits[sessionId]!.finality);
+    expect((await get(`/credits?session=${sessionId}`)).json).toMatchObject({ status: "done", account: expect.any(String) });
     const again = await post("/stripe/webhook", raw, { "stripe-signature": stripeSignatureHeader(raw, WHSEC) });
     expect(again.json).toMatchObject({ received: true, duplicate: true });
   });
@@ -569,6 +582,7 @@ describe("sponsor server (fake chain)", () => {
     expect((await as(user.signed)("checkout", checkoutBody(5))).status).toBe(200);
     await pay("cs_drop", user.id, 500);
     await sponsor.settled();
+    await sponsor.checkHandoverFinality();
     const credit = sponsor.state.credits.cs_drop!;
     expect(credit.status).toBe("done");
     expect(credit.finality).toBe("included");
@@ -583,7 +597,7 @@ describe("sponsor server (fake chain)", () => {
     const tick = await sponsor.cronTick();
     expect(tick.finality.dropped).toContain("cs_drop");
     const after = sponsor.state.credits.cs_drop!;
-    if (tick.finality.resubmitted.includes("cs_drop")) {
+    if (tick.finality.resubmitted.includes("cs_drop") || tick.finality.rebroadcast.includes("cs_drop") || (after.status === "done" && after.hash !== hash)) {
       expect(after.status).toBe("done");
       expect(after.hash).not.toBe(hash);
     } else {
@@ -601,6 +615,7 @@ describe("sponsor server (fake chain)", () => {
     receiptsHidden.value = true;
     await pay("cs_head", user.id, 500);
     await sponsor.settled();
+    await sponsor.checkHandoverFinality();
     const credit = sponsor.state.credits.cs_head!;
     expect(credit.status).toBe("done");
     expect(credit.finality).toBe("included");
@@ -618,6 +633,7 @@ describe("sponsor server (fake chain)", () => {
     receiptsHidden.value = true;
     await pay("cs_revert", user.id, 500);
     await sponsor.settled();
+    await sponsor.checkHandoverFinality();
     const credit = sponsor.state.credits.cs_revert!;
     expect(credit.status).toBe("done");
     const account = credit.account!;
@@ -641,5 +657,42 @@ describe("sponsor server (fake chain)", () => {
       expect(after.account).toBeUndefined();
       expect((await get("/credits?session=cs_revert")).json).toMatchObject({ status: "pending" });
     }
+  });
+
+  it("marks a credit usable as soon as prepareSession + assign are broadcast", async () => {
+    const { sponsor, as, pay, get, receiptsHidden, holdInclusion } = await start({ pool: 1 });
+    await sponsor.refillPool();
+    const user = newUser();
+    expect((await as(user.signed)("checkout", checkoutBody(5))).status).toBe(200);
+    receiptsHidden.value = true;
+    holdInclusion.value = true;
+    await pay("cs_sent", user.id, 500);
+    await sponsor.settled();
+    const credit = sponsor.state.credits.cs_sent!;
+    expect(credit.status).toBe("done");
+    expect(credit.finality).toBe("sent");
+    expect(credit.account).toBeTruthy();
+    expect((await get("/credits?session=cs_sent")).json).toMatchObject({ status: "done", account: expect.any(String), finality: "sent" });
+  });
+
+  it("rebroadcasts a handover that is not included within N epochs", async () => {
+    const { sponsor, as, pay, receiptsHidden, holdInclusion, block } = await start({ pool: 1 });
+    await sponsor.refillPool();
+    const user = newUser();
+    expect((await as(user.signed)("checkout", checkoutBody(5))).status).toBe(200);
+    receiptsHidden.value = true;
+    holdInclusion.value = true;
+    await pay("cs_rebroadcast", user.id, 500);
+    await sponsor.settled();
+    const credit = sponsor.state.credits.cs_rebroadcast!;
+    expect(credit.finality).toBe("sent");
+    const hash = credit.hash;
+    block.number += 2n;
+    holdInclusion.value = false;
+    const tick = await sponsor.cronTick();
+    expect(tick.finality.rebroadcast).toContain("cs_rebroadcast");
+    const after = sponsor.state.credits.cs_rebroadcast!;
+    expect(after.hash).toBeTruthy();
+    expect(after.hash).not.toBe(hash);
   });
 });

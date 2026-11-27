@@ -71,7 +71,9 @@ export interface ContextState {
 export interface ActivityRow {
   id: string;
   label: string;
-  status: "pending" | "done" | "error";
+  status: "pending" | "sent" | "retrying" | "done" | "error";
+  /** Visible Transaction log state for unconfirmed work. */
+  state?: "sent" | "retrying" | "confirmed" | "failed";
   /** Secondary detail: cost, error, stage. Never in the title. */
   detail?: string;
   /** Done rows: ms already elapsed of the 10 s auto-dismiss. */
@@ -404,19 +406,30 @@ function renderSessionEntry(model: ViewModel): string {
   </div>`;
 }
 
+function activityState(item: ActivityRow): "sent" | "retrying" | "confirmed" | "failed" {
+  if (item.state) return item.state;
+  if (item.status === "error") return "failed";
+  if (item.status === "done") return "confirmed";
+  if (item.status === "retrying") return "retrying";
+  return "sent";
+}
+
 function renderActivityItem(item: ActivityRow): string {
-  const mark = item.status === "pending" ? `<span class="spinner small" aria-hidden="true"></span>` : `<span class="activity-mark" aria-hidden="true"></span>`;
-  return `<div class="activity-item" data-testid="activity-item" data-status="${item.status}">
+  const state = activityState(item);
+  const busy = state === "sent" || state === "retrying";
+  const mark = busy ? `<span class="spinner small" aria-hidden="true"></span>` : `<span class="activity-mark" aria-hidden="true"></span>`;
+  const stateLabel = state === "sent" ? "Sent" : state === "retrying" ? "Retrying" : state === "confirmed" ? "Confirmed" : "Failed";
+  return `<div class="activity-item" data-testid="activity-item" data-status="${item.status}" data-state="${state}">
     ${mark}
-    <span class="activity-text"><span class="activity-title">${escapeHtml(item.label)}</span>${item.detail ? `<span class="note">${escapeHtml(item.detail)}</span>` : ""}</span>
-    ${item.status === "error" ? `<button type="button" data-action="retry-activity" data-id="${escapeHtml(item.id)}" data-testid="retry-activity">Retry</button><button type="button" class="activity-dismiss" data-action="dismiss-activity" data-id="${escapeHtml(item.id)}" data-testid="dismiss-activity" aria-label="Dismiss">×</button>` : ""}
+    <span class="activity-text"><span class="activity-title">${escapeHtml(item.label)}</span><span class="note" data-testid="activity-state">${stateLabel}${item.detail ? ` · ${escapeHtml(item.detail)}` : ""}</span></span>
+    ${state === "failed" ? `<button type="button" data-action="retry-activity" data-id="${escapeHtml(item.id)}" data-testid="retry-activity">Retry</button><button type="button" class="activity-dismiss" data-action="dismiss-activity" data-id="${escapeHtml(item.id)}" data-testid="dismiss-activity" aria-label="Dismiss">×</button>` : ""}
     ${item.status === "done" ? `<span class="activity-progress" data-testid="activity-progress" style="animation-delay:-${Math.max(0, Math.round(item.elapsedMs ?? 0))}ms"></span>` : ""}
   </div>`;
 }
 
 /** Pending work behind the single Transaction log entry (ops, wallet prompts, session renewal). */
 export function txlogPending(model: ViewModel): number {
-  return model.activity.filter((item) => item.status === "pending").length + (model.sessionPrompt ? 1 : 0);
+  return model.activity.filter((item) => item.status === "pending" || item.status === "sent" || item.status === "retrying").length + (model.sessionPrompt ? 1 : 0);
 }
 
 function chainButton(chain: "calibration" | "mainnet", label: string, current: string): string {

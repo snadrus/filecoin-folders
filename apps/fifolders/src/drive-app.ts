@@ -2338,7 +2338,7 @@ export class DriveApp {
 
   private rememberDone(op: FifoldersOp): void {
     const label = op.kind === "fel-save" ? `Saved “${op.name ?? op.label}” to My Folders` : cleanOpLabel(op.label);
-    const row: ActivityRow = { id: op.id, label, status: "done", ...(op.detail ? { detail: op.detail } : {}) };
+    const row: ActivityRow = { id: op.id, label, status: "done", state: "confirmed", ...(op.detail ? { detail: op.detail } : {}) };
     this.recentDone = [row, ...this.recentDone.filter((item) => item.id !== op.id)].slice(0, 8);
     this.#doneAt.set(op.id, Date.now());
     setTimeout(() => this.dismissRow(op.id), ACTIVITY_DISMISS_MS);
@@ -2357,7 +2357,7 @@ export class DriveApp {
     if (this.#opsListening || typeof window === "undefined") return;
     this.#opsListening = true;
     window.addEventListener("beforeunload", (event) => {
-      const pending = loadOps().some((op) => op.status === "pending") || this.busy || this.staged.length > 0;
+      const pending = loadOps().some((op) => op.status === "pending" || op.status === "sent" || op.status === "retrying") || this.busy || this.staged.length > 0;
       if (!pending) return;
       event.preventDefault();
       event.returnValue = "";
@@ -2741,12 +2741,19 @@ export class DriveApp {
     const pending = loadOps();
     const dismissed = loadDismissed();
     const activity: ActivityRow[] = [
-      ...pending.filter((op) => !(op.status === "error" && dismissed.has(`${op.id}@${op.updated}`))).map((op): ActivityRow => ({
-        id: op.id,
-        label: op.kind === "fel-save" ? `Save “${op.name ?? op.label}” to My Folders` : cleanOpLabel(op.label),
-        ...(op.error || op.detail ? { detail: [op.error, op.detail].filter(Boolean).join(" · ") } : {}),
-        status: op.status === "error" ? "error" : "pending",
-      })),
+      ...pending.filter((op) => !(op.status === "error" && dismissed.has(`${op.id}@${op.updated}`))).map((op): ActivityRow => {
+        const state = op.status === "error" || op.stage === "failed" ? "failed" as const
+          : op.status === "done" || op.stage === "confirmed" ? "confirmed" as const
+          : op.status === "retrying" || op.stage === "retrying" ? "retrying" as const
+          : "sent" as const;
+        return {
+          id: op.id,
+          label: op.kind === "fel-save" ? `Save “${op.name ?? op.label}” to My Folders` : cleanOpLabel(op.label),
+          ...(op.error || op.detail ? { detail: [op.error, op.detail].filter(Boolean).join(" · ") } : {}),
+          status: state === "failed" ? "error" : state === "confirmed" ? "done" : state,
+          state,
+        };
+      }),
       ...this.recentDone.map((row) => ({ ...row, elapsedMs: Date.now() - (this.#doneAt.get(row.id) ?? Date.now()) })),
     ].slice(0, 12);
     let available = 0n;
@@ -2776,7 +2783,7 @@ export class DriveApp {
     const badges: Record<string, string> = {};
     for (const op of pending) {
       if (!op.path) continue;
-      if (op.kind === "upload" && op.status === "pending") badges[op.path] = "Saving…";
+      if (op.kind === "upload" && (op.status === "pending" || op.status === "sent" || op.status === "retrying")) badges[op.path] = "Saving…";
       if (op.kind === "fel-save") {
         badges[op.path] = op.stage === "saving" ? "Saving…" : op.stage === "saved" ? "Saved" : "Save pending";
       }
@@ -2797,7 +2804,7 @@ export class DriveApp {
       },
       chainSteps: this.chainSteps,
       activity,
-      activityPending: pending.some((op) => op.status === "pending") || this.busy,
+      activityPending: pending.some((op) => op.status === "pending" || op.status === "sent" || op.status === "retrying") || this.busy,
       runway,
       looseSummary: this.looseSummary,
       looseProgress: this.looseProgress,
