@@ -71,7 +71,7 @@ export class SponsorDO extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     ctx.blockConcurrencyWhile(async () => {
-      const state: Partial<SponsorState> = { users: {}, checkouts: {}, credits: {}, pool: {}, sweeps: {}, gas: { budget: { accounts: {}, ips: {}, reservations: {} } } };
+      const state: Partial<SponsorState> = { users: {}, checkouts: {}, credits: {}, pool: {}, sweeps: {}, gas: { budget: { accounts: {}, ips: {}, reservations: {} } }, alerts: {} };
       for (const [key, value] of await ctx.storage.list<string>({ prefix: "s:" })) {
         const [, collection, ...rest] = key.split(":");
         const bucket = (state as Record<string, Record<string, unknown>>)[collection!];
