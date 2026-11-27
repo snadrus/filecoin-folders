@@ -174,6 +174,15 @@ export async function quoteSquid(
 }
 
 /** Stripe v2 money-management outbound transfer of USDC to a pre-registered crypto wallet payout method. */
+/** Squid's router (same address on its EVM chains); override with REFILL_SQUID_ROUTERS (comma-separated). */
+export const SQUID_ROUTERS = (process.env.REFILL_SQUID_ROUTERS ?? "0xce16F69375520ab01377ce7B88f5BA8C48F8D666").split(",").map((a) => a.trim().toLowerCase()).filter(Boolean);
+const MAX_SQUID_NATIVE_WEI = 10n ** 16n; // 0.01 ETH: bridge/gas fee only
+
+export function assertSquidTx(tx: { target?: string; value?: string | number | bigint }): void {
+  if (!tx.target || !SQUID_ROUTERS.includes(String(tx.target).toLowerCase())) throw new Error(`refusing Squid tx to unexpected target ${tx.target}`);
+  if (tx.value != null && BigInt(tx.value) > MAX_SQUID_NATIVE_WEI) throw new Error(`refusing Squid tx with native value ${tx.value}`);
+}
+
 export async function createStripeUsdcPayout(cfg: RefillConfig, amountUsdc: bigint): Promise<string> {
   if (!cfg.stripeKey || !cfg.stripeFinancialAccount || !cfg.stripePayoutMethod) throw new Error("Stripe payout secrets are not set");
   if (cfg.dryRun) throw new Error("refusing Stripe payout in dry-run");
@@ -230,6 +239,8 @@ export async function runRefill(cfg: RefillConfig): Promise<RefillReport> {
         const quote = await quoteSquid(cfg, cfg.sponsor, payout);
         report.squidQuote = { toAmount: quote.toAmount, requestId: quote.requestId };
         if (!cfg.dryRun && sourceUsdc >= payout && cfg.sendSourceTx && quote.transactionRequest?.target && quote.transactionRequest.data) {
+          // Never sign third-party calldata blindly: only the known Squid router, and at most a small native fee.
+          assertSquidTx(quote.transactionRequest);
           report.squidTx = await cfg.sendSourceTx({
             to: quote.transactionRequest.target,
             data: quote.transactionRequest.data,

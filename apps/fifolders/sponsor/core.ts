@@ -188,6 +188,8 @@ export interface CreditRecord {
   /** Head block when the current handover tx was broadcast or last rebroadcast. */
   sentAtBlock?: string;
   rebroadcasts?: number;
+  /** Stripe dispute or refund on this payment: the account loses sponsored gas. */
+  disputed?: { type: string; at: string; id?: string };
   /** Signed fields (incl. nonce) of every tx sent for this credit, keyed by lower-case hash: resends reuse the nonce. */
   sentTxs?: Record<string, StoredTx>;
   /** End-to-end handover timestamps (ISO) and durations (ms) for latency traces. */
@@ -209,7 +211,7 @@ export interface StoredTx {
 
 export interface SponsorState {
   users: Record<string, UserRecord>;
-  checkouts: Record<string, { identity: string; cents: number; first: boolean }>;
+  checkouts: Record<string, { identity: string; cents: number; first: boolean; at?: number }>;
   credits: Record<string, CreditRecord>;
   pool: Record<string, PoolEntry>;
   /** Deferred sweeps: last attempt per account. */
@@ -514,6 +516,12 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
     refilling ??= (async () => {
       try {
         let built = 0;
+        // M5: two failed builds in 6 h (e.g. the provider is down) pause refills instead of burning FIL every tick.
+        const recentFailures = Object.values(state.pool).filter((entry) => entry.status !== "ready" && entry.error && !entry.error.startsWith("interrupted") && !entry.error.startsWith("trim") && !entry.error.startsWith("retired") && entry.createdAt && now() - Date.parse(entry.createdAt) < 6 * 3_600_000).length;
+        if (recentFailures >= 2) {
+          console.warn("[sponsor] pool refill paused: recent build failures");
+          return;
+        }
         while ((await poolOnCurrentFactory("ready", "seeding")).length < poolSize && built < (opts.max ?? Infinity)) {
           // Keep owed credits whole: build only with USDFC to spare for the seed, and FIL above the gas reserve.
           const funds = await sponsorFunds();
@@ -535,14 +543,50 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
 
   // ---------------------------------------------------------------- checkout + credits
 
+  /** success/cancel URLs: same scheme and host as an allowed entry (port too, if the entry has one), path under its path. */
   function checkRedirect(url: unknown, name: string): string {
     if (typeof url !== "string" || !/^https?:\/\//.test(url)) throw new HttpError(400, `${name} must be an http(s) URL`);
     const origins = config.stripe.allowedOrigins;
-    if (origins.length && !origins.some((origin) => url.startsWith(origin))) throw new HttpError(400, `${name} origin not allowed`);
+    let target: URL;
+    try {
+      target = new URL(url);
+    } catch {
+      throw new HttpError(400, `${name} must be an http(s) URL`);
+    }
+    const allowed = (entry: string) => {
+      try {
+        const ok = new URL(entry);
+        return ok.protocol === target.protocol && ok.hostname === target.hostname && (!ok.port || ok.port === target.port) && target.pathname.startsWith(ok.pathname);
+      } catch {
+        return false;
+      }
+    };
+    if (origins.length && !origins.some(allowed)) throw new HttpError(400, `${name} origin not allowed`);
     return url;
   }
 
+
+  /** Unpaid Checkout Sessions kept at most (Stripe expires them after 24 h; cron drops ours after 48 h). */
+  const MAX_OPEN_CHECKOUTS = 5_000;
+  const CHECKOUT_TTL_MS = 48 * 3_600_000;
+
+  function expireCheckouts(): number {
+    let dropped = 0;
+    for (const [id, row] of Object.entries(state.checkouts)) {
+      if (state.credits[id]) continue;
+      if (row.at == null) row.at = now();
+      else if (now() - row.at > CHECKOUT_TTL_MS) {
+        delete state.checkouts[id];
+        dropped += 1;
+      }
+    }
+    if (dropped) save();
+    return dropped;
+  }
+
   async function checkout(identity: Identity, body: Record<string, unknown>): Promise<CheckoutSession & { first: boolean }> {
+    if (Object.keys(state.checkouts).length >= MAX_OPEN_CHECKOUTS) expireCheckouts();
+    if (Object.keys(state.checkouts).length >= MAX_OPEN_CHECKOUTS) throw new HttpError(503, "Too many open checkouts; please try again later.");
     const record = recordFor(identity);
     if (!record) ownerArgs(identity); // session keys only top up existing accounts
     const first = !record?.dataSetId;
@@ -574,7 +618,7 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
     if (config.stripe.secretKey) session = await createCheckoutSession(config.stripe.secretKey, input, deps.fetch);
     else if (config.stripe.fake) session = fakeCheckoutSession(input);
     else throw new HttpError(503, "Stripe not configured: card payments need STRIPE_SECRET_KEY on the sponsor");
-    state.checkouts[session.id] = { identity: id, cents, first };
+    state.checkouts[session.id] = { identity: id, cents, first, at: now() };
     save();
     return { ...session, first };
   }
@@ -954,7 +998,8 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
   async function applyPaidCheckout(session: Record<string, unknown>, livemode: boolean, meta: { webhookAt?: string; eventType?: string } = {}): Promise<{ received: true; credited?: string; duplicate?: boolean; ignored?: string }> {
     const id = String(session.id ?? "");
     if (!id) throw new HttpError(400, "event without session id");
-    const paid = session.payment_status === "paid" || session.status === "succeeded" || session.status === "complete";
+    // Only a settled payment credits USDFC (a "complete" session can still be unpaid with delayed methods).
+    const paid = session.payment_status === "paid";
     if (!paid && session.payment_status) return { received: true, ignored: `payment_status ${String(session.payment_status)}` };
     if (!paid) return { received: true, ignored: "not paid" };
     if (Boolean(livemode) !== (config.network === "mainnet")) throw new HttpError(400, `livemode ${livemode} on ${config.network}`);
@@ -1031,8 +1076,25 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
       if (session.payment_status !== "paid") session.payment_status = "paid";
       return applyPaidCheckout(session, Boolean(event.livemode), { webhookAt, eventType: event.type });
     }
+    if (event.type === "charge.dispute.created" || event.type === "charge.refunded") return onChargeReversed(event.type, event.data?.object ?? {});
     if (event.type !== "checkout.session.completed" && event.type !== "checkout.session.async_payment_succeeded") return { received: true, ignored: event.type };
     return applyPaidCheckout(event.data?.object ?? {}, Boolean(event.livemode), { webhookAt, eventType: event.type });
+  }
+
+  /** M3: a chargeback or refund. Flag the credit, stop sponsoring the account's gas (its USDFC stays locked to storage). */
+  function onChargeReversed(type: string, object: Record<string, unknown>): { received: true; ignored?: string; credited?: string } {
+    const pi = typeof object.payment_intent === "string" ? object.payment_intent : undefined;
+    const found = pi ? Object.entries(state.credits).find(([, credit]) => credit.paymentIntent === pi) : undefined;
+    if (!found) return { received: true, ignored: `${type} for an unknown payment` };
+    const [, credit] = found;
+    credit.disputed = { type, at: new Date(now()).toISOString(), ...(typeof object.id === "string" ? { id: object.id } : {}) };
+    if (credit.account) {
+      if (!state.gas) state.gas = { budget: emptyGasState() };
+      blockAccount(state.gas.budget, credit.account, now() + 3650 * 86_400_000, `${type} on ${pi}`);
+    }
+    console.warn(`[sponsor] ${type}: ${pi} account ${credit.account ?? "?"} flagged`);
+    save();
+    return { received: true };
   }
 
   /** Dataset for an account that has none (normally made by the pool or the slow path). */
@@ -1057,7 +1119,7 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
 
   function purchasesFor(account: Address): number {
     const id = account.toLowerCase();
-    return Object.values(state.credits).filter((credit) => credit.status === "done" && credit.account?.toLowerCase() === id).length;
+    return Object.values(state.credits).filter((credit) => credit.status === "done" && !credit.disputed && credit.account?.toLowerCase() === id).length;
   }
 
   // Defense in depth only (the account contract enforces policy): ERC-20, permit and every Filecoin Pay fund selector.
@@ -1728,6 +1790,8 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
         out.skipped.push({ account: entry.account, reason: error instanceof Error ? error.message : String(error) });
         continue;
       }
+      // M2: a purchase may have taken this spare while we awaited the chain.
+      if (entry.status !== "ready" || assigningNow.has(entry.account)) continue;
       if (action === "retire") {
         const blocked = canSpendForPoolCare(funds, 0n);
         if (blocked) {
@@ -1773,6 +1837,7 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
         save();
         continue;
       }
+      if (entry.status !== "ready" || assigningNow.has(entry.account)) continue;
       const blocked = canSpendForPoolCare(funds, amount);
       if (blocked) {
         entry.care = { at: new Date(now()).toISOString(), action: "skip", error: blocked };
@@ -1910,6 +1975,7 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
 
     /** Background tick (Worker cron / Node interval): owed credits first, then the pool, then deferred sweeps. */
   async function cronTick() {
+    expireCheckouts();
     const reconciled = await reconcileAssigning();
     const finality = await checkHandoverFinality();
     const credits = await retryAwaiting();
@@ -2060,6 +2126,8 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
       if (req.method === "POST" && url.pathname === "/stripe/webhook") return ok(await onStripeEvent(req.body, req.header("stripe-signature")));
       if (req.method === "POST" && url.pathname === "/checkout") {
         const body = parseJson(req.body);
+        const ip = req.header("cf-connecting-ip") || req.header("x-forwarded-for")?.split(",")[0]?.trim();
+        if (ip && !limits.checkoutIp.take(`checkout-ip:${ip}`)) throw new HttpError(429, "rate limited");
         return ok(await checkout(await authenticate("checkout", body, limits.checkout), body));
       }
       if (req.method === "POST" && url.pathname === "/dataset") {
@@ -2078,7 +2146,9 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
       const status = error instanceof HttpError ? error.status : 500;
       const headers = error instanceof HttpError && error.status === 429 ? { "Retry-After": "60" } : undefined;
       console.error(`[sponsor] ${req.method} ${req.url}:`, error instanceof Error ? error.message : error);
-      return { status, body: { error: error instanceof Error ? error.message : String(error) }, headers };
+      // Internal (non-HTTP) errors can carry RPC URLs or provider detail: log them, answer generically.
+      const message = error instanceof HttpError ? error.message : "internal error";
+      return { status, body: { error: message }, headers };
     }
   }
 

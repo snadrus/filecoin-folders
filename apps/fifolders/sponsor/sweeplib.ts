@@ -4,7 +4,7 @@ import { encodeFunctionData, formatUnits, parseAbi, type Address, type Hex, type
 import { chainFor, type Relayer, type SponsorNetwork } from "./relayer.js";
 
 const payAbi = parseAbi(["function accounts(address token, address owner) view returns (uint256 funds, uint256 lockupCurrent, uint256 lockupRate, uint256 lockupLastSettledAt)"]);
-const acctAbi = parseAbi(["function sweep(uint256 amount)", "function FACTORY() view returns (address)"]);
+const acctAbi = parseAbi(["function sweep(uint256 amount)", "function FACTORY() view returns (address)", "function unassigned() view returns (bool)", "function owner() view returns (address)"]);
 const factoryAbi = parseAbi(["function admin() view returns (address)", "function treasury() view returns (address)"]);
 
 export interface SweepResult {
@@ -37,6 +37,12 @@ export async function sweepAccount(pub: PublicClient, relayer: Relayer, account:
     ]);
     // Funds go to the factory treasury (the sponsor, or the operator's recovery address once set via setTreasury).
     if (admin !== relayer.address) return { ...base, outcome: `skip: admin ${admin} treasury ${treasury}` };
+    // Only spare (unassigned) or retired (owned by the sponsor) accounts: never a customer's account (M2/H3).
+    const [unassigned, owner] = await Promise.all([
+      pub.readContract({ address: account, abi: acctAbi, functionName: "unassigned" }),
+      pub.readContract({ address: account, abi: acctAbi, functionName: "owner" }),
+    ]);
+    if (!unassigned && owner.toLowerCase() !== relayer.address.toLowerCase()) return { ...base, outcome: `skip: assigned to ${owner}` };
     base.treasury = treasury;
   } catch {
     return { ...base, outcome: "skip: not a LockedSignerAccount" };
@@ -54,9 +60,9 @@ export async function sweepAccount(pub: PublicClient, relayer: Relayer, account:
     try {
       const receipt = await relayer.relay({ to: account, data, label: `sweep ${account}` });
       return { ...base, swept: formatUnits(amount, 18), hash: receipt.transactionHash, outcome: "swept" };
-    } catch {
-      // Lockup can grow between the simulation and the estimate.
-      amount = (amount * 9n) / 10n;
+    } catch (error) {
+      // M5: at most one real (gas-paying) attempt per call; the next cron tick retries.
+      return { ...base, outcome: `error: sweep relay failed: ${error instanceof Error ? error.message : String(error)}` };
     }
   }
   return { ...base, outcome: "nothing sweepable" };

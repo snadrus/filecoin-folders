@@ -63,7 +63,6 @@ export async function verifyAuth(input: {
   const issuedAt = BigInt(auth.issuedAt ?? "0");
   if (issuedAt > BigInt(now + 60) || issuedAt < BigInt(now - AUTH_MAX_AGE_SEC)) throw new AuthError("stale auth");
   for (const [sig, at] of input.seen) if (at < now - AUTH_MAX_AGE_SEC - 60) input.seen.delete(sig);
-  if (input.seen.has(auth.signature)) throw new AuthError("replayed auth");
   const digest = requestDigest(input.chainId, input.action, input.body, issuedAt);
   let identity: Identity;
   if (auth.kind === "passkey") {
@@ -88,7 +87,11 @@ export async function verifyAuth(input: {
       throw new AuthError("unknown auth kind");
     }
   }
-  input.seen.set(auth.signature, now);
+  // Replay key is the signed request (signer + digest), not the signature bytes, so re-encoded or high-s variants of
+  // the same signature cannot replay it.
+  const replayKey = `${identity.id}:${digest}`;
+  if (input.seen.has(replayKey)) throw new AuthError("replayed auth");
+  input.seen.set(replayKey, now);
   return identity;
 }
 

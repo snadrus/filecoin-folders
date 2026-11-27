@@ -199,6 +199,7 @@ describe("sponsor server (fake chain)", () => {
         if (functionName === "FACTORY") return FACTORY;
         if (functionName === "admin" || functionName === "treasury") return getAddress("0x00000000000000000000000000000000000000bb");
         if (functionName === "unassigned") return onChainUnassigned.get(String(address).toLowerCase()) ?? true;
+        if (functionName === "owner") return getAddress(`0x${"0".repeat(40)}`);
         throw new Error(functionName);
       },
       async getBalance() {
@@ -598,6 +599,27 @@ describe("sponsor server (fake chain)", () => {
     expect(statuses).toEqual([422, 422, 422, 429]);
     const row = sponsor.state.gas!.budget.accounts[account.toLowerCase()] as { life?: string };
     expect(BigInt(row.life ?? "0")).toBeGreaterThan(0n);
+  });
+
+  it("M3/L6/L7: disputes stop gas, unpaid sessions never credit, redirects match by host", async () => {
+    const { sponsor, post, as, pay } = await start({ pool: 1 });
+    await sponsor.refillPool();
+    const user = newUser();
+    const bad = await as(user.signed)("checkout", { usd: 5, successUrl: "http://localhost.evil.example/x", cancelUrl: "http://localhost/" });
+    expect(bad.status).toBe(400);
+    const checkout = await as(user.signed)("checkout", checkoutBody(5));
+    const id = String(checkout.json.id);
+    const unpaid = JSON.stringify({ id: "evt_u", type: "checkout.session.completed", livemode: false, data: { object: { id, status: "complete", payment_status: "unpaid", currency: "usd", amount_total: 500, metadata: { identity: user.id, factory: FACTORY } } } });
+    expect((await post("/stripe/webhook", unpaid, { "stripe-signature": stripeSignatureHeader(unpaid, WHSEC) })).json).toMatchObject({ ignored: expect.stringContaining("unpaid") });
+    expect(sponsor.state.credits[id]).toBeUndefined();
+    await pay(id, user.id, 500);
+    await sponsor.settled();
+    const account = sponsor.state.credits[id]!.account!;
+    const dispute = JSON.stringify({ id: "evt_d", type: "charge.dispute.created", livemode: false, data: { object: { id: "dp_1", payment_intent: `pi_${id}` } } });
+    expect((await post("/stripe/webhook", dispute, { "stripe-signature": stripeSignatureHeader(dispute, WHSEC) })).status).toBe(200);
+    expect(sponsor.state.credits[id]!.disputed).toMatchObject({ type: "charge.dispute.created" });
+    const exec = { account, target: account, value: "0", data: "0x12345678", nonce: "0", deadline: String(now() + 60), signature: `0x${"11".repeat(65)}` };
+    expect((await post("/execute", exec)).status).toBe(429); // blocked
   });
 
   it("refuses fake Stripe and test keys on mainnet", () => {
