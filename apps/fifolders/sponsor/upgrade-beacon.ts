@@ -29,7 +29,7 @@ const beacon = getAddress((await pub.readContract({ address: factoryAddr, abi: f
 const current = getAddress((await pub.readContract({ address: factoryAddr, abi: factoryAbi, functionName: "implementation" })) as Address);
 const owner = getAddress((await pub.readContract({ address: beacon, abi: beaconAbi, functionName: "owner" })) as Address);
 if (owner.toLowerCase() !== relayer.address.toLowerCase()) {
-  throw new Error(`beacon owner ${owner} is not the sponsor wallet; not sending an upgrade`);
+  throw new Error(`beacon owner ${owner} is not the sponsor wallet; not sending an upgrade. After the Ledger handover, follow docs/beacon-upgrade.md (upgradeTo signed by 0xD62bD538bcEaB1284950E513f6Da796dD790642a)`);
 }
 
 const data = encodeDeployData({ abi: implArtifact.abi, bytecode: implArtifact.bytecode.object, args: [factoryAddr] });

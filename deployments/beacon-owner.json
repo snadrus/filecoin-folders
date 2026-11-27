@@ -1,0 +1,4 @@
+{
+  "intendedBeaconOwner": "0xD62bD538bcEaB1284950E513f6Da796dD790642a",
+  "note": "Andy's Ledger Ethereum EOA (not an f1 masked-ID). The mainnet v2 factory deploy transfers UpgradeableBeacon ownership to this address immediately after deploy (no timelock). Calibration uses recover.ts --hand-beacon or the hand-beacon-calibration workflow."
+}

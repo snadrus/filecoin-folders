@@ -1,0 +1,130 @@
+name: hand-beacon-calibration
+
+# Transfer Calibration v2 UpgradeableBeacon ownership to Andy's Ledger EOA.
+# Dry run unless send=true. The sponsor key is injected as SPONSOR_KEY and is never printed.
+# Refuses any network other than Calibration. Never hands the beacon to an f1 masked-ID.
+on:
+  workflow_dispatch:
+    inputs:
+      new_owner:
+        description: "Ledger 0x EOA that will own the beacon (not an f1 masked-ID)"
+        required: true
+        type: string
+        default: "0xD62bD538bcEaB1284950E513f6Da796dD790642a"
+      factory:
+        description: "Calibration v2 beacon factory"
+        required: true
+        type: string
+        default: "0x228867301f1f0EaF75b5d7af62F3c44e1796A56D"
+      send:
+        description: "If true, send transferOwnership. If false, dry run only."
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hand-beacon-calibration
+  cancel-in-progress: false
+
+jobs:
+  hand-beacon:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: foundry-rs/foundry-toolchain@v1
+      - run: pnpm install --frozen-lockfile
+      - name: Build packages the recover script imports
+        run: pnpm --filter fil-folders build
+      - name: Hand Calibration beacon (dry run unless send)
+        env:
+          SPONSOR_KEY: ${{ secrets.SPONSOR_KEY_CALIBRATION }}
+          SPONSOR_NETWORK: calibration
+          CALIBRATION_RPC: https://api.calibration.node.glif.io/rpc/v1
+          NEW_OWNER: ${{ inputs.new_owner }}
+          FACTORY: ${{ inputs.factory }}
+          SEND: ${{ inputs.send }}
+        run: |
+          set -euo pipefail
+          if [ "${SPONSOR_NETWORK}" != "calibration" ]; then
+            echo "This workflow is restricted to Calibration; refusing network=${SPONSOR_NETWORK}"
+            exit 1
+          fi
+          if [ -z "${SPONSOR_KEY:-}" ]; then
+            echo "SPONSOR_KEY_CALIBRATION is not set"
+            exit 1
+          fi
+          # Refuse an f1 masked-ID (0xff followed by 11 zero bytes) without printing secrets.
+          python3 - <<'PY'
+          import os, sys
+          owner = os.environ["NEW_OWNER"].strip()
+          if not owner.startswith("0x") or len(owner) != 42:
+              print("new_owner must be a 0x Ethereum address")
+              sys.exit(1)
+          if owner.lower().startswith("0xff" + "00" * 11):
+              print("refusing f1 masked-ID: the beacon owner must be a 0x EOA that can sign EVM upgrades")
+              sys.exit(1)
+          print(f"new_owner={owner}")
+          print(f"factory={os.environ['FACTORY']}")
+          print(f"send={os.environ['SEND']}")
+          PY
+
+          yes=()
+          if [ "${SEND}" = "true" ]; then
+            yes=(--yes)
+          fi
+          set +e
+          ./node_modules/.bin/tsx apps/fifolders/sponsor/recover.ts \
+            --factory "$FACTORY" \
+            --hand-beacon "$NEW_OWNER" \
+            "${yes[@]+"${yes[@]}"}" \
+            > "$RUNNER_TEMP/hand-beacon.out" 2> "$RUNNER_TEMP/hand-beacon.err"
+          status=$?
+          set -e
+          cat "$RUNNER_TEMP/hand-beacon.out"
+          if [ "$status" -ne 0 ]; then
+            echo "hand-beacon failed (exit $status). stderr (secrets are masked by GitHub):"
+            tail -c 4000 "$RUNNER_TEMP/hand-beacon.err" || true
+            exit "$status"
+          fi
+
+          same_addr() { python3 -c "import sys; sys.exit(0 if sys.argv[1].lower()==sys.argv[2].lower() else 1)" "$1" "$2"; }
+          if [ "${SEND}" = "true" ]; then
+            beacon=$(cast call "$FACTORY" "beacon()(address)" --rpc-url "$CALIBRATION_RPC")
+            deadline=$((SECONDS+120))
+            live=""
+            while [ $SECONDS -lt $deadline ]; do
+              live=$(cast call "$beacon" "owner()(address)" --rpc-url "$CALIBRATION_RPC")
+              if same_addr "$live" "$NEW_OWNER"; then
+                break
+              fi
+              sleep 3
+            done
+            echo "beacon: $beacon"
+            echo "owner:  $live"
+            if ! same_addr "$live" "$NEW_OWNER"; then
+              echo "beacon.owner() is $live, expected $NEW_OWNER"
+              exit 1
+            fi
+          fi
+
+          {
+            echo "### Calibration beacon handover"
+            echo
+            echo "- factory: \`$FACTORY\`"
+            echo "- new owner: \`$NEW_OWNER\`"
+            echo "- mode: $([ "${SEND}" = "true" ] && echo send || echo dry-run)"
+            echo
+            echo '```'
+            cat "$RUNNER_TEMP/hand-beacon.out"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

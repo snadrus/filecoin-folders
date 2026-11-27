@@ -5,6 +5,8 @@ name: deploy-v2-factory
 # Public addresses are written to the job summary and an artifact.
 # If deployments/calibration-factory-v2.json already points at a live contract, this
 # job prints those addresses and does not send another deploy transaction.
+# Mainnet (when enabled): deploy-v2.ts reads deployments/beacon-owner.json (or
+# BEACON_OWNER) and transfers beacon ownership to that Ledger EOA right after deploy.
 on:
   workflow_dispatch:
     inputs:

@@ -17,7 +17,7 @@ SPONSOR_POOL_SIZE = "2"
 SPONSOR_POOL_SEED_USDFC = "1"
 SPONSOR_SWEEP_ACCOUNTS = "0x2CcbFfB44b410BDa7Fcb7708d1649bA2887370d2"
 SPONSOR_ALLOWED_ORIGINS = "https://fifolders.scionbase.ai/,http://localhost"
-# v2 beacon factory (Calibration, 2026-11-26). Beacon owner is the sponsor; hand to Andy's Ledger 0x with recover.ts --hand-beacon (never the f1 masked-ID).
+# v2 beacon factory (Calibration, 2026-11-26). Beacon owner is Andy's Ledger 0xD62bD538bcEaB1284950E513f6Da796dD790642a after recover.ts --hand-beacon (never the f1 masked-ID). Upgrades: docs/beacon-upgrade.md.
 SPONSOR_FACTORY_LEGACY = "0xCBb99E41C173B06D15212A135ba9F46AAB19DEE5"
 SPONSOR_REGISTRY = "0x9C06335D7DE588Caa104ee4FC3bb7cd8Aba62443"
 SPONSOR_BEACON = "0xbF8D1Ff1c632E953c52Cc4a7CdFD81E17374D9fA"

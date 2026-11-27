@@ -3,6 +3,8 @@ name: upgrade-v2-beacon-calibration
 # Deploys a new LockedSignerAccountV2 implementation and points the Calibration
 # beacon at it. Factory ABI is unchanged. The sponsor key is injected as
 # SPONSOR_KEY and is never printed. Refuses any network other than Calibration.
+# After beacon ownership moves to Andy's Ledger, this job refuses (sponsor is
+# no longer the owner). Use docs/beacon-upgrade.md: Ledger signs upgradeTo.
 on:
   workflow_dispatch:
 

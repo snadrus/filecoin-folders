@@ -7,7 +7,7 @@
   "implementation": "0xb7eb10755792992471a60ff91F1D7AdADF0D69CB",
   "admin": "0xEc476AB8366a22fCafa2B7559638FE10b44E0106",
   "treasury": "0xEc476AB8366a22fCafa2B7559638FE10b44E0106",
-  "treasuryNote": "Calibration v1 treasury was already the sponsor; the beacon owner is the same sponsor and is handed to a Ledger 0x later. The f1 masked-ID is not the beacon owner.",
+  "treasuryNote": "Calibration v1 treasury was already the sponsor. Beacon ownership is transferred to Andy's Ledger EOA 0xD62bD538bcEaB1284950E513f6Da796dD790642a (not the f1 masked-ID). After handover, upgrades require that Ledger to sign upgradeTo.",
   "registry": "0x9C06335D7DE588Caa104ee4FC3bb7cd8Aba62443",
   "fwss": "0x02925630df557F957f70E112bA06e50965417CA0",
   "txHash": "0x0a17b4dac00b01fda779d7f072c1d7ea3750773953775be5f35db4ebe3109b79",
@@ -18,5 +18,6 @@
   "upgradeTx": "0xd6bacdfc09d2ff2aa4455bff505707f2b84d51ffb219762acc2c5d2c76dd4ed9",
   "deployTx": "0x0431979ed26102567efd77e45c9e72c64ca1b9a8557411bd05121a399be314fb",
   "upgradeBlock": 4280993,
-  "upgradeDate": "2026-11-27"
+  "upgradeDate": "2026-11-27",
+  "intendedBeaconOwner": "0xD62bD538bcEaB1284950E513f6Da796dD790642a"
 }
