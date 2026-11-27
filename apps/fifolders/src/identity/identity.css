@@ -41,3 +41,13 @@ h1 { font-weight: 500; font-size: 26px; margin: 16px 0 8px; }
 #clubs { margin-top: 16px; }
 #clubs h2 { font-size: 18px; font-weight: 500; margin: 0; }
 .clubs { margin: 0; padding-left: 18px; display: grid; gap: 4px; }
+/* Phones: thumb-sized links and buttons, 16px fields (iOS does not zoom on focus). */
+@media (max-width: 640px) {
+  .wrap { margin: 8px auto 32px; }
+  .back, .identity-links a { display: inline-flex; align-items: center; min-height: 44px; padding: 0 4px; }
+  h1 { font-size: 22px; margin: 4px 0 8px; }
+  .card { padding: 16px; }
+  .field input, .field textarea, .field select, .card input { font-size: 16px; min-height: 44px; }
+  button, .primary { min-height: 44px; }
+  .swatch { width: 36px; height: 36px; }
+}

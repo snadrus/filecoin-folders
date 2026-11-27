@@ -372,6 +372,35 @@ button:disabled { cursor: default; opacity: 0.45; }
   .menu button { min-height: 44px; }
   .costs-modal { padding: 20px; max-height: calc(100vh - 32px); overflow: auto; }
 }
+@media (max-width: 800px) {
+  /* Round 2: details as a full-screen sheet, keyboard-safe dialogs, account sheet, Loose pieces rows. */
+  .details { position: fixed; inset: 0; z-index: 62; width: auto; border-left: 0; padding: 0 16px calc(24px + env(safe-area-inset-bottom, 0px)); background: var(--surface); animation: sheet-up 0.16s ease-out; }
+  .details header { position: sticky; top: 0; background: var(--surface); padding: 8px 0; z-index: 1; border-bottom: 1px solid var(--line); margin: 0 -16px 0; padding-left: 16px; padding-right: 4px; }
+  .details header button, .preview header button, .preview-actions .icon-link { min-width: 44px; min-height: 44px; display: inline-grid; place-items: center; }
+  .details button { min-height: 40px; }
+  .backdrop { align-items: flex-start; padding: max(12px, 8vh) 12px 12px; z-index: 63; } /* top half: the keyboard never covers the field or buttons */
+  .dialog .field input, .dialog .field select { font-size: 16px; min-height: 44px; }
+  .dialog-actions button { min-height: 44px; padding: 0 18px; }
+  .preview { max-height: calc(100% - 16px); padding: 12px; }
+  .account-menu {
+    position: fixed; top: auto; bottom: 0; left: 0; right: 0; width: auto; max-height: 85vh;
+    border-radius: 16px 16px 0 0; padding: 12px 16px calc(16px + env(safe-area-inset-bottom, 0px)); animation: sheet-up 0.16s ease-out;
+  }
+  .account-line { font-size: 11px; }
+  .identity-line a { min-height: 44px; display: inline-flex; align-items: center; }
+  .loose-drive.entry.list, .unixfs-entry.entry.list, [data-testid=loose-row].entry.list { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 8px; min-height: 0; }
+  .entry.list .name-cell:has(+ .owner + .mtime + .size + .loose-actions) { flex: 1 1 100%; }
+  .loose-actions { display: flex; flex-wrap: wrap; gap: 6px; padding-left: 32px; }
+  .loose-actions button, .loose-actions a { min-height: 36px; padding: 0 12px; border: 1px solid var(--line); border-radius: 999px; display: inline-flex; align-items: center; font-size: 13px; margin: 0; color: var(--accent-dark); text-decoration: none; }
+  .loose-folder { flex-wrap: wrap; }
+  .loose-folder .text-button { min-height: 36px; padding: 0 8px; }
+  .loose-adopt-all .primary { width: 100%; min-height: 44px; }
+  .loose-drive .expander { min-width: 36px; min-height: 36px; }
+  .entry.grid { min-height: 112px; padding: 12px; }
+  .entry.grid .name { max-width: 100%; }
+  .nav .storage p { overflow-wrap: anywhere; }
+  .toast button, .uploads header button { min-width: 40px; min-height: 40px; }
+}
 @keyframes sheet-up { from { transform: translateY(40px); opacity: 0.4; } to { transform: none; opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .slow-spinner { animation-duration: 6s; } .menu.floating, .menu.anchored, .nav { animation: none !important; transition: none !important; } }
 @media (min-width: 801px) {

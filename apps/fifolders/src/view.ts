@@ -234,7 +234,7 @@ function renderScreen(model: ViewModel): string {
       ${model.details ? renderDetails(model.details) : ""}
     </main>
     <button class="fab" data-testid="new-fab" data-action="new-toggle" type="button" aria-label="New: folder, upload, FiPen or FiGrid" ${model.mainnetBlocked ? "disabled" : ""}><span class="material-symbols-outlined" aria-hidden="true">add</span></button>
-    ${model.newMenu || model.context ? `<div class="sheet-scrim" data-testid="sheet-scrim" aria-hidden="true"></div>` : ""}
+    ${model.newMenu || model.context || model.accountMenu ? `<div class="sheet-scrim" data-testid="sheet-scrim" aria-hidden="true"></div>` : ""}
     ${model.newMenu ? renderNewMenu() : ""}
     ${model.costsOpen ? renderCosts() : ""}
     ${model.txlogOpen ? renderTxlog(model) : ""}
