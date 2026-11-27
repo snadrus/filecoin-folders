@@ -161,7 +161,7 @@ async function waitUntil(ms: number, label: string, fn: () => Promise<boolean>, 
   throw new Error(`timeout waiting for ${label}`);
 }
 
-let stopCreditPoll = () => undefined;
+let stopCreditPoll: () => void = () => undefined;
 try {
   // Load prior run BEFORE any say()/flush so resume does not clobber result.json
   // with a fresh volume name. Prefer LIVE_E2E_PREV, then after-timing.json (the
