@@ -1,7 +1,7 @@
 {
   "name": "@fifolders/sponsored-client",
   "version": "0.1.0",
-  "description": "Gasless Filecoin client for FiFolders: passkey or wallet owns a LockedSignerAccount; a sponsor relays commits and users buy credits by card.",
+  "description": "Limited wallet client for FiFolders: passkey (any-domain iframe/popup connector) or wallet owns a LockedSignerAccount; a sponsor relays commits and users buy credits by card.",
   "license": "MIT",
   "type": "module",
   "engines": {

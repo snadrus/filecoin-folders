@@ -6,6 +6,8 @@ export * from "./env.js";
 export * from "./guards.js";
 export * from "./http.js";
 export * from "./passkey.js";
+export * from "./limited-wallet.js";
+export * from "./wallet-frame.js";
 export * from "./persist.js";
 export * from "./ops-log.js";
 export * from "./relay.js";

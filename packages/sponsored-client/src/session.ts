@@ -36,7 +36,7 @@ import {
   sessionUsable,
   type StoredSession,
 } from "./persist.js";
-import { passkeyAssert, encodeContractAssertion, type PasskeyPublicKey } from "./passkey.js";
+import { directPasskeyHost, encodeContractAssertion, type PasskeyHost, type PasskeyPublicKey } from "./passkey.js";
 import { addSessionKeyData, liveRemovalAdapters, relayExecute, sponsoredTransport, type RemovalAdapters } from "./relay.js";
 
 
@@ -68,7 +68,7 @@ export type TypedDataPayload = {
 };
 
 export type Identity =
-  | { kind: "passkey"; key: PasskeyPublicKey }
+  | { kind: "passkey"; key: PasskeyPublicKey; passkeys?: PasskeyHost }
   | { kind: "wallet"; address: Address; sign: (typed: TypedDataPayload) => Promise<Hex> };
 
 export interface SponsoredSession {
@@ -107,9 +107,14 @@ function justAuthorized(stored: StoredSession, nowSec: bigint): boolean {
   return Boolean(at && Date.now() - at < FRESH_LOGIN_MS && sessionUsable(stored, nowSec));
 }
 
+function passkeysOf(identity: Identity): PasskeyHost {
+  return identity.kind === "passkey" ? (identity.passkeys ?? directPasskeyHost) : directPasskeyHost;
+}
+
 export function ownerSigner(identity: Identity): SponsorSigner {
   if (identity.kind === "passkey") {
-    return passkeySponsorSigner(identity.key, (challenge) => passkeyAssert(identity.key.credentialId, challenge));
+    const passkeys = passkeysOf(identity);
+    return passkeySponsorSigner(identity.key, (challenge) => passkeys.assert(identity.key.credentialId, challenge));
   }
   return walletSponsorSigner(identity.address, (typed) => identity.sign(typed as unknown as TypedDataPayload));
 }
@@ -134,7 +139,7 @@ export function sponsorSignerFor(payer: Address, identity: Identity, chain: Chai
 function signExecute(identity: Identity): (typed: Parameters<Parameters<typeof relayExecute>[0]["sign"]>[0]) => Promise<Hex> {
   return async (typed) => {
     if (identity.kind === "passkey") {
-      return encodeContractAssertion(await passkeyAssert(identity.key.credentialId, hashTypedData(typed)));
+      return encodeContractAssertion(await passkeysOf(identity).assert(identity.key.credentialId, hashTypedData(typed)));
     }
     return identity.sign(typed as unknown as SponsorTyped);
   };

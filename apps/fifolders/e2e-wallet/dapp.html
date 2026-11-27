@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Limited wallet dApp fixture</title>
+  </head>
+  <body>
+    <h1>dApp fixture</h1>
+    <p>Origin: <code id="origin"></code></p>
+    <button type="button" id="create" data-testid="dapp-create">Create passkey</button>
+    <button type="button" id="assert" data-testid="dapp-assert">Assert</button>
+    <button type="button" id="discover" data-testid="dapp-discover">Discover</button>
+    <button type="button" id="open-popup" data-testid="dapp-open-popup" hidden>Open wallet window</button>
+    <pre id="out" data-testid="dapp-out"></pre>
+    <script type="module" src="./dapp.ts"></script>
+  </body>
+</html>

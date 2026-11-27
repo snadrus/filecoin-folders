@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Empirical wallet origin</title>
+  </head>
+  <body>
+    <p>Wallet origin: <code id="origin"></code></p>
+    <button type="button" id="create" data-testid="inner-create">Create</button>
+    <button type="button" id="get" data-testid="inner-get">Get</button>
+    <pre id="out" data-testid="inner-out"></pre>
+    <script>
+      const out = document.getElementById("out");
+      document.getElementById("origin").textContent = location.origin;
+      const b64url = (bytes) => btoa(String.fromCharCode(...new Uint8Array(bytes))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+      let lastId = null;
+
+      async function createKey() {
+        const credential = await navigator.credentials.create({
+          publicKey: {
+            rp: { name: "Empirical" },
+            user: { id: crypto.getRandomValues(new Uint8Array(16)), name: "e2e", displayName: "e2e" },
+            challenge: crypto.getRandomValues(new Uint8Array(32)),
+            pubKeyCredParams: [{ type: "public-key", alg: -7 }],
+            authenticatorSelection: { residentKey: "required", userVerification: "required" },
+          },
+        });
+        lastId = credential.rawId;
+        return { op: "create", id: b64url(credential.rawId) };
+      }
+
+      async function getKey() {
+        const credential = await navigator.credentials.get({
+          publicKey: {
+            challenge: crypto.getRandomValues(new Uint8Array(32)),
+            userVerification: "required",
+            ...(lastId ? { allowCredentials: [{ type: "public-key", id: lastId }] } : {}),
+          },
+        });
+        return { op: "get", id: b64url(credential.rawId) };
+      }
+
+      async function run(op) {
+        try {
+          const result = op === "create" ? await createKey() : await getKey();
+          out.textContent = JSON.stringify(result);
+          if (window.parent !== window) window.parent.postMessage({ type: "empirical", ok: true, ...result }, "*");
+        } catch (error) {
+          const payload = { type: "empirical", ok: false, op, name: error.name, message: error.message };
+          out.textContent = `ERROR ${error.name}: ${error.message}`;
+          if (window.parent !== window) window.parent.postMessage(payload, "*");
+        }
+      }
+
+      document.getElementById("create").onclick = () => run("create");
+      document.getElementById("get").onclick = () => run("get");
+      if (window.parent !== window) window.parent.postMessage({ type: "empirical-ready", origin: location.origin }, "*");
+    </script>
+  </body>
+</html>

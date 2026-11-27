@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "e2e": "playwright test",
-    "e2e:ficlub-anvil": "playwright test -c playwright.ficlub-anvil.config.ts"
+    "e2e:ficlub-anvil": "playwright test -c playwright.ficlub-anvil.config.ts",
+    "e2e:wallet": "playwright test -c playwright.wallet.config.ts"
   },
   "dependencies": {
     "@filoz/synapse-core": "^0.4.1",

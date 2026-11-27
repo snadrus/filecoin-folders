@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Empirical dApp origin</title>
+    <style>
+      iframe { width: 480px; height: 200px; border: 1px solid #ccc; }
+    </style>
+  </head>
+  <body>
+    <p>Parent origin: <code id="origin"></code></p>
+    <h2>With allow</h2>
+    <iframe id="with-allow" data-testid="iframe-allow" allow="publickey-credentials-get *; publickey-credentials-create *"></iframe>
+    <h2>Without allow</h2>
+    <iframe id="no-allow" data-testid="iframe-no-allow"></iframe>
+    <pre id="out" data-testid="parent-out"></pre>
+    <script>
+      const params = new URLSearchParams(location.search);
+      const inner = params.get("inner") || "http://localhost:4177/e2e-wallet/empirical-inner.html";
+      document.getElementById("origin").textContent = location.origin;
+      document.getElementById("with-allow").src = inner + "?slot=allow";
+      document.getElementById("no-allow").src = inner + "?slot=no-allow";
+      const events = [];
+      window.addEventListener("message", (event) => {
+        if (!event.data || (event.data.type !== "empirical" && event.data.type !== "empirical-ready")) return;
+        events.push({ from: event.origin, ...event.data });
+        document.getElementById("out").textContent = JSON.stringify(events, null, 2);
+      });
+    </script>
+  </body>
+</html>
