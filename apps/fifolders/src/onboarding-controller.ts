@@ -190,9 +190,11 @@ export async function resumeOnboarding(app: DriveApp, io: OnboardingIO): Promise
   const found = await io.silent(chain);
   if (!found) return false;
   const panel = await io.snapshot({ chain, volumeName: app.volumeName });
+  await peeked;
   if (!panel.sessionReady) {
-    // Browsing the public drive: name the next wallet step instead of the connect screen.
-    if ((await peeked) || app.readOnly) app.showPanel(panel);
+    // Always paint the latest setup state (credits, authorize). After a Stripe return, a racing
+    // connect snapshot can have already shown "Buy storage credits" before the payment landed.
+    app.showPanel(panel);
     return false;
   }
   if (!canEnter(panel)) {

@@ -160,7 +160,6 @@ export function createLiveOnboarding(options: LiveOnboardingOptions = {}): Onboa
   let payer: Address | null = null;
   /** Gasless mode, passkey sign-in: the P-256 owner (no wallet, `root` stays null). */
   let passkey: PasskeyPublicKey | null = null;
-  let checkoutSettled = false;
   let signatures = 0;
   let connectPrompts = 0;
   let selectedDataset = "";
@@ -184,17 +183,22 @@ export function createLiveOnboarding(options: LiveOnboardingOptions = {}): Onboa
   }
 
   /** Back from Stripe (`?checkout=success&session_id=…`): wait for the sponsor to apply the payment, once. */
+  let checkoutSettle: Promise<void> | undefined;
   async function settleReturnedCheckout(): Promise<void> {
-    if (checkoutSettled || typeof window === "undefined" || !window.location?.search) return;
-    checkoutSettled = true;
-    const params = new URLSearchParams(window.location.search);
-    const sessionId = params.get("session_id");
-    if (params.get("checkout") !== "success" || !sessionId) return;
-    await waitForCredit(sessionId).catch(() => undefined);
-    params.delete("checkout");
-    params.delete("session_id");
-    const query = params.toString();
-    window.history?.replaceState?.(null, "", `${window.location.pathname ?? "/"}${query ? `?${query}` : ""}${window.location.hash ?? ""}`);
+    if (checkoutSettle) return checkoutSettle;
+    checkoutSettle = (async () => {
+      if (typeof window === "undefined" || !window.location?.search) return;
+      const params = new URLSearchParams(window.location.search);
+      const sessionId = params.get("session_id");
+      if (params.get("checkout") !== "success" || !sessionId) return;
+      const status = await waitForCredit(sessionId).catch(() => undefined);
+      if (status?.account) payer = getAddress(status.account);
+      params.delete("checkout");
+      params.delete("session_id");
+      const query = params.toString();
+      window.history?.replaceState?.(null, "", `${window.location.pathname ?? "/"}${query ? `?${query}` : ""}${window.location.hash ?? ""}`);
+    })();
+    return checkoutSettle;
   }
 
   async function resolvePayer(): Promise<Address | null> {
