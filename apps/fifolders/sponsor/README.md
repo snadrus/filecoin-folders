@@ -147,3 +147,7 @@ The mainnet factory was deployed with `treasury = 0xff00…399a90` (f03775120). 
 there already, and `setTreasury` can retarget it. The factory, the locked accounts, and the recovery steps are
 covered by `contracts/test/LockedSignerAccount.t.sol` (`test_recoveryTreasuryReceivesSweeps`) and
 `test/recover.test.ts`.
+
+## Automatic USDFC refill (GEL-4)
+
+Stripe USDC payout → Squid swap to USDFC on Filecoin when the mainnet sponsor is below a threshold. Dry-run by default; see [`docs/usdfc-refill.md`](../../../docs/usdfc-refill.md) for the secrets Andy must set and how to turn it on.

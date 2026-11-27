@@ -1,0 +1,96 @@
+name: refill-usdfc
+
+# Stripe USDC payout → Squid swap to USDFC on Filecoin → mainnet sponsor.
+# Dry-run by default. Secrets are injected from GitHub and never printed.
+on:
+  workflow_dispatch:
+    inputs:
+      send:
+        description: "Set true to move real money (default is dry-run)"
+        required: false
+        type: boolean
+        default: false
+      threshold_usdfc:
+        description: "Refill when sponsor USDFC is below this"
+        required: false
+        type: string
+        default: "20"
+      target_usdfc:
+        description: "Fill toward this USDFC balance"
+        required: false
+        type: string
+        default: "50"
+      max_usdc_per_run:
+        description: "Cap USDC paid out in one run"
+        required: false
+        type: string
+        default: "25"
+  schedule:
+    # Daily dry-run so a low balance is visible without sending funds.
+    - cron: "0 15 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: refill-usdfc
+  cancel-in-progress: false
+
+jobs:
+  refill:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Plan or run refill
+        env:
+          REFILL_THRESHOLD_USDFC: ${{ inputs.threshold_usdfc || '20' }}
+          REFILL_TARGET_USDFC: ${{ inputs.target_usdfc || '50' }}
+          REFILL_MAX_USDC_PER_RUN: ${{ inputs.max_usdc_per_run || '25' }}
+          MAINNET_RPC: https://api.node.glif.io/rpc/v1
+          STRIPE_PAYOUT_KEY: ${{ secrets.STRIPE_PAYOUT_KEY }}
+          STRIPE_LIVE_SECRET_KEY: ${{ secrets.STRIPE_LIVE_SECRET_KEY }}
+          STRIPE_FINANCIAL_ACCOUNT: ${{ secrets.STRIPE_FINANCIAL_ACCOUNT }}
+          STRIPE_CRYPTO_PAYOUT_METHOD: ${{ secrets.STRIPE_CRYPTO_PAYOUT_METHOD }}
+          SQUID_INTEGRATOR_ID: ${{ secrets.SQUID_INTEGRATOR_ID }}
+          REFILL_ALERT_WEBHOOK: ${{ secrets.REFILL_ALERT_WEBHOOK }}
+          # The sponsor key is only passed when send=true, and is never echoed.
+          SPONSOR_KEY_MAINNET: ${{ secrets.SPONSOR_KEY_MAINNET }}
+        run: |
+          set -euo pipefail
+          SEND="${{ inputs.send || 'false' }}"
+          # Scheduled runs are always dry-run.
+          if [ "${GITHUB_EVENT_NAME}" = "schedule" ]; then SEND=false; fi
+          ARGS=()
+          if [ "$SEND" = "true" ]; then ARGS+=(--send); fi
+          ./node_modules/.bin/tsx apps/fifolders/sponsor/refill-usdfc.ts "${ARGS[@]}" > "$RUNNER_TEMP/refill.json"
+          # The script prints only a public report (no keys).
+          python3 - <<'PY'
+          import json, os, pathlib
+          p = pathlib.Path(os.environ["RUNNER_TEMP"]) / "refill.json"
+          raw = p.read_text()
+          # If tsx printed a banner, keep the JSON object only.
+          s, e = raw.find("{"), raw.rfind("}")
+          report = json.loads(raw[s:e+1])
+          print(json.dumps(report, indent=2))
+          summary = os.environ["GITHUB_STEP_SUMMARY"]
+          with open(summary, "a") as f:
+              f.write("### USDFC refill\n\n")
+              f.write(f"- action: `{report.get('action')}`\n")
+              f.write(f"- dry-run: `{report.get('dryRun')}`\n")
+              f.write(f"- sponsor USDFC: `{report.get('sponsorUsdfc')}`\n")
+              f.write(f"- payout USDC: `{report.get('payoutUsdc')}`\n")
+              f.write(f"- reason: {report.get('reason')}\n")
+              missing = report.get("missing") or []
+              if missing:
+                  f.write("\nSecrets / setup still needed:\n")
+                  for item in missing:
+                      f.write(f"- {item}\n")
+          PY

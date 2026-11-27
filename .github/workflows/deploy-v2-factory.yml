@@ -1,6 +1,6 @@
 name: deploy-v2-factory
 
-# Deploys LockedSignerAccountBeaconFactory (v2). Restricted to Calibration for now.
+# Deploys LockedSignerAccountBeaconFactory (v2). Calibration or mainnet.
 # The sponsor key is injected as SPONSOR_KEY from a GitHub secret and is never printed.
 # Public addresses are written to the job summary and an artifact.
 # If deployments/calibration-factory-v2.json already points at a live contract, this
@@ -16,6 +16,7 @@ on:
         type: choice
         options:
           - calibration
+          - mainnet
         default: calibration
 
 permissions:
@@ -43,44 +44,55 @@ jobs:
         run: pnpm --filter fil-folders build
       - name: Deploy v2 factory
         env:
-          SPONSOR_KEY: ${{ secrets.SPONSOR_KEY_CALIBRATION }}
+          SPONSOR_KEY_CALIBRATION: ${{ secrets.SPONSOR_KEY_CALIBRATION }}
+          SPONSOR_KEY_MAINNET: ${{ secrets.SPONSOR_KEY_MAINNET }}
           SPONSOR_NETWORK: ${{ inputs.network }}
           CALIBRATION_RPC: https://api.calibration.node.glif.io/rpc/v1
+          MAINNET_RPC: https://api.node.glif.io/rpc/v1
         run: |
           set -euo pipefail
-          if [ "${SPONSOR_NETWORK}" != "calibration" ]; then
-            echo "This workflow is restricted to Calibration; refusing network=${SPONSOR_NETWORK}"
+          NETWORK="${SPONSOR_NETWORK}"
+          if [ "$NETWORK" != "calibration" ] && [ "$NETWORK" != "mainnet" ]; then
+            echo "Unsupported network=${NETWORK}"
             exit 1
           fi
+          if [ "$NETWORK" = "calibration" ]; then
+            export SPONSOR_KEY="${SPONSOR_KEY_CALIBRATION:-}"
+            RECORD=deployments/calibration-factory-v2.json
+            RPC="$CALIBRATION_RPC"
+          else
+            export SPONSOR_KEY="${SPONSOR_KEY_MAINNET:-}"
+            RECORD=deployments/mainnet-factory-v2.json
+            RPC="$MAINNET_RPC"
+          fi
+          unset SPONSOR_KEY_CALIBRATION SPONSOR_KEY_MAINNET
 
           publish() {
             local file="$1"
-            jq -e '.address and .beacon and .implementation and .network == "calibration"' "$file" >/dev/null
-            jq '{factory: .address, beacon, implementation, txHash, block, admin, treasury, registry}' "$file"
+            jq -e --arg net "$NETWORK" '.address and .beacon and .implementation and .network == $net' "$file" >/dev/null
+            jq '{factory: .address, beacon, implementation, txHash, block, admin, treasury, registry, beaconOwner, handBeaconTx}' "$file"
             {
-              echo "### Calibration v2 factory"
+              echo "### ${NETWORK} v2 factory"
               echo
-              jq -r '"- factory: `\(.address)`\n- beacon: `\(.beacon)`\n- implementation: `\(.implementation)`\n- tx: `\(.txHash)`"' "$file"
+              jq -r '"- factory: `\(.address)`\n- beacon: `\(.beacon)`\n- implementation: `\(.implementation)`\n- beaconOwner: `\(.beaconOwner // .intendedBeaconOwner)`\n- tx: `\(.txHash)`\n- handBeaconTx: `\(.handBeaconTx // "n/a")`"' "$file"
             } >> "$GITHUB_STEP_SUMMARY"
           }
 
-          existing=deployments/calibration-factory-v2.json
-          if [ -f "$existing" ]; then
-            addr=$(jq -r .address "$existing")
-            code=$(cast code "$addr" --rpc-url "$CALIBRATION_RPC" || true)
+          if [ -f "$RECORD" ]; then
+            addr=$(jq -r .address "$RECORD")
+            code=$(cast code "$addr" --rpc-url "$RPC" || true)
             if [ "${#code}" -gt 4 ]; then
               echo "Factory already deployed at $addr; not sending another transaction."
-              publish "$existing"
+              publish "$RECORD"
               exit 0
             fi
           fi
 
           if [ -z "${SPONSOR_KEY:-}" ]; then
-            echo "SPONSOR_KEY_CALIBRATION is not set"
+            echo "Sponsor key for ${NETWORK} is not set"
             exit 1
           fi
           forge build --root contracts
-          # Direct tsx (no pnpm banner). The key stays in the env; never echo it.
           set +e
           ./node_modules/.bin/tsx apps/fifolders/sponsor/deploy-v2.ts > "$RUNNER_TEMP/deploy-v2.out" 2> "$RUNNER_TEMP/deploy-v2.err"
           status=$?
@@ -92,10 +104,10 @@ jobs:
           fi
           python3 -c "import json,sys; from pathlib import Path; raw=Path(sys.argv[1]).read_text(); s,e=raw.find('{'), raw.rfind('}'); assert s>=0 and e>s, 'deploy-v2 produced no JSON'; Path(sys.argv[2]).write_text(raw[s:e+1]+chr(10)); json.loads(raw[s:e+1])" "$RUNNER_TEMP/deploy-v2.out" "$RUNNER_TEMP/deploy-v2.json"
           mkdir -p deployments
-          cp "$RUNNER_TEMP/deploy-v2.json" deployments/calibration-factory-v2.json
+          cp "$RUNNER_TEMP/deploy-v2.json" "$RECORD"
           publish "$RUNNER_TEMP/deploy-v2.json"
       - uses: actions/upload-artifact@v4
         with:
-          name: calibration-factory-v2
-          path: deployments/calibration-factory-v2.json
+          name: ${{ inputs.network }}-factory-v2
+          path: deployments/${{ inputs.network }}-factory-v2.json
           if-no-files-found: error
