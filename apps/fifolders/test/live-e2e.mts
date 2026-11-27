@@ -1,5 +1,5 @@
 // Live e2e: Pages + Calibration Worker, virtual passkey, Stripe 4242, v2 handover, drive/identity/fipen/person.
-import { chmodSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { chromium, type Page } from "@playwright/test";
 import { payOnPage } from "./support/stripe-pay.js";
 
@@ -7,6 +7,7 @@ const OUT = "/workspace/fil-gasless/live";
 const SITE = "https://fifolders.scionbase.ai";
 const PURCHASE_USD = 3.91;
 const CRED_FILE = `${OUT}/webauthn.credential.json`;
+const RESUME = process.env.LIVE_E2E_RESUME === "1" || process.argv.includes("--resume");
 const WORKER = "https://fast.scionbase.ai";
 const RPC = "https://api.calibration.node.glif.io/rpc/v1";
 const FACTORY = "0x228867301f1f0EaF75b5d7af62F3c44e1796A56D";
@@ -72,6 +73,19 @@ async function clickIf(p: Page, testId: string) {
 }
 
 let lastPasskeyClick = 0;
+async function loadSavedPasskey(authenticatorId: string, cdp: { send: (method: never, params?: never) => Promise<unknown> }) {
+  if (!existsSync(CRED_FILE)) return 0;
+  const saved = JSON.parse(readFileSync(CRED_FILE, "utf8")) as { rpId?: string; credentials?: Array<Record<string, unknown>> };
+  const list = saved.credentials ?? [];
+  for (const credential of list) {
+    await cdp.send(...(["WebAuthn.addCredential", {
+      authenticatorId,
+      credential: { ...credential, rpId: credential.rpId || saved.rpId || "fifolders.scionbase.ai" },
+    }] as [never, never]));
+  }
+  return list.length;
+}
+
 async function continuePasskey(p: Page) {
   if (Date.now() - lastPasskeyClick < 8_000) return null;
   const kind = (await clickIf(p, "passkey-continue")) ? "continue" : (await clickIf(p, "passkey-existing")) ? "existing" : null;
@@ -116,7 +130,48 @@ try {
   };
   say(`status funds=${status0.funds?.level} ready=${status0.pool?.ready} fil=${status0.funds?.fil} usdfc=${status0.funds?.usdfc}`);
 
-  const volumeName = `live-e2e-${Date.now().toString(36)}`;
+  let volumeName = `live-e2e-${Date.now().toString(36)}`;
+  let session = "";
+  let tPayment = 0;
+  let tHandover = Date.now();
+  if (RESUME) {
+    try {
+      const prevPath = existsSync(`${OUT}/baseline.json`) ? `${OUT}/baseline.json` : `${OUT}/result.json`;
+      const prev = JSON.parse(readFileSync(prevPath, "utf8")) as Record<string, unknown>;
+      if (typeof prev.volumeName === "string") volumeName = prev.volumeName;
+      if (typeof prev.tPayment === "string") {
+        log.tPayment = prev.tPayment;
+        tPayment = Date.parse(prev.tPayment);
+      }
+      if (prev.secPaymentToPaymentsReady != null) log.secPaymentToPaymentsReady = prev.secPaymentToPaymentsReady;
+      if (prev.tPaymentsReady) log.tPaymentsReady = prev.tPaymentsReady;
+      if (prev.steps) Object.assign(steps, prev.steps);
+    } catch {
+      /* no prior result */
+    }
+    const n = await loadSavedPasskey(authenticatorId, cdp);
+    if (!n) throw new Error("resume requested but no saved passkey at CRED_FILE");
+    log.resumed = true;
+    log.volumeName = volumeName;
+    say(`resume: loaded ${n} passkey(s); skipping checkout to reuse the same account`);
+    await page.goto(SITE, { waitUntil: "networkidle" });
+    await page.getByTestId("chain-calibration").click().catch(() => undefined);
+    await snap(page, "resume-start");
+    const signed = (await continuePasskey(page)) || (await clickIf(page, "passkey-existing") ? "existing" : (await clickIf(page, "passkey-continue") ? "continue" : null));
+    if (signed) say(`resume clicked passkey ${signed}`);
+    await waitUntil(3 * 60_000, "signed in on resume", async () => {
+      if (await visible(page, "account") || await visible(page, "payment-status") || await visible(page, "credit-balance") || await visible(page, "add-credits")) return true;
+      await continuePasskey(page);
+      return false;
+    });
+    if (!tPayment) {
+      tPayment = Date.now();
+      log.tPayment = new Date(tPayment).toISOString();
+    }
+    await snap(page, "resume-signed-in");
+  }
+
+  if (!RESUME) {
   log.volumeName = volumeName;
 
   await page.goto(`${SITE}/?usd=${PURCHASE_USD}`, { waitUntil: "networkidle" });
@@ -139,17 +194,19 @@ try {
     page.getByTestId("fix-payments").first().click(),
   ]);
   const checkoutTest = /cs_test_/.test(page.url());
-  const session = /cs_test_[A-Za-z0-9]+/.exec(page.url())?.[0] ?? "";
+  session = /cs_test_[A-Za-z0-9]+/.exec(page.url())?.[0] ?? "";
   steps.checkout = { testMode: checkoutTest, session: session ? "cs_test_…" : "" };
   if (!checkoutTest) throw new Error("checkout was not Stripe test mode");
   say("on Stripe test checkout");
   await payOnPage(page, { email: "fifolders-live-e2e@example.com", screenshot: `${OUT}/stripe-fail.png` });
   await page.waitForURL(/fifolders\.scionbase\.ai/, { timeout: 150_000 });
   log.returnedTo = page.url().replace(/session_id=[^&]+/, "session_id=…");
+  tPayment = Date.now();
+  log.tPayment = new Date(tPayment).toISOString();
   await snap(page, "after-stripe");
   say(`returned from Stripe: ${log.returnedTo}`);
 
-  const tHandover = Date.now();
+  tHandover = Date.now();
   let lastMark = 0;
   let reloaded = false;
   const paymentsReady = async () =>
@@ -186,24 +243,32 @@ try {
   handover.text = await textOf(page);
   steps.handover = handover;
   say(`payments ready after ${handover.seconds}s`);
+  log.tPaymentsReady = new Date().toISOString();
+  log.secPaymentToPaymentsReady = Math.round((Date.now() - tPayment) / 1000);
+  }
 
   // Finish setup: authorize / open drive. file-input is sr-only and present during setup, so it is not a ready signal.
   let clickedCreate = false;
   let clickedAuth = false;
+  let lastAuthClick = 0;
   let lastSetupMark = 0;
   const sessionReady = async () => {
-    const t = await textOf(page);
-    return /Session key until/i.test(t) && !(await visible(page, "authorize-session"));
+    if (!(await visible(page, "session-status")) && (await visible(page, "account"))) {
+      await page.getByTestId("account").click().catch(() => undefined);
+    }
+    const status = (await page.getByTestId("session-status").innerText().catch(() => "")).trim();
+    return /Session key until/i.test(status);
   };
   await waitUntil(20 * 60_000, "drive ready for upload", async () => {
     if (await sessionReady()) return true;
-    if (await visible(page, "create-dataset") && !clickedCreate) {
+    if (await visible(page, "create-dataset") && !clickedCreate && !(await visible(page, "file-input")) && !(await page.getByText("This folder is empty").count())) {
       clickedCreate = true;
       say("clicking create-dataset");
       await page.getByTestId("create-dataset").first().click();
       return false;
     }
-    if (await visible(page, "authorize-session") && !clickedAuth) {
+    if (await visible(page, "authorize-session") && Date.now() - lastAuthClick > 60_000) {
+      lastAuthClick = Date.now();
       clickedAuth = true;
       say("clicking authorize-session during setup");
       await page.getByTestId("authorize-session").first().click().catch(() => undefined);
@@ -231,8 +296,15 @@ try {
   }
   // also try to discover payer from the account menu / setup address
   if (await visible(page, "account")) await page.getByTestId("account").click().catch(() => undefined);
+  if (await visible(page, "account") && !(await visible(page, "setup-address")) && !(await visible(page, "session-status"))) {
+    await page.getByTestId("account").click().catch(() => undefined);
+  }
   const setupAddress = (await page.getByTestId("setup-address").textContent().catch(() => ""))?.trim() || "";
-  const payer = String(credit.account || credit.payer || setupAddress || "");
+  const bodyText = await page.locator("body").innerText().catch(() => "");
+  const handoverText = String((steps.handover as { text?: string } | undefined)?.text ?? "");
+  const fromPage = (bodyText + " " + handoverText).match(/0x[a-fA-F0-9]{40}/)?.[0] || "";
+  const priorAccount = String((log.credit as { account?: string } | undefined)?.account || (steps.v2Account as { account?: string } | undefined)?.account || "");
+  const payer = String(credit.account || credit.payer || setupAddress || fromPage || priorAccount || "");
   log.credit = {
     path: credit.path,
     status: credit.status,
@@ -253,48 +325,95 @@ try {
   if (await visible(page, "authorize-session")) {
     say("clicking authorize-session");
     await page.getByTestId("authorize-session").first().click();
-    await waitUntil(4 * 60_000, "session ready", async () => {
-      const t = await textOf(page);
-      return /Session key until/i.test(t) && !(await visible(page, "authorize-session"));
-    });
+    await waitUntil(4 * 60_000, "session ready", sessionReady);
   }
   steps.session = { ok: true, text: (await textOf(page)).slice(0, 300) };
+  log.tSessionReady = new Date().toISOString();
+  log.secPaymentToSessionReady = Math.round((Date.now() - tPayment) / 1000);
   await snap(page, "session-ready");
+  say(`session ready ${log.secPaymentToSessionReady}s after payment return`);
 
   // --- Drive file save ---
   const fileName = "live-e2e.txt";
-  await page.getByTestId("file-input").setInputFiles({
-    name: fileName,
-    mimeType: "text/plain",
-    buffer: Buffer.from(`hello from live e2e ${new Date().toISOString()}\n`),
-  });
-  say("uploaded live-e2e.txt; waiting for entry / save");
-  await waitUntil(20 * 60_000, "drive file saved", async () => {
-    const entry = page.getByTestId("entry").filter({ hasText: fileName });
-    if (!(await entry.count().catch(() => 0))) {
-      // maybe still authorizing
-      if (await visible(page, "authorize-session")) {
-        await page.getByTestId("authorize-session").first().click().catch(() => undefined);
-      }
-      await continuePasskey(page);
-      return false;
+  const fileBytes = Buffer.from(`hello from live e2e ${new Date().toISOString()}\n`);
+  // The account menu sat over the drive on the previous run; close it so toasts and the listing are visible
+  // and the file-input change handler is not racing a menu re-render.
+  await page.keyboard.press("Escape").catch(() => undefined);
+  if (await visible(page, "account-menu")) {
+    await page.getByTestId("account").click().catch(() => undefined);
+    await page.keyboard.press("Escape").catch(() => undefined);
+  }
+  const putFile = async (reason: string) => {
+    await page.getByTestId("file-input").setInputFiles({ name: fileName, mimeType: "text/plain", buffer: fileBytes });
+    say(`setInputFiles live-e2e.txt (${reason})`);
+  };
+  await putFile("initial");
+  await snap(page, "after-upload");
+  const tSave = Date.now();
+  let lastSaveMark = 0;
+  let retriedUpload = false;
+  // The first resume's setInputFiles already committed this file (dataset 45 B, 10:32 PM CT).
+  // A second setInputFiles opens a "replace existing" dialog; cancel it and accept the existing entry.
+  const dismissReplace = async () => {
+    const dialog = page.getByRole("dialog").filter({ hasText: /already exists/i });
+    if (await dialog.count().catch(() => 0)) {
+      await dialog.getByRole("button", { name: /^Cancel$/i }).click().catch(() => undefined);
+      await page.keyboard.press("Escape").catch(() => undefined);
+      say("dismissed replace-existing dialog (file already on the drive)");
+      return true;
     }
+    return false;
+  };
+  if (await page.getByTestId("entry").filter({ hasText: fileName }).count().catch(() => 0)) {
+    await dismissReplace();
+    say("live-e2e.txt already present on the drive");
+  } else {
+  await waitUntil(20 * 60_000, "drive file saved", async () => {
+    await dismissReplace();
+    const entryN = await page.getByTestId("entry").filter({ hasText: fileName }).count().catch(() => 0);
+    const uploadN = await page.locator(".upload-row").count().catch(() => 0);
+    const uploadDone = await page.locator('.upload-row[data-status=done]').count().catch(() => 0);
+    const uploadErr = await page.locator('.upload-row[data-status=error]').count().catch(() => 0);
     const activity = await page.getByTestId("activity").innerText().catch(() => "");
-    const pending = await visible(page, "activity-indicator");
-    if (/Saved|committed|done|Uploaded/i.test(activity) && !pending) return true;
-    // entry visible and no error is enough once activity quiets, but wait for a done item if present
+    const toast = (await page.getByTestId("toast").allInnerTexts().catch(() => [])).join(" | ").slice(0, 240);
+    const pending = await visible(page, "activity-indicator") || await page.locator(".upload-row[data-status=uploading], .upload-row[data-status=waiting]").count().catch(() => 0) > 0;
     const done = await page.locator('[data-testid=activity-item][data-status=done]').count().catch(() => 0);
     const err = await page.locator('[data-testid=activity-item][data-status=error]').count().catch(() => 0);
-    if (err > 0 && done === 0) {
-      const errText = await page.getByTestId("activity").innerText().catch(() => "");
-      // keep waiting unless it looks fatal and stalled > nothing; don't throw yet
-      log.driveActivity = errText.slice(0, 400);
+    const elapsed = Date.now() - tSave;
+    if (entryN === 0 && uploadN === 0 && elapsed > 15_000 && !retriedUpload) {
+      retriedUpload = true;
+      say(`no entry or upload row after 15s; toast=${toast || "none"}; retrying upload`);
+      await page.keyboard.press("Escape").catch(() => undefined);
+      await putFile("retry after 15s");
+      await snap(page, "upload-retry");
     }
-    return done > 0 && !pending;
+    if (elapsed - lastSaveMark > 20_000) {
+      lastSaveMark = elapsed;
+      log.driveActivity = `${activity} toast=${toast}`.slice(0, 500);
+      say(`save wait ${Math.round(elapsed / 1000)}s entries=${entryN} uploads=${uploadN} done=${done} err=${err} uploadDone=${uploadDone} uploadErr=${uploadErr} pending=${pending} toast=${toast || "none"} activity=${activity.slice(0, 180)}`);
+      await snap(page, `save-${Math.round(elapsed / 1000)}s`);
+    }
+    if (uploadErr > 0 && uploadDone === 0 && entryN === 0 && elapsed > 30_000) {
+      throw new Error(`drive upload failed: ${toast || activity}`.slice(0, 300));
+    }
+    if (err > 0 && done === 0 && entryN === 0 && elapsed > 30_000) {
+      throw new Error(`drive save error: ${activity || toast}`.slice(0, 300));
+    }
+    if (entryN > 0 && (uploadDone > 0 || done > 0 || /Saved|committed|done|Uploaded/i.test(activity)) && !pending) return true;
+    if (entryN > 0 && !pending && elapsed > 8_000) return true;
+    if (await visible(page, "authorize-session")) {
+      await page.getByTestId("authorize-session").first().click().catch(() => undefined);
+      await continuePasskey(page);
+    }
+    return false;
   });
+  }
   await snap(page, "drive-saved");
   steps.driveSave = { ok: true, file: fileName, activity: (await page.getByTestId("activity").innerText().catch(() => "")).slice(0, 400) };
-  say("drive file saved");
+  log.tFirstSave = new Date().toISOString();
+  log.secPaymentToFirstSave = Math.round((Date.now() - tPayment) / 1000);
+  log.secSessionToFirstSave = Math.round((Date.now() - Date.parse(String(log.tSessionReady))) / 1000);
+  say(`drive file saved; payment→ready ${log.secPaymentToSessionReady}s, ready→save ${log.secSessionToFirstSave}s, payment→save ${log.secPaymentToFirstSave}s`);
 
   // --- Identity profile ---
   await page.goto(`${SITE}/identity/`, { waitUntil: "networkidle" });
@@ -305,16 +424,25 @@ try {
     await page.getByTestId("identity-connect").click();
   }
   await page.getByTestId("identity-form").waitFor({ timeout: 90_000 });
-  await page.getByTestId("identity-name").fill("Live E2E");
-  await page.getByTestId("identity-bio").fill("Calibration live e2e profile");
-  await snap(page, "identity-form");
-  await page.getByTestId("identity-save").click();
-  say("saving identity");
-  await page.getByTestId("identity-saved").waitFor({ timeout: 15 * 60_000 });
-  await snap(page, "identity-saved");
-  const identityStatus = await page.getByTestId("identity-status").innerText().catch(() => "");
-  steps.identity = { ok: true, status: identityStatus, name: "Live E2E" };
-  say(`identity saved: ${identityStatus}`);
+  const alreadySaved = await visible(page, "identity-saved");
+  const existingName = await page.getByTestId("identity-name").inputValue().catch(() => "");
+  if (alreadySaved && /Live E2E/i.test(existingName)) {
+    const identityStatus = await page.getByTestId("identity-status").innerText().catch(() => "already saved");
+    steps.identity = { ok: true, status: identityStatus, name: "Live E2E", skipped: true };
+    await snap(page, "identity-saved");
+    say(`identity already saved: ${identityStatus}`);
+  } else {
+    await page.getByTestId("identity-name").fill("Live E2E");
+    await page.getByTestId("identity-bio").fill("Calibration live e2e profile");
+    await snap(page, "identity-form");
+    await page.getByTestId("identity-save").click();
+    say("saving identity");
+    await page.getByTestId("identity-saved").waitFor({ timeout: 15 * 60_000 });
+    await snap(page, "identity-saved");
+    const identityStatus = await page.getByTestId("identity-status").innerText().catch(() => "");
+    steps.identity = { ok: true, status: identityStatus, name: "Live E2E" };
+    say(`identity saved: ${identityStatus}`);
+  }
 
   // --- Back to drive so it can process a FiPen save ---
   await page.goto(`${SITE}/`, { waitUntil: "networkidle" });
@@ -344,10 +472,33 @@ try {
     if (m.type() === "error") console.log("fipen console:", m.text().slice(0, 240));
   });
   await fipen.goto(fipenUrl, { waitUntil: "domcontentloaded" });
-  // embedded mode auto-clicks Blank document
-  await fipen.locator("#input").waitFor({ timeout: 60_000, state: "visible" });
-  await fipen.locator("#title").fill("Live E2E Note");
-  await fipen.locator("#input").click();
+  say(`opened standalone fipen ${fipenUrl.replace(payer, "<payer>")}`);
+  await snap(fipen, "fipen-open");
+  // Embedded mode auto-clicks #blank, but the home overlay can still cover #input.
+  // Wait for the editor (canvas / __editor.ready); click Blank if the home card is still up.
+  await waitUntil(90_000, "fipen editor ready", async () => {
+    const home = fipen.locator("#home");
+    const homeUp = await home.isVisible().catch(() => false);
+    if (homeUp) {
+      const blank = fipen.locator("#blank");
+      if (await blank.isVisible().catch(() => false)) {
+        await blank.click().catch(() => undefined);
+        say("clicked fipen #blank");
+      }
+    }
+    const ready = await fipen.evaluate(() => (window as unknown as { __editor?: { ready?: boolean } }).__editor?.ready === true).catch(() => false);
+    const canvas = await fipen.locator("#pages canvas").first().isVisible().catch(() => false);
+    return Boolean(ready || canvas);
+  });
+  const titleBox = fipen.locator("#title");
+  await titleBox.waitFor({ timeout: 30_000 });
+  await titleBox.click();
+  await fipen.keyboard.press("Control+a");
+  await fipen.keyboard.type("Live E2E Note");
+  await fipen.keyboard.press("Enter");
+  const box = await fipen.locator("#pages canvas").first().boundingBox();
+  if (!box) throw new Error("fipen editor canvas missing");
+  await fipen.mouse.click(box.x + 120, box.y + 120);
   await fipen.keyboard.type("Hello from standalone FiPen live e2e.");
   await fipen.locator("#p2p-save").waitFor({ timeout: 30_000 });
   await fipen.locator("#p2p-save").click();
@@ -401,6 +552,11 @@ try {
   log.at = page.url().replace(/session_id=[^&]+/, "session_id=…");
   log.text = await textOf(page).catch(() => "");
   await snap(page, "error").catch(() => undefined);
+  for (const [i, extra] of page.context().pages().entries()) {
+    if (extra === page) continue;
+    log[`atTab${i}`] = extra.url();
+    await snap(extra, `error-tab${i}`).catch(() => undefined);
+  }
   say(`FAIL: ${log.error}`);
 } finally {
   const txs = executeBodies
