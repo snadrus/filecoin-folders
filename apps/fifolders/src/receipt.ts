@@ -94,20 +94,19 @@ async function receiptFromBlockReceipts(
 async function lookupOnRpc(url: string, hash: Hex, opts: ReceiptLookupOpts): Promise<{ receipt: TransactionReceipt; source: string } | undefined> {
   const direct = await jsonRpc<RpcReceipt | null>(url, "eth_getTransactionReceipt", [hash], opts).catch(() => null);
   if (hasBlock(direct)) return { receipt: receiptFromRpc(direct), source: `getTransactionReceipt:${url}` };
-  const latest = await receiptFromBlockReceipts(url, hash, "latest", opts);
-  if (latest) return latest;
-  // If the tx is in the latest block but receipts for "latest" failed, fetch receipts by block number.
-  const block = await jsonRpc<{ number?: string; transactions?: Array<string | { hash?: string }> } | null>(
-    url,
-    "eth_getBlockByNumber",
-    ["latest", true],
-    opts,
-  ).catch(() => null);
-  const want = hash.toLowerCase();
-  const inBlock = (block?.transactions ?? []).some((tx) => (typeof tx === "string" ? tx : tx.hash ?? "").toLowerCase() === want);
-  if (inBlock && block?.number) {
-    const byNumber = await receiptFromBlockReceipts(url, hash, block.number, opts);
-    if (byNumber) return { ...byNumber, source: `blockReceiptsByNumber:${url}` };
+  // Glif can lag receipts until the next epoch, by which time "latest" has already moved on.
+  // Check latest and the two prior heads by number so we do not miss the including block.
+  const head = await jsonRpc<string>(url, "eth_blockNumber", [], opts).catch(() => undefined);
+  const tags = new Set<string>(["latest"]);
+  if (head) {
+    const n = BigInt(head);
+    for (let i = 0; i <= 2; i += 1) {
+      if (n >= BigInt(i)) tags.add(`0x${(n - BigInt(i)).toString(16)}`);
+    }
+  }
+  for (const tag of tags) {
+    const hit = await receiptFromBlockReceipts(url, hash, tag, opts);
+    if (hit) return hit;
   }
   return undefined;
 }
@@ -122,24 +121,34 @@ export async function waitForReceipt(
   const urls = [...new Set(opts.rpcUrls ?? [])];
   let last: unknown;
   for (;;) {
-    try {
-      const receipt = await client.getTransactionReceipt({ hash });
-      if (receipt?.blockHash) return receipt;
-    } catch (error) {
-      last = error; // not mined yet, a null round, or a transient RPC error: keep polling
-    }
-    if (urls.length) {
-      const found = await Promise.any(
-        urls.map(async (url) => {
-          const hit = await lookupOnRpc(url, hash, { timeoutMs: Math.min(poll + 1_000, 5_000), fetch: opts.fetch });
-          if (!hit) throw new Error("not yet");
-          return hit;
+    const tick: Promise<{ receipt: TransactionReceipt; source?: string } | undefined>[] = [
+      Promise.resolve()
+        .then(async () => {
+          const receipt = await Promise.race([
+            client.getTransactionReceipt({ hash }),
+            new Promise<never>((_, reject) => setTimeout(() => reject(new Error("receipt poll timeout")), Math.min(poll, 1_500))),
+          ]);
+          return receipt?.blockHash ? { receipt, source: "client.getTransactionReceipt" } : undefined;
+        })
+        .catch((error) => {
+          last = error;
+          return undefined;
         }),
-      ).catch(() => undefined);
-      if (found) {
-        console.log(`[receipt-timing] ${JSON.stringify({ hash, source: found.source.replace(/https?:\/\/[^/]+/, (m) => new URL(m).host), status: found.receipt.status, blockNumber: found.receipt.blockNumber.toString() })}`);
-        return found.receipt;
+      ...urls.map(async (url) => {
+        const hit = await lookupOnRpc(url, hash, { timeoutMs: Math.min(poll + 1_000, 4_000), fetch: opts.fetch });
+        return hit;
+      }),
+    ];
+    const results = await Promise.all(tick);
+    const found = results.find((row) => row?.receipt.blockHash);
+    if (found) {
+      const host = (found.source ?? "").replace(/https?:\/\/[^/]+/, (m) => {
+        try { return new URL(m).host; } catch { return m; }
+      });
+      if (host && host !== "client.getTransactionReceipt") {
+        console.log(`[receipt-timing] ${JSON.stringify({ hash, source: host, status: found.receipt.status, blockNumber: found.receipt.blockNumber.toString() })}`);
       }
+      return found.receipt;
     }
     if (Date.now() >= deadline) throw new Error(`timed out waiting for ${hash}: ${last instanceof Error ? last.message.split("\n")[0] : String(last)}`);
     await new Promise((resolve) => setTimeout(resolve, poll));

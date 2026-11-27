@@ -66,6 +66,25 @@ describe("waitForReceipt", () => {
     const receipt = await waitForReceipt(client, hash, { pollMs: 1, rpcUrls: ["https://rpc.example/rpc/v1"], fetch: fetchMock });
     expect(receipt.status).toBe("reverted");
   });
+
+  it("finds a receipt on latest-1 when latest has already moved on", async () => {
+    const hash = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    const client = { getTransactionReceipt: async () => { throw new Error("not found"); } };
+    const fetchMock = (async (_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as { method?: string; params?: unknown[] };
+      if (body.method === "eth_blockNumber") return new Response(JSON.stringify({ result: "0x12" }));
+      if (body.method === "eth_getBlockReceipts" && body.params?.[0] === "0x11") {
+        return new Response(JSON.stringify({
+          result: [{ transactionHash: hash, blockHash: "0x" + "ef".repeat(32), blockNumber: "0x11", status: "0x1", gasUsed: "0x1", cumulativeGasUsed: "0x1", logs: [], type: "0x2", transactionIndex: "0x0" }],
+        }));
+      }
+      if (body.method === "eth_getBlockReceipts") return new Response(JSON.stringify({ result: [] }));
+      return new Response(JSON.stringify({ result: null }));
+    }) as typeof fetch;
+    const receipt = await waitForReceipt(client, hash, { pollMs: 1, rpcUrls: ["https://rpc.example/rpc/v1"], fetch: fetchMock });
+    expect(receipt.status).toBe("success");
+    expect(receipt.blockNumber).toBe(17n);
+  });
 });
 
 describe("receiptFromRpc", () => {

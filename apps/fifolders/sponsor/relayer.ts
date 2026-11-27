@@ -46,7 +46,7 @@ export const RPC = rpcFor(NETWORK);
 
 export function publicClient(opts: ChainOptions = {}): PublicClient {
   const network = opts.network ?? NETWORK;
-  return createPublicClient({ chain: chainFor(network) as never, transport: http(rpcFor(network, opts.rpc), { retryCount: 5 }) }) as unknown as PublicClient;
+  return createPublicClient({ chain: chainFor(network) as never, transport: http(rpcFor(network, opts.rpc), { retryCount: 1, timeout: 8_000 }) }) as unknown as PublicClient;
 }
 
 export class SponsorWalletRelayer implements Relayer {
