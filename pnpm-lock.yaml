@@ -94,9 +94,15 @@ importers:
 
   packages/fil-folders:
     dependencies:
+      '@filoz/keysmith':
+        specifier: ^0.2.0
+        version: 0.2.0(viem@2.57.14(typescript@5.9.3)(zod@4.6.7))
       '@filoz/synapse-sdk':
         specifier: '>=0.37.0'
         version: 0.40.4(typescript@5.9.3)(viem@2.57.14(typescript@5.9.3)(zod@4.6.7))
+      filecoin-encryption-envelope:
+        specifier: ^0.1.1
+        version: 0.1.1
       viem:
         specifier: ^2.38.3
         version: 2.57.14(typescript@5.9.3)(zod@4.6.7)
@@ -558,6 +564,11 @@ packages:
     cpu: [x64]
     os: [win32]
 
+  '@filoz/keysmith@0.2.0':
+    resolution: {integrity: sha512-fX2hcDKRUsjh13CGX75xOY5Gra0ueqfKkbSuu5B72CUO40qnB8LUHY+dPKWGN65i3EGHMjRF8U9r0r7KL0Xlxw==}
+    peerDependencies:
+      viem: 2.x
+
   '@filoz/synapse-core@0.4.1':
     resolution: {integrity: sha512-Psj2YpIxNh+nxJN0wQdYMBTQRRhq1gR/C9kosI39Kx6y+lV8ppw02c6mPeHEaa47AG3KfUqQyMb3xqurOlwraQ==}
     peerDependencies:
@@ -784,6 +795,10 @@ packages:
     resolution: {integrity: sha512-gbKGcRUYIjA3/zCCNaWDciTMFI0dCkvou3TL8Zmy5Nc7sJ47a0jtOeZoTaMxkuqRo9cRhjOdZJXegxYE5FN/xw==}
     engines: {node: ^14.21.3 || >=16}
 
+  '@noble/curves@2.4.0':
+    resolution: {integrity: sha512-P4/62zrgfH33CneE3Dn4WhJVA22YUU0eR51wKIan4NVRvwsA0YnPTwWGpNbpuacSujmSFLvyzpyuR30+fbq2Ew==}
+    engines: {node: '>= 20.19.0'}
+
   '@noble/hashes@1.4.0':
     resolution: {integrity: sha512-V1JJ1WTRUqHHrOSh597hURcMqVKVGL/ea3kv0gSnEdsEZ0/+VyPghM1lMNGc00z7CIQorSvbKpuJkxvuHbvdbg==}
     engines: {node: '>= 16'}
@@ -795,6 +810,10 @@ packages:
   '@noble/hashes@1.8.0':
     resolution: {integrity: sha512-jCs9ldd7NwzpgXDIf6P3+NrHh9/sD6CQdxHyjQI+h/6rDNo88ypBxxz45UDuZHz9r3tNz7N/VInSVoVdtXEI4A==}
     engines: {node: ^14.21.3 || >=16}
+
+  '@noble/hashes@2.4.0':
+    resolution: {integrity: sha512-X5XaVWZIBCT7HHZGm5I7ZQXDwLG+bGXuSrMQAW+7Zvl87h1kmc1ZB1VSRJcpUfoUrGQp4Fkoxm5kZ+Ms+aW+eA==}
+    engines: {node: '>= 20.19.0'}
 
   '@phosphor-icons/webcomponents@2.1.5':
     resolution: {integrity: sha512-JcvQkZxvcX2jK+QCclm8+e8HXqtdFW9xV4/kk2aL9Y3dJA2oQVt+pzbv1orkumz3rfx4K9mn9fDoMr1He1yr7Q==}
@@ -1672,6 +1691,14 @@ packages:
     resolution: {integrity: sha512-oc6Pzg/gkTobxHZNgMmny+G99dOeBMbAmnGHcZWMKtolxZBIVwfi0Pj0khxEtNU8HMFdbT5sK0HmtgecDUPP0A==}
     hasBin: true
 
+  cborg@6.1.2:
+    resolution: {integrity: sha512-hQfFh6FuuCDoycN68FtUpjtQx5kCtxOLA8msbpJZxjtxaMqxgHl+4GNwO+0YexH/lHmVzhhAKa0ua+vtmTRoVw==}
+    hasBin: true
+
+  cborg@6.2.1:
+    resolution: {integrity: sha512-DwiF3Jd5RW6kJuTQMzQb/sdZD03utp15EcQNOMTvE/ZYCdDPzETsGOY5lj8imKxbsEuYvOzcMSiKLiT4C2/2Lw==}
+    hasBin: true
+
   chai@5.3.3:
     resolution: {integrity: sha512-4zNhdJD/iOjSH0A05ea+Ke6MU5mmpQcbQsSOkgdaUMJ9zTlDTD/GYlwohmIE2u0gaxHYiVHEn1Fw9mZ/ktJWgw==}
     engines: {node: '>=18'}
@@ -1892,6 +1919,9 @@ packages:
     peerDependenciesMeta:
       picomatch:
         optional: true
+
+  filecoin-encryption-envelope@0.1.1:
+    resolution: {integrity: sha512-9bDMdM/udMjuFzr/jLLymDHndRfqCp6KyZj1SWUDkWTgyc4FCyO1UbSSypq53vpJp4bOT3loJP3p/7FPlbwNMQ==}
 
   find-up@4.1.0:
     resolution: {integrity: sha512-PpOwAdQ/YlXQ2vj8a3h8IipDuYRi3wceVQQGYWxNINccq40Anw7BlsEXCMbt1Zt+OLA6Fq9suIpIWD0OsnISlw==}
@@ -2717,6 +2747,9 @@ packages:
   zod@3.25.76:
     resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
 
+  zod@4.6.6:
+    resolution: {integrity: sha512-4UmzQUF5fxvfcYHlbjBmejU+w+hbDnWFx4aS8kBx7nPBHcO2SqPbpAG8snbdg+Xse4pRefR98hgjFgIMCI/UhA==}
+
   zod@4.6.7:
     resolution: {integrity: sha512-g8W2D2kU6a8untc053fX1uVBKzM7yqAxW/3zwk83+6RyF2+SKOuV+c0wBDhUwzV1PaGapmZH+rmcUzPf+3CGwg==}
 
@@ -2993,6 +3026,13 @@ snapshots:
   '@esbuild/win32-x64@0.28.2':
     optional: true
 
+  '@filoz/keysmith@0.2.0(viem@2.57.14(typescript@5.9.3)(zod@4.6.7))':
+    dependencies:
+      '@noble/curves': 2.4.0
+      '@noble/hashes': 2.4.0
+      cborg: 6.2.1
+      viem: 2.57.14(typescript@5.9.3)(zod@4.6.7)
+
   '@filoz/synapse-core@0.4.1(typescript@5.9.3)(viem@2.57.14(typescript@5.9.3)(zod@3.25.76))':
     dependencies:
       '@web3-storage/data-segment': 5.3.0
@@ -3191,12 +3231,18 @@ snapshots:
     dependencies:
       '@noble/hashes': 1.8.0
 
+  '@noble/curves@2.4.0':
+    dependencies:
+      '@noble/hashes': 2.4.0
+
   '@noble/hashes@1.4.0':
     optional: true
 
   '@noble/hashes@1.7.0': {}
 
   '@noble/hashes@1.8.0': {}
+
+  '@noble/hashes@2.4.0': {}
 
   '@phosphor-icons/webcomponents@2.1.5':
     dependencies:
@@ -4884,6 +4930,10 @@ snapshots:
 
   cborg@5.1.11: {}
 
+  cborg@6.1.2: {}
+
+  cborg@6.2.1: {}
+
   chai@5.3.3:
     dependencies:
       assertion-error: 2.0.1
@@ -5129,6 +5179,11 @@ snapshots:
   fdir@6.5.0(picomatch@4.0.7):
     optionalDependencies:
       picomatch: 4.0.7
+
+  filecoin-encryption-envelope@0.1.1:
+    dependencies:
+      cborg: 6.1.2
+      zod: 4.6.6
 
   find-up@4.1.0:
     dependencies:
@@ -6002,6 +6057,8 @@ snapshots:
 
   zod@3.25.76:
     optional: true
+
+  zod@4.6.6: {}
 
   zod@4.6.7: {}
 

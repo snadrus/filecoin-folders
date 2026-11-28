@@ -35,6 +35,7 @@ export type {
   AdoptRef,
   ContentEnc,
   EncryptionOptions,
+  KeyEncryptionOptions,
   EncryptionSigner,
   HistoryEntry,
   Manifest,

@@ -145,6 +145,17 @@ export interface EncryptionSigner {
   signMessage?: (parameters: { message: string }) => Promise<Hex>;
 }
 
+/**
+ * Private volumes (read-restricted data sets): the volume key is supplied directly (derived from the
+ * Keysmith group key, see `fil-folders/private`), and every file gets its own key derived from it, so
+ * one file can be shared without the others. No wallet signature at open.
+ */
+export interface KeyEncryptionOptions {
+  /** 32 raw bytes. */
+  key: Uint8Array;
+  perFileKeys: true;
+}
+
 export interface EncryptionOptions {
   signer: EncryptionSigner;
   /** Defaults to EIP-712. `personal_sign` is the wallet fallback. */

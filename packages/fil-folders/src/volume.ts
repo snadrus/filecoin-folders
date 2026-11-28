@@ -1,10 +1,12 @@
 import { isAddress, type Address, type Hex } from "viem";
 import { contentCid, decodeCar, encodeCar, isCar } from "./car.js";
+import { asBuffer, bytesToBase64 } from "./bytes.js";
 import { bytesToPieceCid, decodeUtf8, isByteStream, pieceCidToBytes, readStream, utf8, bytesToBase64Url, base64UrlToBytes } from "./bytes.js";
 import { manifestBytes, parseManifest } from "./codec.js";
 import { commitMetadata } from "./drive-meta.js";
 import { deriveVolumeKey, decryptBytes, encryptBytes, FILE_AAD, NAME_AAD, signVolumeKey, volumeKeyInfo } from "./crypto.js";
 import { retryTransient } from "./rpc-retry.js";
+import { aesKey, fileKeyBytes } from "./private/file-keys.js";
 import { CasRetryError, IsADirectoryError, NotFoundError, RegistryCasConflict } from "./errors.js";
 import { FIL_FOLDERS_NAMESPACE, namespaceId, volumeKey } from "./ids.js";
 import { mergeTrees } from "./merge.js";
@@ -32,6 +34,7 @@ import type {
   DirNode,
   EncryptionOptions,
   FileNode,
+  KeyEncryptionOptions,
   HistoryEntry,
   Manifest,
   ManifestEnc,
@@ -55,7 +58,7 @@ export interface OpenVolumeOptions {
   owner: Address;
   /** Volume name. The registry key is `keccak256(utf8(name))`. */
   name: string;
-  encryption?: EncryptionOptions;
+  encryption?: EncryptionOptions | KeyEncryptionOptions;
   /** Spill a subdirectory into its own manifest block once its JSON is larger than this. Default 24 KiB. */
   dirThreshold?: number;
   /** Compare-and-swap attempts, including the first. Default 5. */
@@ -102,6 +105,8 @@ export class Volume {
   #now: () => number;
   #encryption?: EncryptionOptions;
   #cryptoKey?: CryptoKey;
+  /** Private volumes: raw volume key; each file's key is derived from it and the file IV. */
+  #perFileKey?: Uint8Array;
   #basePiece = "";
   #baseVersion = 0n;
   #baseTree: DirNode = emptyDir();
@@ -131,13 +136,17 @@ export class Volume {
     this.dirThreshold = options.dirThreshold ?? DEFAULT_DIR_THRESHOLD;
     this.maxRetries = options.maxRetries ?? 5;
     this.#now = options.now ?? (() => Date.now());
-    this.#encryption = options.encryption;
+    if (options.encryption && "key" in options.encryption) this.#perFileKey = options.encryption.key;
+    else this.#encryption = options.encryption;
     if (this.dirThreshold < 0 || !Number.isFinite(this.dirThreshold)) throw new Error("dirThreshold must be >= 0");
     if (!Number.isInteger(this.maxRetries) || this.maxRetries < 1) throw new Error("maxRetries must be >= 1");
   }
 
   async init(): Promise<void> {
-    if (this.#encryption) {
+    if (this.#perFileKey) {
+      if (this.#perFileKey.byteLength !== 32) throw new Error("a private volume key is 32 bytes");
+      this.#cryptoKey = await aesKey(this.#perFileKey);
+    } else if (this.#encryption) {
       const mode = this.#encryption.mode ?? "eip712";
       const signature = await signVolumeKey({
         mode,
@@ -222,7 +231,7 @@ export class Volume {
     const bytes = await this.#readFile(node);
     if (!node.enc) return bytes;
     if (!this.#cryptoKey) throw new Error("volume is encrypted; pass encryption to openVolume");
-    return decryptBytes(this.#cryptoKey, bytes, node.enc.iv, FILE_AAD);
+    return decryptBytes(await this.#fileKey(node.enc.iv), bytes, node.enc.iv, FILE_AAD);
   }
 
   /** A file's bytes as of an older snapshot (a `history()` entry's pieceCid), for "Manage versions". */
@@ -235,7 +244,7 @@ export class Volume {
     const bytes = await this.#readFile(node);
     if (!node.enc) return bytes;
     if (!this.#cryptoKey) throw new Error("volume is encrypted; pass encryption to openVolume");
-    return decryptBytes(this.#cryptoKey, bytes, node.enc.iv, FILE_AAD);
+    return decryptBytes(await this.#fileKey(node.enc.iv), bytes, node.enc.iv, FILE_AAD);
   }
 
   async ls(path = "/"): Promise<Stat[]> {
@@ -458,7 +467,7 @@ export class Volume {
     const mime = opts?.mime;
     const plain = isByteStream(data) ? await readStream(data) : data;
     if (this.#cryptoKey) {
-      const sealed = await encryptBytes(this.#cryptoKey, plain, FILE_AAD);
+      const sealed = this.#perFileKey ? await this.#sealPerFile(plain) : await encryptBytes(this.#cryptoKey, plain, FILE_AAD);
       const pieceCid = await contentCid(sealed.ciphertext);
       this.#blobs.set(pieceCid, sealed.ciphertext);
       const file: Omit<FileNode, "type" | "name"> = {
@@ -556,7 +565,7 @@ export class Volume {
       manifestRoot: stored.root,
       volumeName: this.name,
       version: this.#baseVersion + 1n,
-      encrypted: Boolean(this.#encryption),
+      encrypted: Boolean(this.#encryption || this.#perFileKey),
     });
     const uploaded = await this.storage.put(car, { metadata });
     const decoded = decodeCar(car);
@@ -696,6 +705,46 @@ export class Volume {
     }
     entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
     return { type: "dir", name: "", mtime: manifest.mtime, entries };
+  }
+
+  /** Content key for one file: the volume key, or (private volumes) a key derived from it and the IV. */
+  async #fileKey(iv: string): Promise<CryptoKey> {
+    if (!this.#perFileKey) return this.#cryptoKey!;
+    return aesKey(await fileKeyBytes(this.#perFileKey, iv));
+  }
+
+  async #sealPerFile(plain: Uint8Array): Promise<{ ciphertext: Uint8Array; iv: string }> {
+    const ivBytes = crypto.getRandomValues(new Uint8Array(12));
+    const iv = bytesToBase64(ivBytes);
+    const key = await this.#fileKey(iv);
+    const ciphertext = new Uint8Array(
+      await crypto.subtle.encrypt({ name: "AES-GCM", iv: ivBytes, additionalData: asBuffer(utf8(FILE_AAD)) }, key, asBuffer(plain)),
+    );
+    return { ciphertext, iv };
+  }
+
+  /**
+   * What a single-file share link needs (private volumes only): the content CID, the piece that holds
+   * its block, its IV and its own key. The key opens this file and nothing else.
+   */
+  async fileShareInfo(path: string): Promise<{ contentCid: string; piece: string; iv: string; fileKey: Uint8Array; size: number; mime?: string }> {
+    if (!this.#perFileKey) throw new Error("only private volumes have per-file keys");
+    const norm = normalizePath(path);
+    const node = find(await this.#read(), norm);
+    if (!node) throw new NotFoundError(norm);
+    if (node.type !== "file") throw new IsADirectoryError(norm);
+    if (!node.enc?.iv) throw new Error("this file is not encrypted");
+    const piece = node.located ?? this.#basePiece;
+    if (!piece) throw new Error("this file has not been saved yet");
+    const out: { contentCid: string; piece: string; iv: string; fileKey: Uint8Array; size: number; mime?: string } = {
+      contentCid: node.pieceCid,
+      piece,
+      iv: node.enc.iv,
+      fileKey: await fileKeyBytes(this.#perFileKey, node.enc.iv),
+      size: node.size,
+    };
+    if (node.mime) out.mime = node.mime;
+    return out;
   }
 
   async #sealName(name: string): Promise<{ name: string; nameIv?: string }> {
