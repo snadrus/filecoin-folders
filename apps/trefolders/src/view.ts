@@ -993,7 +993,12 @@ function renderAccount(model: ViewModel): string {
         ${chainButton("mainnet", "Mainnet", model.chain)}
       </div>
       <p class="account-line">Volume ${escapeHtml(volumeLabel(model.volumeName))} · encryption ${model.encrypted ? "on" : "off"}</p>
-      ${(() => { const d = panel.datasets.find((x) => x.id === panel.selectedDatasetId); return d?.visibility ? `<p class="account-line" data-testid="current-visibility">This dataset: ${visibilityBadge(d.visibility)}</p>` : ""; })()}
+      ${(() => {
+        const d = panel.datasets.find((x) => x.id === panel.selectedDatasetId);
+        // Sponsored (gasless) data sets are always created public.
+        const v = d?.visibility ?? (panel.selectedDatasetId && isSponsored() ? "public" : undefined);
+        return v ? `<p class="account-line" data-testid="current-visibility">This dataset: ${visibilityBadge(v)}</p>` : "";
+      })()}
     </section>`
     : `<div class="chain-toggle" role="group" aria-label="Network">
         ${chainButton("calibration", "Calibration", model.chain)}
