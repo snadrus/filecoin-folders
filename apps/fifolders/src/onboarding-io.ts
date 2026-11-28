@@ -19,7 +19,7 @@ export interface OnboardingIO {
    */
   sessionGate(chain: ChainChoice): Promise<SessionGate>;
   fixPayments(chain: ChainChoice, report?: ChainReporter, force?: boolean): Promise<void>;
-  createDataset(input: { chain: ChainChoice; volumeName: string }): Promise<void>;
+  createDataset(input: { chain: ChainChoice; volumeName: string; visibility?: "public" | "private" }): Promise<void>;
   selectDataset(id: string, chain: ChainChoice): void;
   enter(input: { chain: ChainChoice; volumeName: string; encrypt: boolean }): Promise<Session>;
   /**

@@ -47,7 +47,10 @@ async function download(): Promise<void> {
   }
 }
 
-paint();
+if (/(^|[#&])v=p[fg]1(&|$)/.test(location.hash)) {
+  // Private link: everything needed is in the fragment.
+  void import("../private/share-page.js").then(({ mountPrivateShare }) => mountPrivateShare(root));
+} else paint();
 if (params?.owner && import.meta.env.VITE_E2E !== "1") {
   void import("../person.js")
     .then(({ resolvePerson }) => resolvePerson(params.owner, params.chain))

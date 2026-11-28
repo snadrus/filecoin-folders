@@ -63,3 +63,8 @@ export async function fetchGated(input: GatedFetchInput): Promise<Uint8Array> {
     statuses,
   );
 }
+
+/** Statuses as text, for logs. */
+export function describeStatuses(error: unknown): string {
+  return error instanceof GatedFetchError ? error.statuses.map((s) => `${s.provider}: ${s.status}`).join("; ") : "";
+}

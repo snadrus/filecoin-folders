@@ -1,3 +1,4 @@
+import { visibilityBadge } from "./private/visibility.js";
 import { isDriveSource } from "./drive-pieces.js";
 import { LEGACY_NAME_KEY, SESSION_NAME_KEYS, avatarHtml, cachedIdentity, pickDisplayName, type ResolvedIdentity } from "fiperson/view";
 import { friendlyError } from "./friendly-error.js";
@@ -379,10 +380,11 @@ function renderSetup(model: ViewModel): string {
   const datasets = panel.datasets
     .map(
       (dataset) =>
-        `<label class="dataset"><input type="radio" name="dataset" data-testid="dataset-choice" value="${escapeHtml(dataset.id)}" ${dataset.id === panel.selectedDatasetId ? "checked" : ""}/> <span>${escapeHtml(datasetLabel(dataset))}</span></label>`,
+        `<label class="dataset"><input type="radio" name="dataset" data-testid="dataset-choice" value="${escapeHtml(dataset.id)}" ${dataset.id === panel.selectedDatasetId ? "checked" : ""}/> <span>${escapeHtml(datasetLabel(dataset))}</span> ${visibilityBadge(dataset.visibility)}</label>`,
     )
     .join("");
   const create = `<button class="${panel.createPrimary ? "primary" : ""}" type="button" data-testid="create-dataset" data-action="create-dataset">Create new dataset</button>
+        <button type="button" data-testid="create-private-dataset" data-action="create-private-dataset" title="Only people you share a link or key with can read it. Wallet sign-in only.">Create private dataset</button>
         <p class="note">${escapeHtml(model.costs.datasetNote)}</p>`;
   const open =
     panel.selectedDatasetId && panel.paymentsReady && panel.sessionReady
@@ -577,6 +579,7 @@ function renderDatasetSection(model: ViewModel): string {
         <span class="dataset-text"><span class="dataset-id">Dataset ${escapeHtml(label)}${dataset.id === latest ? ` <span class="dataset-tag" data-testid="dataset-latest">latest</span>` : ""}</span>
         ${dataset.drive ? `<span class="dataset-drive" data-testid="dataset-drive"><span class="material-symbols-outlined" aria-hidden="true">folder</span> FiFolders folders${dataset.driveName ? ` · ${escapeHtml(volumeLabel(dataset.driveName))}` : ""}</span>` : ""}
         ${isDriveSource(dataset.source) ? `<span class="dataset-drive fcdrive" data-testid="dataset-filecoin-drive"><span class="material-symbols-outlined" aria-hidden="true">cloud</span> Filecoin Drive</span>` : ""}
+        ${visibilityBadge(dataset.visibility)}
         <span class="dataset-meta">${escapeHtml(bits.join(" · "))}</span></span>
       </button>`;
     })
@@ -983,12 +986,14 @@ function renderAccount(model: ViewModel): string {
            <p class="note" data-testid="session-lazy-note">Not needed to browse. Your first save asks for it (1 signature).</p>`}
       ${step && step.action !== "fix-payments" && step.action !== "authorize" ? `<button type="button" class="primary slim" data-action="${step.action}" data-testid="setup-step">${escapeHtml(step.label)}</button>` : ""}
       <button type="button" data-action="create-dataset" data-testid="create-dataset">Create new dataset</button>
+      <button type="button" data-action="create-private-dataset" data-testid="create-private-dataset" title="Only people you share a link or key with can read it. Wallet sign-in only.">Create private dataset</button>
       <p class="note">${escapeHtml(model.costs.datasetNote)}</p>
       <div class="chain-toggle" role="group" aria-label="Network">
         ${chainButton("calibration", "Calibration", model.chain)}
         ${chainButton("mainnet", "Mainnet", model.chain)}
       </div>
       <p class="account-line">Volume ${escapeHtml(volumeLabel(model.volumeName))} · encryption ${model.encrypted ? "on" : "off"}</p>
+      ${(() => { const d = panel.datasets.find((x) => x.id === panel.selectedDatasetId); return d?.visibility ? `<p class="account-line" data-testid="current-visibility">This dataset: ${visibilityBadge(d.visibility)}</p>` : ""; })()}
     </section>`
     : `<div class="chain-toggle" role="group" aria-label="Network">
         ${chainButton("calibration", "Calibration", model.chain)}

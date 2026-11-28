@@ -1,0 +1,4 @@
+.visibility-badge { display: inline-flex; width: fit-content; align-items: center; gap: 2px; vertical-align: middle; }
+.visibility-badge .material-symbols-outlined { font-size: 14px; }
+.visibility-badge.is-private { background: #fde7c8; color: #7a4500; }
+.visibility-badge.is-public { background: var(--badge); color: var(--muted); }

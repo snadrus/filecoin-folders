@@ -91,6 +91,8 @@ export interface DatasetRecord {
   driveName?: string;
   /** Dataset metadata source, e.g. "filecoin-pin" for Filecoin Pin's Filecoin Drive. */
   source?: string;
+  /** "private" when the data set has `read=restricted` (only key holders can fetch its pieces). */
+  visibility?: "public" | "private" | "encrypted";
 }
 
 export interface WalletPanel {

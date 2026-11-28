@@ -61,6 +61,8 @@ import {
 import { discoverWallets, safeOn, type AnnouncedWallet } from "./eip6963.js";
 import { createPasskey, findExistingPasskey, encodeContractAssertion, passkeyAssert, type PasskeyPublicKey } from "./passkey.js";
 import { activeProviderUrls } from "./filecoin-api.js";
+import { createDatasetMetadata, noteVisibility, privateEnter, savePendingPrivate } from "./private/enter.js";
+import { knownVisibility } from "./private/visibility.js";
 import { FILECOIN_DRIVE_SOURCE, isDriveSource, loadPieceDetails, setPieceDetailSource, type PieceDetail } from "./drive-pieces.js";
 import { REGISTRY_NOT_DEPLOYED, registryReady } from "./network.js";
 import { WALLETCONNECT_RDNS, connectWalletConnect, walletChoices, walletConnectConfig, type WalletConnectLike } from "./wallets.js";
@@ -868,6 +870,7 @@ export function createLiveOnboarding(options: LiveOnboardingOptions = {}): Onboa
       report?.({ flow: "payment", phase: "done", hash });
     },
     async createDataset(input) {
+      if (input.visibility === "private" && (isSponsored() || passkey)) throw new Error("Private folders need a wallet sign-in (passkey and sponsored accounts cannot sign the encryption key).");
       if (isSponsored()) {
         const account = await ensurePayer();
         const createdAt = new Date().toISOString();
@@ -887,9 +890,18 @@ export function createLiveOnboarding(options: LiveOnboardingOptions = {}): Onboa
         sessionKey: session,
       });
       const createdAt = new Date().toISOString();
+      const baseMetadata = { app: "fifolders", volume: input.volumeName, created: createdAt };
+      const wallet = await walletClient(input.chain);
+      const privateMetadata = await createDatasetMetadata({
+        visibility: input.visibility,
+        wallet: { address, signTypedData: (args) => wallet.signTypedData({ account: address, ...args }) },
+        chainId: chainOf(input.chain).id,
+        base: baseMetadata,
+        prompt: (intent, run) => withWalletIntent(intent as never, run),
+      });
       const context = await synapse.storage.createContext({
         withCDN: false,
-        metadata: { app: "fifolders", volume: input.volumeName, created: createdAt },
+        metadata: privateMetadata ?? baseMetadata,
       });
       const providerId = context.provider.id.toString();
       const id = context.dataSetId != null ? context.dataSetId.toString() : `provider:${providerId}`;
@@ -901,6 +913,11 @@ export function createLiveOnboarding(options: LiveOnboardingOptions = {}): Onboa
         size: "—",
         created: createdAt.slice(0, 10),
       };
+      if (privateMetadata) {
+        record.visibility = "private";
+        if (id.startsWith("provider:")) savePendingPrivate(chainOf(input.chain).id, address, providerId, privateMetadata);
+        else noteVisibility(chainOf(input.chain).id, id, privateMetadata);
+      }
       if (id.startsWith("provider:")) savePending(input.chain, address, record);
       saveLastDataset(chainOf(input.chain).id, address, id);
       selectedDataset = id;
@@ -1004,7 +1021,23 @@ export function createLiveOnboarding(options: LiveOnboardingOptions = {}): Onboa
           ? { dataSetId: BigInt(datasetId) }
           : {};
       installPieceDetails(input.chain, datasetId, synapse);
-      const storage = withProviderFallback(createSynapseStorage(synapse, {
+      const privateParts = payer || passkey
+        ? null
+        : await privateEnter({
+            synapse: synapse as never,
+            datasetId,
+            chain: input.chain,
+            chainId: chain.id,
+            owner: address,
+            wallet: { address, signTypedData: async (args) => (await walletClient(input.chain)).signTypedData({ account: address, ...args }) },
+            session: loadSession(chain.id, address),
+            volumeName: input.volumeName,
+            storageOptions,
+            // Private pieces are only served through the gate: no public-provider fallback.
+            wrap: (inner) => inner,
+            prompt: (intent, run) => withWalletIntent(intent as never, run),
+          });
+      const storage = privateParts?.storage ?? withProviderFallback(createSynapseStorage(synapse, {
         ...storageOptions,
         // Gasless: the sponsor opened one dataset; a second copy would need a second sponsored dataset.
         copies: payer ? 1 : 2,
@@ -1050,8 +1083,10 @@ export function createLiveOnboarding(options: LiveOnboardingOptions = {}): Onboa
         storage,
         registry: observed.registry,
         owner: address,
-        name: input.volumeName,
-        encryption: input.encrypt
+        name: privateParts?.name ?? input.volumeName,
+        encryption: privateParts
+          ? privateParts.encryption
+          : input.encrypt
           ? {
               signer: {
                 signTypedData: async (parameters) => {
@@ -1069,11 +1104,12 @@ export function createLiveOnboarding(options: LiveOnboardingOptions = {}): Onboa
             }
           : undefined,
       });
+      privateParts?.opened(volume);
       const opened: Session = {
         volume,
         owner: address,
         chain: input.chain,
-        encrypted: input.encrypt,
+        encrypted: input.encrypt || Boolean(privateParts),
         volumeName: input.volumeName,
         cas: observed.cas,
         ...(payer
@@ -1106,6 +1142,12 @@ export function createLiveOnboarding(options: LiveOnboardingOptions = {}): Onboa
         datasetId = chooseDataset(await detectDrives(input.chain, input.volumeName, live, address), null).selectedId ?? "";
       }
       if (!datasetId || datasetId.startsWith("provider:")) return null;
+      if (knownVisibility(chain.id, datasetId) === "private") return null;
+      if (!knownVisibility(chain.id, datasetId)) {
+        // Unknown yet (fresh browser): private data sets cannot be browsed without a key.
+        const ctx = (await synapse.storage.createContext({ dataSetId: BigInt(datasetId), withCDN: false }).catch(() => null)) as { dataSetMetadata?: Record<string, string> } | null;
+        if (ctx && noteVisibility(chain.id, datasetId, ctx.dataSetMetadata) === "private") return null;
+      }
       installPieceDetails(input.chain, datasetId, synapse);
       const storage = withProviderFallback(createSynapseStorage(synapse, { dataSetId: BigInt(datasetId), copies: 2 }), input.chain);
       const observed = observeRegistry(
@@ -1347,6 +1389,7 @@ function toDataset(choice: ChainChoice, dataset: {
     size: meta?.size ?? "—",
     created: dataset.metadata?.created?.slice(0, 10) || meta?.created || "—",
     ...(isDriveSource(dataset.metadata?.source) ? { source: FILECOIN_DRIVE_SOURCE } : {}),
+    visibility: noteVisibility(choice === "mainnet" ? mainnet.id : calibration.id, id, dataset.metadata),
   };
 }
 
