@@ -364,8 +364,10 @@ export class Volume {
   async referencedPieces(): Promise<string[]> {
     const head = await this.registry.head(this.owner, this.ns, this.key);
     const ids = new Set<string>();
-    const headCid = bytesToPieceCid(head.pieceCid);
-    if (head.version > 0n && headCid) ids.add(headCid);
+    // A lagging node may still report the head from before our own commit: our newer base wins.
+    const stale = this.#loaded && head.version < this.#baseVersion;
+    const headCid = stale ? this.#basePiece : bytesToPieceCid(head.pieceCid);
+    if ((stale || head.version > 0n) && headCid) ids.add(headCid);
     const walk = (node: Node): void => {
       if (node.type === "dir") {
         for (const child of node.entries) walk(child);
@@ -512,6 +514,9 @@ export class Volume {
     const head = await this.registry.head(this.owner, this.ns, this.key);
     const cid = bytesToPieceCid(head.pieceCid);
     if (this.#loaded && cid === this.#basePiece && head.version === this.#baseVersion) return;
+    // A lagging RPC node can still report the head from before our own commit: never step back to it
+    // (Delete forever would see the deleted file's piece as live and schedule no removal).
+    if (this.#loaded && head.version < this.#baseVersion) return;
     this.#basePiece = cid;
     this.#baseVersion = head.version;
     this.#baseTree = cid === "" ? emptyDir() : await this.#load(cid);
