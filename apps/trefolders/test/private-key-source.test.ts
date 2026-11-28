@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Keysmith, defaultGroupKeyId } from "fil-folders/private";
 import { parseDatasetRequestMetadata } from "../sponsor/private-dataset.js";
 import { privateCreateMetadata } from "../src/private/private-volume.js";
-import { NO_PRF_MESSAGE, PRF_SALT, knownPasskeyOwner, lockPasskeyOwners, ownerKeyFromPrf, passkeyPrivateSigner, unlockPasskeyOwner } from "../src/private/key-source.js";
+import { NO_PRF_MESSAGE, PRF_SALT, knownPasskeyOwner, lockPasskeyOwners, ownerKeyFromPrf, passkeyPrivateSigner, unlockPasskeyOwner, isNoPrfError, PRIVATE_FALLBACK_NOTICE } from "../src/private/key-source.js";
 
 const credentialId = "AQIDBA";
 const prf = (seed: number) => new Uint8Array(32).fill(seed);
@@ -67,3 +67,10 @@ describe("private-folder key from a passkey (PRF)", () => {
     expect(derived.commitment.toString()).toBeTruthy();
   });
 });
+
+  it("isNoPrfError matches the refusal, not other failures", () => {
+    expect(isNoPrfError(new Error(NO_PRF_MESSAGE))).toBe(true);
+    expect(isNoPrfError(new Error("Dataset was not created."))).toBe(false);
+    expect(isNoPrfError("nope")).toBe(false);
+    expect(PRIVATE_FALLBACK_NOTICE).toMatch(/public/);
+  });

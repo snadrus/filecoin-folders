@@ -163,3 +163,16 @@ describe("existing passkey on a new device", () => {
     expect(candidates).toContainEqual({ x: hex(pub.slice(1, 33)), y: hex(pub.slice(33)) });
   });
 });
+
+  it("setup: Private is the default dataset choice; Public is still offered", () => {
+    const root = mount(renderApp(model({
+      connected: false,
+      panel: { ...panel(true), sessionReady: true, createPrimary: true } as never,
+    })));
+    const priv = root.querySelector<HTMLInputElement>("[data-testid=visibility-private]")!;
+    const pub = root.querySelector<HTMLInputElement>("[data-testid=visibility-public]")!;
+    expect(priv.checked).toBe(true);
+    expect(pub.checked).toBe(false);
+    expect(root.querySelector("[data-testid=create-dataset]")?.textContent).toBe("Create dataset");
+    expect(root.querySelector("[data-testid=create-private-dataset]")).toBeNull();
+  });

@@ -48,8 +48,8 @@ export async function runPrivateStory(io: StoryIO): Promise<void> {
 
   // 1. Create a private dataset (passkey PRF → Keysmith group key; sponsor opens it with read=restricted).
   await openMenu(page);
-  await page.getByTestId("create-private-dataset").first().click();
-  say("clicked create-private-dataset");
+  await page.getByTestId("create-dataset").first().click();
+  say("clicked create-dataset (private is the default)");
   let id = "";
   let lastTry = Date.now();
   const secCreate = await waitFor(page, 12 * 60_000, "private dataset on chain", async () => {
@@ -59,7 +59,7 @@ export async function runPrivateStory(io: StoryIO): Promise<void> {
       lastTry = Date.now();
       say(`create failed transiently (${/internal error/.test(text) ? "internal error" : "session key race"}); clicking again`);
       await openMenu(page);
-      await page.getByTestId("create-private-dataset").first().click().catch(() => undefined);
+      await page.getByTestId("create-dataset").first().click().catch(() => undefined);
     }
     const now = await datasetsOnChain(io.payer).catch(() => []);
     const made = now.find((d) => !before.has(d.dataSetId.toString()) && d.metadata?.read === "restricted");
@@ -196,7 +196,7 @@ export async function runPrivateStory(io: StoryIO): Promise<void> {
   say(`dataset #${id} terminated in ${secTerm}s (pdpEndEpoch ${after?.pdpEndEpoch})`);
 }
 
-/** Same passkey on an authenticator without PRF: creating a private dataset is refused before any sponsor call. */
+/** Same passkey on an authenticator without PRF: create falls back to a public dataset with a notice, no hard fail. */
 export async function runNoPrfRefusal(io: StoryIO): Promise<void> {
   const ctx = await io.browser.newContext({ viewport: { width: 1280, height: 900 } });
   const p = await ctx.newPage();
@@ -216,16 +216,17 @@ export async function runNoPrfRefusal(io: StoryIO): Promise<void> {
     return visible(p, "account");
   });
   await openMenu(p);
-  await p.getByTestId("create-private-dataset").first().click();
+  await p.getByTestId("create-dataset").first().click();
   let text = "";
-  await waitFor(p, 5 * 60_000, "refusal message", async () => {
+  await waitFor(p, 5 * 60_000, "public fallback notice", async () => {
     text = (await p.locator("body").innerText()).replace(/\s+/g, " ");
     if (await visible(p, "authorize-session")) await p.getByTestId("authorize-session").first().click().catch(() => undefined);
-    return /can't make an encryption key/.test(text);
+    return (await visible(p, "private-fallback-notice")) || /can't encrypt private folders/.test(text);
   });
-  await io.snap(p, "no-prf-refused");
-  const message = /This passkey can't make an encryption key[^.]*\.[^.]*\./.exec(text)?.[0] ?? "";
-  io.steps.noPrf = { ok: datasetCalls.length === 0, message, sponsorDatasetCalls: datasetCalls.length };
-  io.say(`no-PRF passkey refused: "${message}" (sponsor /dataset calls: ${datasetCalls.length})`);
+  await io.snap(p, "no-prf-fallback");
+  const message = ((await p.getByTestId("private-fallback-notice").textContent().catch(() => "")) || "").replace(/\s+/g, " ").trim();
+  const publicOk = /public/i.test(message) && (await visible(p, "connect-full-wallet"));
+  io.steps.noPrf = { ok: publicOk, message, sponsorDatasetCalls: datasetCalls.length, fallback: true };
+  io.say(`no-PRF passkey fell back to public: "${message}" (sponsor /dataset calls: ${datasetCalls.length})`);
   await ctx.close();
 }

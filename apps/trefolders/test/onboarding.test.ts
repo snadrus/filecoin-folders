@@ -2,7 +2,7 @@ import { folderCommitPermission } from "fil-folders";
 import { afterEach, describe, expect, it } from "vitest";
 import { DriveApp } from "../src/drive-app.js";
 import { createMockOnboarding } from "../src/mock-onboarding.js";
-import { prepareOnboarding, resumeOnboarding } from "../src/onboarding-controller.js";
+import { datasetVisibilityFor, prepareOnboarding, resumeOnboarding } from "../src/onboarding-controller.js";
 import { OPS_KEY } from "../src/ops.js";
 import {
   SESSION_PERMISSION_ERROR,
@@ -350,5 +350,60 @@ describe("storage-payment approval check (matches synapse-core isFwssMaxApproved
     expect(isMaxApproved({ isApproved: true, rateAllowance: max, lockupAllowance: max, maxLockupPeriod: 100n })).toBe(false);
     expect(isMaxApproved([true, max, max, 0n, 0n, 86400n])).toBe(true);
     expect(isMaxApproved(null)).toBe(false);
+  });
+});
+
+describe("dataset visibility", () => {
+  it("create-dataset defaults to private, public only when chosen", () => {
+    expect(datasetVisibilityFor("create-dataset")).toBe("private");
+    expect(datasetVisibilityFor("create-dataset", "private")).toBe("private");
+    expect(datasetVisibilityFor("create-dataset", "public")).toBe("public");
+    expect(datasetVisibilityFor("create-private-dataset")).toBe("private");
+  });
+
+  it("first-run Create dataset makes a private data set", async () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const app = new DriveApp({
+      volume: null, owner: "", chain: "calibration", encrypted: false, volumeName: "My Drive",
+      cas: { takeMerged: () => false }, felarumiUrl: "https://felarumi.example", felanumioUrl: "https://felanumio.example",
+    });
+    const io = createMockOnboarding(new URLSearchParams("pay=ready"));
+    await prepareOnboarding(app, io);
+    app.mount(root);
+    await app.settled;
+    root.querySelector("form")?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    await settle(app);
+    expect(root.querySelector<HTMLInputElement>("[data-testid=visibility-private]")?.checked).toBe(true);
+    root.querySelector<HTMLButtonElement>("[data-testid=create-dataset]")?.click();
+    await settle(app);
+    expect(root.querySelector("[data-testid=nav-drive]")).toBeTruthy();
+    root.querySelector<HTMLButtonElement>("[data-testid=account]")?.click();
+    await settle(app);
+    expect(root.querySelector("[data-testid=current-visibility]")?.textContent).toContain("Private");
+  });
+
+  it("a passkey without PRF falls back to a public dataset with a notice, not a hard fail", async () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const app = new DriveApp({
+      volume: null, owner: "", chain: "calibration", encrypted: false, volumeName: "My Drive",
+      cas: { takeMerged: () => false }, felarumiUrl: "https://felarumi.example", felanumioUrl: "https://felanumio.example",
+    });
+    const io = createMockOnboarding(new URLSearchParams("pay=ready&noprf=1"));
+    await prepareOnboarding(app, io);
+    app.mount(root);
+    await app.settled;
+    root.querySelector("form")?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    await settle(app);
+    root.querySelector<HTMLButtonElement>("[data-testid=create-dataset]")?.click();
+    await settle(app);
+    expect(root.querySelector("[data-testid=nav-drive]")).toBeTruthy();
+    const notice = root.querySelector("[data-testid=private-fallback-notice]");
+    expect(notice?.textContent).toMatch(/public/i);
+    expect(root.querySelector("[data-testid=connect-full-wallet]")).toBeTruthy();
+    root.querySelector<HTMLButtonElement>("[data-testid=account]")?.click();
+    await settle(app);
+    expect(root.querySelector("[data-testid=current-visibility]")?.textContent).toMatch(/Public/i);
   });
 });

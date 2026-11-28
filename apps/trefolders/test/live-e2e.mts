@@ -452,6 +452,15 @@ try {
   await snap(page, "session-ready");
   say(`session ready ${log.secPaymentToSessionReady}s after payment return`);
 
+  if (clickedCreate) {
+    if (!(await visible(page, "account-menu"))) await page.getByTestId("account").click().catch(() => undefined);
+    const vis = ((await page.getByTestId("current-visibility").textContent().catch(() => "")) || "").replace(/\s+/g, " ");
+    const attr = await page.getByTestId("dataset-visibility").first().getAttribute("data-visibility").catch(() => "");
+    steps.firstDataset = { ok: /Private/i.test(vis) || attr === "private", visibility: attr || vis };
+    say(`first dataset after onboarding: ${vis || attr || "unknown"}`);
+    if (!steps.firstDataset.ok) throw new Error(`first-run dataset was not private: ${vis || attr}`);
+  }
+
   if (process.env.LIVE_E2E_PRIVATE === "1") {
     // Private folders only: create, upload, share, guest opens, delete, terminate; then the no-PRF refusal.
     const credentials = ((await cdp.send("WebAuthn.getCredentials", { authenticatorId })) as { credentials: unknown[] }).credentials;
