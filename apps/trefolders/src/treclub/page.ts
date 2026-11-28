@@ -189,7 +189,7 @@ export class ClubPage {
     const passkeyOnly = isSponsored(readNetworkPreference()) && Boolean(loadPasskey());
     if (!this.me) {
       body = passkeyOnly
-        ? `<div class="card" data-testid="treclub-passkey-blocked"><p>TreClub stays wallet-only. Your passkey and sponsored storage account cannot sign club actions, because clubs recover an admin wallet address on chain.</p><p>Connect the same browser wallet you use as Advanced in TreFolders to create or manage clubs. Your public identity can stay on the sponsored account.</p><button class="primary" data-action="connect" data-testid="treclub-connect">Connect wallet</button></div>`
+        ? `<div class="card" data-testid="treclub-passkey-blocked"><p>TreClub stays wallet-only. Your passkey and sponsored storage account cannot sign club actions, because clubs recover an admin wallet address on chain.</p><p>Connect the same full wallet you use in TreFolders to create or manage clubs. Your public identity can stay on the sponsored account.</p><button class="primary" data-action="connect" data-testid="treclub-connect">Connect wallet</button></div>`
         : `<div class="card"><p>Connect a wallet to see your clubs.</p><button class="primary" data-action="connect" data-testid="treclub-connect">Connect wallet</button></div>`;
     }
     else if (this.club()) body = this.renderClub(this.club()!);

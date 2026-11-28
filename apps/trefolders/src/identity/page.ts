@@ -336,12 +336,12 @@ export class IdentityPage {
     let body: string;
     if (!s.address) {
       body = mode.sponsored && mode.passkeyAvailable
-        ? `<section class="card"><p>Sign in with the passkey you use in TreFolders. Your profile is stored under your storage account.</p>
-            <button type="button" class="primary" data-action="connect" data-testid="identity-connect">${mode.hasSavedPasskey ? "Continue with your passkey" : "Create a passkey"}</button>
+        ? `<section class="card"><p>Sign in with the limited wallet (passkey) you use in TreFolders. Your profile is stored under your storage account.</p>
+            <button type="button" class="primary" data-action="connect" data-testid="identity-connect">Connect limited wallet</button>
             <p class="note">${mode.hasSavedPasskey ? `<button type="button" class="text" data-action="connect-passkey-new">Create a new passkey</button> · ` : ""}<button type="button" class="text" data-action="connect-passkey-existing">Use an existing passkey</button></p>
-            <details class="advanced" data-testid="identity-advanced"><summary>Advanced</summary>
+            <details class="advanced" data-testid="identity-advanced"><summary>Connect full wallet</summary>
               <p>Use a browser wallet instead. In gasless mode the profile is still stored under your sponsored storage account, not the wallet address.</p>
-              <button type="button" data-action="connect-wallet" data-testid="identity-connect-wallet">Connect wallet</button>
+              <button type="button" data-action="connect-wallet" data-testid="identity-connect-wallet">Connect full wallet</button>
             </details>
             ${s.error ? `<p class="error" role="alert" data-testid="identity-error">${esc(s.error)}</p>` : ""}
           </section>`

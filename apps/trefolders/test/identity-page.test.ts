@@ -101,7 +101,7 @@ describe("notifications + clubs", () => {
 });
 
 describe("sponsored identity connect", () => {
-  it("defaults to a passkey button, hides FIL gas copy, and exposes Advanced wallet", async () => {
+  it("defaults to Connect limited wallet, hides FIL gas copy, and exposes Connect full wallet", async () => {
     const root = document.createElement("main");
     document.body.appendChild(root);
     const io = fakeIO({
@@ -112,7 +112,8 @@ describe("sponsored identity connect", () => {
     });
     const page = new IdentityPage(root, io);
     await page.start();
-    expect(root.querySelector("[data-testid=identity-connect]")!.textContent).toMatch(/passkey/i);
+    expect(root.querySelector("[data-testid=identity-connect]")!.textContent).toBe("Connect limited wallet");
+    expect(root.querySelector("[data-testid=identity-connect-wallet]")!.textContent).toBe("Connect full wallet");
     expect(root.querySelector("[data-testid=identity-connect-wallet]")).toBeTruthy();
     expect(root.textContent).not.toMatch(/gas ~0.01 FIL/);
     root.querySelector<HTMLButtonElement>("[data-testid=identity-connect-wallet]")!.click();

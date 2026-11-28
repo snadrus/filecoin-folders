@@ -24,12 +24,12 @@ test("P1 private dataset: badge, upload, fragment share link opens for a guest",
   page.on("requestfailed", (r) => console.log("[failed]", r.failure()?.errorText, r.method(), r.url().slice(0, 160)));
   page.on("pageerror", (e) => console.log("[pageerror]", e.message.slice(0, 400)));
   await page.goto("/");
-  // Passkeys come first on the start page; the wallet sits under "Advanced: use a wallet".
+  // The limited wallet (passkey) comes first on the start page; the full wallet sits under "Connect full wallet".
   const advanced = page.getByTestId("advanced");
   await advanced.waitFor({ state: "attached", timeout: 60_000 });
-  // The start page settles after the wallet is detected; open "Advanced" the way a person does.
+  // The start page settles after the wallet is detected; open "Connect full wallet" the way a person does.
   await page.waitForTimeout(1500);
-  if (!(await page.getByTestId("connect-wallet").isVisible())) await page.locator("summary", { hasText: "Advanced: use a wallet" }).click();
+  if (!(await page.getByTestId("connect-wallet").isVisible())) await page.getByTestId("advanced").locator("summary").click();
   await page.getByTestId("connect-wallet").click();
   await page.getByTestId("account").click({ timeout: 90_000 });
   const menu = page.getByTestId("account-menu");

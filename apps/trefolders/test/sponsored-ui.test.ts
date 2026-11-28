@@ -89,7 +89,7 @@ describe("gasless UI (sponsor configured)", () => {
   beforeEach(() => vi.stubEnv("VITE_SPONSOR_URL", "https://sponsor.example"));
   afterEach(() => vi.unstubAllEnvs());
 
-  it("sign-in: create or reuse a passkey by default; wallets under a collapsed Advanced section", () => {
+  it("sign-in: connect a limited wallet by default; a full wallet sits under a collapsed Connect full wallet section", () => {
     const choices = [
       { rdns: PASSKEY_NEW, name: "Create a passkey" },
       { rdns: PASSKEY_EXISTING, name: "Use an existing passkey" },
@@ -98,14 +98,15 @@ describe("gasless UI (sponsor configured)", () => {
     const root = mount(renderApp(model({ wallets: choices, walletRdns: PASSKEY_NEW })));
     const create = root.querySelector<HTMLButtonElement>("[data-testid=passkey-new]")!;
     expect(create.className).toBe("primary");
+    expect(create.textContent).toBe("Connect limited wallet");
     expect([create.name, create.value, create.type]).toEqual(["wallet", PASSKEY_NEW, "submit"]);
     expect(root.querySelector<HTMLButtonElement>("[data-testid=passkey-existing]")!.value).toBe(PASSKEY_EXISTING);
     expect(root.querySelector("[data-testid=passkey-continue]")).toBeNull();
     const advanced = root.querySelector<HTMLDetailsElement>("[data-testid=advanced]")!;
     expect(advanced.open).toBe(false);
-    expect(advanced.querySelector("summary")!.textContent).toContain("Advanced");
+    expect(advanced.querySelector("summary")!.textContent).toBe("Connect full wallet");
     expect([...advanced.querySelectorAll<HTMLOptionElement>("[data-testid=wallet-pick] option")].map((o) => o.value)).toEqual(["io.metamask"]);
-    expect(advanced.querySelector("[data-testid=connect-wallet]")).toBeTruthy();
+    expect(advanced.querySelector("[data-testid=connect-wallet]")?.textContent).toBe("Connect full wallet");
     expect(advanced.querySelector("[data-testid=encrypt]")).toBeTruthy();
   });
 

@@ -286,8 +286,9 @@ function renderConnect(model: ViewModel): string {
 const isPasskeyRdns = (rdns: string) => rdns === "passkey" || rdns.startsWith("passkey:");
 
 /**
- * Gasless sign-in: a passkey is the default (saved on this device → continue; else create one, or pick an existing
- * one synced from another device). Wallets (and wallet-only options like encryption) sit in a collapsed Advanced section.
+ * Gasless sign-in: a limited wallet (passkey, sponsored) is the default (saved on this device → continue; else create
+ * one, or pick an existing one synced from another device). A full wallet (and wallet-only options like encryption)
+ * sits under "Connect full wallet".
  */
 function sponsoredSignIn(model: ViewModel): string {
   const passkeys = model.wallets.filter((wallet) => isPasskeyRdns(wallet.rdns));
@@ -297,16 +298,16 @@ function sponsoredSignIn(model: ViewModel): string {
     passkeys.some((wallet) => wallet.rdns === rdns) ? `<button class="${primary ? "primary" : ""}" type="submit" name="wallet" value="${rdns}" data-testid="${testid}">${label}</button>` : "";
   const walletOptions = wallets.map((wallet) => `<option value="${escapeHtml(wallet.rdns)}" ${wallet.rdns === model.walletRdns ? "selected" : ""}>${escapeHtml(wallet.name)}</option>`).join("");
   return `<div class="passkey-signin" data-testid="passkey-signin">
-      ${button("passkey", "Continue with your passkey", true, "passkey-continue")}
-      ${button("passkey:new", "Create a passkey", !saved, "passkey-new")}
+      ${button("passkey", "Connect limited wallet", true, "passkey-continue")}
+      ${button("passkey:new", saved ? "Create a passkey" : "Connect limited wallet", !saved, "passkey-new")}
       ${button("passkey:existing", "Use an existing passkey", false, "passkey-existing")}
-      ${passkeys.length ? `<p class="note">No wallet or crypto needed: a passkey (Face ID, Touch ID, Windows Hello or a security key) owns your storage account.</p>` : `<p class="note" data-testid="passkey-unavailable">This browser has no passkey support. Use a wallet under Advanced.</p>`}
+      ${passkeys.length ? `<p class="note">A limited wallet is a passkey (Face ID, Touch ID, Windows Hello or a security key) that owns your sponsored storage account. No crypto needed.</p>` : `<p class="note" data-testid="passkey-unavailable">This browser has no passkey support. Connect a full wallet below.</p>`}
     </div>
     <details class="advanced" data-testid="advanced" ${passkeys.length ? "" : "open"}>
-      <summary>Advanced: use a wallet</summary>
+      <summary>Connect full wallet</summary>
       ${wallets.length ? `<label class="field">Wallet <select name="wallet-pick" data-testid="wallet-pick">${walletOptions}</select></label>` : `<p class="note">No browser wallet found.</p>`}
       <label class="check"><input data-testid="encrypt" name="encrypt" type="checkbox" ${model.encrypt ? "checked" : ""}/> Encrypt this volume (wallet only)</label>
-      <button type="submit" name="wallet" value="" data-testid="connect-wallet">Connect wallet</button>
+      <button type="submit" name="wallet" value="" data-testid="connect-wallet">Connect full wallet</button>
     </details>`;
 }
 

@@ -586,8 +586,8 @@ export function createLiveOnboarding(options: LiveOnboardingOptions = {}): Onboa
       if (!isSponsored() || !passkeyAvailable()) return choices;
       const saved = loadPasskey();
       return [
-        ...(saved ? [{ rdns: PASSKEY_RDNS, name: "Continue with your passkey" }] : []),
-        { rdns: PASSKEY_NEW, name: "Create a passkey" },
+        ...(saved ? [{ rdns: PASSKEY_RDNS, name: "Connect limited wallet" }] : []),
+        { rdns: PASSKEY_NEW, name: "Connect limited wallet" },
         { rdns: PASSKEY_EXISTING, name: "Use an existing passkey" },
         ...choices,
       ];
