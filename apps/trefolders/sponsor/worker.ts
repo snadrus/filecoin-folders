@@ -205,11 +205,17 @@ export default {
     const url = new URL(request.url);
     if (url.pathname.startsWith("/__")) return new Response(JSON.stringify({ error: "not found" }), { status: 404, headers: CORS_HEADERS });
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS_HEADERS });
+    // A deploy (or an overloaded object) resets the Durable Object mid-request. Cloudflare's own error page has no CORS
+    // headers, so the browser reports a CORS failure instead of a retryable error: answer 503 with CORS instead.
+    const retryable = (error: unknown) => {
+      console.error(`[sponsor] ${request.method} ${url.pathname}: ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`.slice(0, 400));
+      return new Response(JSON.stringify({ error: "sponsor is restarting; retry in a moment" }), { status: 503, headers: { ...CORS_HEADERS, "Retry-After": "2" } });
+    };
     if (url.pathname === "/mainnet" || url.pathname.startsWith("/mainnet/")) {
       url.pathname = url.pathname.slice("/mainnet".length) || "/";
-      return stub(env, "mainnet").fetch(new Request(url, request));
+      return stub(env, "mainnet").fetch(new Request(url, request)).catch(retryable);
     }
-    return stub(env).fetch(request);
+    return stub(env).fetch(request).catch(retryable);
   },
   async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     for (const network of ["calibration", "mainnet"] as const) {
