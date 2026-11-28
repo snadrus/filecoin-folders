@@ -62,18 +62,19 @@ export async function prepareOnboarding(app: DriveApp, io: OnboardingIO): Promis
       app.showPanel(await io.snapshot({ chain, volumeName }));
       return;
     }
-    else if (action === "create-dataset") {
+    else if (action === "create-dataset" || action === "create-private-dataset") {
+      const visibility = action === "create-private-dataset" ? ("private" as const) : ("public" as const);
       const op = app.beginOp({ kind: "dataset", label: "Create dataset", stage: "pending" });
       try {
         // First write for a new account: authorize the session key now (lazy, not at Connect).
         if (!(await io.snapshot({ chain, volumeName })).sessionReady) await io.authorize(chain, false, report);
         await app.ensureSession();
         try {
-          await withWalletIntent(INTENTS.createDataset, () => io.createDataset({ chain, volumeName }));
+          await withWalletIntent(INTENTS.createDataset, () => io.createDataset({ chain, volumeName, visibility }));
         } catch (error) {
           if (!isSessionPermissionError(error)) throw error;
           await app.waitForRenewal();
-          await withWalletIntent(INTENTS.createDataset, () => io.createDataset({ chain, volumeName }));
+          await withWalletIntent(INTENTS.createDataset, () => io.createDataset({ chain, volumeName, visibility }));
         }
         app.finishOp(op);
       } catch (error) {

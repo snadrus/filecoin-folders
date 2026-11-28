@@ -87,3 +87,17 @@ The flow:
 The wallet itself never decrypts anything: wallets no longer expose an encryption key, so the "encrypted to
 the wallet's public key" step is done to a key derived from a wallet signature, which only that wallet can
 reproduce.
+
+## In the TreFolders app
+
+- The account menu and dataset picker show a **Public** / **Private** badge per dataset (`read=restricted` →
+  Private). **Create private dataset** sits next to **Create new dataset** (wallet sign-in only; one extra
+  free GroupKey signature).
+- Opening a private dataset asks once per session key for GroupKey + ReadGrant (both free signatures). The
+  volume is stored under the registry name `<volume> (private)`, so a public volume of the same name in
+  another dataset is never mixed with it. Uploads keep one copy.
+- **Details → share link** for a file in a private folder is `…/share/#v=pf1&…` (TrePen / TreGrid files:
+  `…/fipen/#fp=…`, `…/figrid/#fp=…`). The guest page fetches the encrypted piece from `/download/` with the
+  link's own throwaway key and decrypts it in the browser.
+- Verified on Calibration (`e2e-stories/live-private.spec.ts`, dataset 58383 on ezpdpz): upload, link,
+  guest open; anonymous `/piece/` of the same piece returns 404 and `/download/` without a grant returns 401.

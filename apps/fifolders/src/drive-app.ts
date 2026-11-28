@@ -83,6 +83,7 @@ import {
 import { loadSavedView, persistMemoryVolume, saveView } from "./volume-persist.js";
 import { COPIES_KEY, copyTarget, dropCopy, loadCopies } from "./participant-copies.js";
 import { sharePageUrl } from "./share/share-page.js";
+import { privateShareMaker } from "./private/share-hook.js";
 import { renderApp, type ActivityRow, type DialogState, type UploadRow, type ViewModel } from "./view.js";
 
 export interface DriveAppOptions {
@@ -1424,13 +1425,15 @@ export class DriveApp {
           chain: this.chain,
         })
       : undefined;
+    // Private folders: a link whose key lives only in the URL fragment (no wallet prompt).
+    const privateUrl = stat.type === "file" && privateShareMaker() ? await privateShareMaker()!(path, location.href).catch(() => undefined) : undefined;
     const indexing = stat.ipfs ? indexingLabel(localIndexStore(this.scopeKey()).read()[stat.ipfs]) : undefined;
     this.details = {
       stat,
       history,
       version: head.version,
       pieceCid,
-      ...(pageUrl && shareUrl ? { shareUrl: pageUrl, directUrl: shareUrl, qr: qrSvg(pageUrl) } : {}),
+      ...(privateUrl ? { shareUrl: privateUrl, qr: qrSvg(privateUrl) } : pageUrl && shareUrl ? { shareUrl: pageUrl, directUrl: shareUrl, qr: qrSvg(pageUrl) } : {}),
       copies: catalog.length || (stat.type === "file" ? DEFAULT_STORAGE_COPIES : 0),
       providers: catalog.map((copy) => copy.providerId),
       ...(indexing ? { indexing } : {}),
@@ -1514,6 +1517,7 @@ export class DriveApp {
       action === "fix-payments" ||
       action === "add-funds" ||
       action === "create-dataset" ||
+      action === "create-private-dataset" ||
       action === "refresh-session" ||
       action === "refund-session" ||
       action === "open-drive"

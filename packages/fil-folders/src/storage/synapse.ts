@@ -36,6 +36,11 @@ export interface SynapseStorageOptions {
    * only data sets with source "filecoin-pin"; pass that (or a Drive `dataSetId`) to make files visible there.
    */
   dataSetSource?: string;
+  /**
+   * Extra metadata for a data set this adapter creates (e.g. `read: "restricted"` and the Keysmith keys of a
+   * private data set, from `fil-folders/private` `privateDataSetMetadata`). Merged over `source`.
+   */
+  dataSetMetadata?: Record<string, string>;
 }
 
 export interface ReplicationProvider {
@@ -241,7 +246,13 @@ async function resolveContexts(
       if (want <= 1) throw error;
     }
   } else if (options.providerId != null && storage.createContext) {
-    selected.push((await storage.createContext({ providerId: options.providerId, withCDN: false })) as ContextLike);
+    selected.push(
+      (await storage.createContext({
+        providerId: options.providerId,
+        withCDN: false,
+        ...(options.dataSetMetadata ? { metadata: { source: options.dataSetSource ?? "fifolders", ...options.dataSetMetadata } } : {}),
+      })) as ContextLike,
+    );
   }
   if (selected.length >= want) return distinct(selected).slice(0, want);
   if (!storage.createContexts) {
@@ -253,7 +264,7 @@ async function resolveContexts(
       withCDN: false,
       copies: Math.max(1, want - selected.length),
       excludeProviderIds: selected.map(providerIdOf).filter((id) => id !== ""),
-      metadata: { source: options.dataSetSource ?? "fifolders" },
+      metadata: { source: options.dataSetSource ?? "fifolders", ...options.dataSetMetadata },
     });
     if (!more.length && !selected.length) throw new Error("No reachable storage providers available");
     for (const ctx of more) selected.push(ctx as ContextLike);

@@ -8,3 +8,4 @@ export * from "./share.js";
 export * from "./member-key.js";
 export { fileKeyBytes, volumeKeyFromGroupKey } from "./file-keys.js";
 export * from "./club.js";
+export * as Keysmith from "@filoz/keysmith";
