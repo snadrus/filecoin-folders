@@ -67,7 +67,8 @@ const snap = async (p: Page, name: string) => {
 const textOf = async (p: Page) => (await p.locator("body").innerText()).replace(/\s+/g, " ").slice(0, 800);
 const visible = async (p: Page, testId: string) => p.getByTestId(testId).first().isVisible().catch(() => false);
 const openTxlog = async (p: Page) => {
-  if (!(await visible(p, "txlog"))) await clickIf(p, "txlog-toggle");
+  // The first-run setup dialog (Create dataset) can sit over the toggle; the log is optional then.
+  if (!(await visible(p, "txlog")) && (await visible(p, "txlog-toggle"))) await p.getByTestId("txlog-toggle").first().click({ timeout: 4_000 }).catch(() => undefined);
 };
 const snapTxlog = async (p: Page, name: string) => {
   await openTxlog(p);
