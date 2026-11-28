@@ -293,6 +293,7 @@ test("M09 TrePen phone: tapping the first line places the caret instead of openi
 test("M10 TreGrid phone: the cell shows what you type in the formula bar, which does not autocapitalize", async ({ page }) => {
   await page.goto(url("tregrid/"));
   await page.locator("#blank").click();
+  await expect(page.locator("#grid")).toBeVisible();
   const g = (await page.locator("#grid").boundingBox())!;
   await page.touchscreen.tap(g.x + 150, g.y + 60);
   await page.touchscreen.tap(g.x + 150, g.y + 60);
