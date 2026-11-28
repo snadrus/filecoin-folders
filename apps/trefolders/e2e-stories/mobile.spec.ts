@@ -278,3 +278,14 @@ test("M08 identity, person, share and TreClub are usable on a phone", async ({ p
     if (box) expect(box.height).toBeGreaterThanOrEqual(40);
   }
 });
+
+test("M09 TrePen phone: tapping the first line places the caret instead of opening the Header dialog", async ({ page }) => {
+  await page.goto(url("trepen/"));
+  await page.locator("#blank").click();
+  await page.waitForFunction(() => (window as any).__editor?.ready === true, null, { timeout: 45_000 });
+  await page.evaluate(() => (window as any).__editor.insertText("first line"));
+  const c = (await page.locator("#pages canvas").first().boundingBox())!;
+  await page.touchscreen.tap(c.x + 60, c.y + 26); // phone reflow: text starts 16px from the top, inside the old 52px header band
+  await expect.poll(() => page.evaluate(() => (window as any).__editor.selection().head)).toBeLessThan(11);
+  await expect(page.locator("#dialog")).toBeHidden();
+});
