@@ -395,19 +395,19 @@ describe("editor title names the file (item 8)", () => {
       felanumioUrl: "./felanumio/",
     });
     const doc = (text: string) => JSON.stringify({ v: 1, type: "doc", content: [{ type: "paragraph", text }] });
-    const origin = "/FiPen/Untitled document.fipen";
-    upsertOp(newOp({ id: "fel:" + origin, kind: "fel-save", label: "x", path: origin, name: "Untitled document.fipen", volume: session.volumeName, stage: "saving", content: doc("one") }));
+    const origin = "/TrePen/Untitled document.trepen";
+    upsertOp(newOp({ id: "fel:" + origin, kind: "fel-save", label: "x", path: origin, name: "Untitled document.trepen", volume: session.volumeName, stage: "saving", content: doc("one") }));
     app.mount(root);
     await settle(app);
     expect(new TextDecoder().decode(await session.volume.get(origin))).toContain("one");
-    upsertOp(newOp({ id: "fel:" + origin, kind: "fel-save", label: "x", path: origin, name: "Untitled document.fipen", title: "Trip plan", volume: session.volumeName, stage: "saving", content: doc("two") }));
+    upsertOp(newOp({ id: "fel:" + origin, kind: "fel-save", label: "x", path: origin, name: "Untitled document.trepen", title: "Trip plan", volume: session.volumeName, stage: "saving", content: doc("two") }));
     await (app as unknown as { refresh: () => Promise<void> }).refresh();
     await settle(app);
-    expect(new TextDecoder().decode(await session.volume.get("/FiPen/Trip plan.fipen"))).toContain("two");
+    expect(new TextDecoder().decode(await session.volume.get("/TrePen/Trip plan.trepen"))).toContain("two");
     await expect(session.volume.stat(origin)).rejects.toThrow();
-    upsertOp(newOp({ id: "fel:" + origin, kind: "fel-save", label: "x", path: origin, name: "Untitled document.fipen", title: "Trip plan", volume: session.volumeName, stage: "saving", content: doc("three") }));
+    upsertOp(newOp({ id: "fel:" + origin, kind: "fel-save", label: "x", path: origin, name: "Untitled document.trepen", title: "Trip plan", volume: session.volumeName, stage: "saving", content: doc("three") }));
     await (app as unknown as { refresh: () => Promise<void> }).refresh();
-    expect(new TextDecoder().decode(await session.volume.get("/FiPen/Trip plan.fipen"))).toContain("three");
+    expect(new TextDecoder().decode(await session.volume.get("/TrePen/Trip plan.trepen"))).toContain("three");
   });
 });
 

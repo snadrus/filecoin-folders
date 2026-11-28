@@ -108,7 +108,7 @@ function brandDoc(html) {
     .replaceAll('alt="Felarumi"', 'alt="TrePen"')
     .replaceAll("Felarumi home", "TrePen home")
     .replaceAll(">Felanumio<", ">TreGrid<")
-    .replaceAll("Felarumi (.felarumi)", "TrePen (.fipen)")
+    .replaceAll("Felarumi (.felarumi)", "TrePen (.trepen)")
     .replaceAll('accept=".felarumi,', 'accept=".fipen,.trepen,.felarumi,')
     .replaceAll('href="favicon.png" type="image/png"', 'href="favicon.svg" type="image/svg+xml"')
     .replaceAll('href="favicon.png"', 'href="favicon.svg"')

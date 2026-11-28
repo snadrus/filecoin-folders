@@ -29,25 +29,34 @@ test.describe("pre-rename links", () => {
 test.describe("pre-rename files", () => {
   test.skip(LIVE, "needs the mock-chain build");
 
-  test("a document saved as .fipen (the extension kept for existing files) still reopens from TreFolders", async ({ page }) => {
+  test("a new document is saved as .trepen under /TrePen, and an old .fipen file still reopens", async ({ page }) => {
     await page.goto("/");
     await expect(page.getByTestId("nav-drive")).toBeVisible();
     const doc = await newFromDrive(page, "TrePen document");
     await editorReady(doc);
     await focusDoc(doc);
-    await doc.keyboard.type("written under the old name");
+    await doc.keyboard.type("written once");
     await doc.keyboard.press("Control+s");
     await expect(doc.locator("#status")).toHaveText("Saved to Filecoin", { timeout: 20_000 });
     await doc.close();
     await page.bringToFront();
-    const row = page.getByTestId("entry").filter({ hasText: ".fipen" }).first();
-    await expect(row).toBeVisible();
+    const fresh = page.getByTestId("entry").filter({ hasText: ".trepen" }).first();
+    await expect(fresh).toBeVisible();
+    await expect(page.getByTestId("entry").filter({ hasText: ".fipen" })).toHaveCount(0);
+
+    // Rename it to the pre-rename extension: this is what a file saved before the rename looks like.
+    await fresh.click();
+    await page.keyboard.press("F2");
+    await page.getByTestId("dialog-input").fill("Old notes.fipen");
+    await page.keyboard.press("Enter");
+    const row = page.getByTestId("entry").filter({ hasText: "Old notes.fipen" }).first();
+    await expect(row).toBeVisible({ timeout: 20_000 });
     const popup = page.context().waitForEvent("page");
     await row.dblclick();
     const again = await popup;
     await again.bringToFront();
     expect(new URL(again.url()).searchParams.get("path") ?? "").toMatch(/\.fipen$/);
     await editorReady(again);
-    await expect.poll(() => text(again), { timeout: 20_000 }).toBe("written under the old name");
+    await expect.poll(() => text(again), { timeout: 20_000 }).toBe("written once");
   });
 });

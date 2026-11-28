@@ -5,7 +5,7 @@ import type { FelKind } from "./model.js";
  * `v` is the file schema. A document is one empty paragraph. A spreadsheet is one sheet with no cells.
  */
 
-const NEW_EXT: Record<FelKind, string> = { felarumi: ".fipen", felanumio: ".figrid" };
+const NEW_EXT: Record<FelKind, string> = { felarumi: ".trepen", felanumio: ".tregrid" };
 const KNOWN_EXT = [".fipen", ".trepen", ".felarumi", ".figrid", ".tregrid", ".felanumio"];
 
 export interface FelarumiDoc {

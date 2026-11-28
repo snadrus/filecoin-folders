@@ -19,4 +19,12 @@ describe("pre-rename file names", () => {
     expect(felKindOfPath("/Budget.tregrid")).toBe("felanumio");
     expect(felKindOfPath("/Notes.fipen")).toBe("felarumi");
   });
+
+  it("writes new files as .trepen and .tregrid", async () => {
+    const { felFileName } = await import("../src/blank");
+    expect(felFileName("Notes", "felarumi")).toBe("Notes.trepen");
+    expect(felFileName("Notes.fipen", "felarumi")).toBe("Notes.trepen");
+    expect(felFileName("Budget", "felanumio")).toBe("Budget.tregrid");
+    expect(felFileName("Budget.figrid", "felanumio")).toBe("Budget.tregrid");
+  });
 });

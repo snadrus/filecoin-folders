@@ -46,9 +46,9 @@ Encryption is optional per volume. The choice is stored in the browser and appli
 
 Trash is the `/.trash` folder. Restore uses the original path remembered in localStorage.
 
-`.fipen` and `.figrid` files use their own icons and open in a new tab. Older `.felarumi` and `.felanumio` files still open the same way. The default URLs are `./trepen/` and `./tregrid/` on this same site. `/felarumi/` and `/felanumio/` redirect there. The editor and TreFolders share `localStorage` and a `BroadcastChannel` named `fifolders-ops`. A developer can override those URLs from Advanced in the account menu, or with `VITE_TREPEN_URL` and `VITE_TREGRID_URL` (`VITE_FELARUMI_URL` and `VITE_FELANUMIO_URL` still work).
+`.trepen` and `.tregrid` files (and older `.fipen` and `.figrid`) use their own icons and open in a new tab. Older `.felarumi` and `.felanumio` files still open the same way. The default URLs are `./trepen/` and `./tregrid/` on this same site. `/felarumi/` and `/felanumio/` redirect there. The editor and TreFolders share `localStorage` and a `BroadcastChannel` named `fifolders-ops`. A developer can override those URLs from Advanced in the account menu, or with `VITE_TREPEN_URL` and `VITE_TREGRID_URL` (`VITE_FELARUMI_URL` and `VITE_FELANUMIO_URL` still work).
 
-New → TrePen document opens a blank editor at `/FiPen/<name>.fipen` and leaves a Save pending row. New → TreGrid spreadsheet does the same under `/TreGrid`. Folders already named `/Felarumi` or `/Felanumio` stay in the list. Nothing is uploaded until the editor writes real content into the shared ops record. The row then shows Saving… and, once the piece is in the volume, Saved.
+New → TrePen document opens a blank editor at `/TrePen/<name>.trepen` and leaves a Save pending row. New → TreGrid spreadsheet does the same under `/TreGrid`. Folders already named `/FiPen`, `/FiGrid`, `/Felarumi` or `/Felanumio` stay in the list. Nothing is uploaded until the editor writes real content into the shared ops record. The row then shows Saving… and, once the piece is in the volume, Saved.
 
 The empty templates the editors start from are:
 

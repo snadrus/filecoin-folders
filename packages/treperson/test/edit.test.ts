@@ -44,8 +44,8 @@ describe("edit", () => {
     await saveIdentity(buildIdentity(A, { displayName: "A" }), { storage, registry });
     await saveIdentity(buildIdentity(A, { displayName: "B" }), { storage, registry });
     expect(seen).toEqual([
-      { label: "profile.json", path: "FiPerson" },
-      { label: "profile.json", path: "FiPerson" },
+      { label: "profile.json", path: "TrePerson" },
+      { label: "profile.json", path: "TrePerson" },
     ]);
   });
   it("storage gate never pays: blocks without payments or dataset", () => {

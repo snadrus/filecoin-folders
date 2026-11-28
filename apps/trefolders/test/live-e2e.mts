@@ -604,7 +604,7 @@ try {
   await snap(page, "drive-resumed");
 
   // --- Standalone TrePen ---
-  const trepenName = "live-e2e.fipen";
+  const trepenName = "live-e2e.trepen";
   const trepenUrl =
     `${SITE}/trepen/?fifolders=1` +
     `&name=${encodeURIComponent(trepenName)}` +
@@ -680,7 +680,7 @@ try {
   });
   await snap(trepen, "trepen-saved");
   await snap(page, "drive-after-trepen");
-  steps.fipen = { ok: true, state: log.trepenState, url: trepenUrl.replace(payer, "<payer>") };
+  steps.trepen = { ok: true, state: log.trepenState, url: trepenUrl.replace(payer, "<payer>") };
   say("trepen doc saved");
   await trepen.close();
 

@@ -28,20 +28,22 @@ describe("model", () => {
 
   it("recognizes new and legacy editor files and builds app links", () => {
     expect(felKind("Notes.fipen")).toBe("felarumi");
+    expect(felKind("Notes.trepen")).toBe("felarumi");
+    expect(felKind("Budget.tregrid")).toBe("felanumio");
     expect(felKind("Notes.Felarumi")).toBe("felarumi");
     expect(felKind("Budget.figrid")).toBe("felanumio");
     expect(felKind("scene.felanumio")).toBe("felanumio");
     expect(felKind("notes.txt")).toBeNull();
-    expect(felFileName("Notes", "felarumi")).toBe("Notes.fipen");
-    expect(felFileName("Notes.felarumi", "felarumi")).toBe("Notes.fipen");
-    expect(felFileName("Budget.felanumio", "felanumio")).toBe("Budget.figrid");
+    expect(felFileName("Notes", "felarumi")).toBe("Notes.trepen");
+    expect(felFileName("Notes.felarumi", "felarumi")).toBe("Notes.trepen");
+    expect(felFileName("Budget.felanumio", "felanumio")).toBe("Budget.tregrid");
     expect(felTitle("Notes.felarumi", "felarumi")).toBe("Notes");
-    const link = appLink("felarumi", "bafy", "a.fipen", {
+    const link = appLink("felarumi", "bafy", "a.trepen", {
       felarumi: "https://trepen.example/",
       felanumio: "https://tregrid.example",
     });
     expect(link).toContain("pieceCid=bafy");
-    expect(link).toContain("name=a.fipen");
+    expect(link).toContain("name=a.trepen");
     expect(link.startsWith("https://trepen.example/")).toBe(true);
   });
 
