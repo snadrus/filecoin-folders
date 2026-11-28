@@ -101,3 +101,12 @@ reproduce.
   link's own throwaway key and decrypts it in the browser.
 - Verified on Calibration (`e2e-stories/live-private.spec.ts`, dataset 58383 on ezpdpz): upload, link,
   guest open; anonymous `/piece/` of the same piece returns 404 and `/download/` without a grant returns 401.
+
+### Limitation: sponsored (gasless) accounts
+
+When the site runs with the sponsor for a network (`VITE_SPONSOR_URL` + `VITE_SPONSOR_NETWORKS`, on for
+Calibration at fifolders.scionbase.ai), every sign-in, including a wallet, stores through the sponsored payer account.
+That account cannot sign the Keysmith GroupKey / ReadGrant, and the sponsor worker creates its data sets without
+`read=restricted`, so **Create private dataset** is hidden there. Private data sets work in direct-wallet mode (no
+sponsor for that network; verified on Calibration with a local build, dataset 58383). Badges and private share links
+still work everywhere.

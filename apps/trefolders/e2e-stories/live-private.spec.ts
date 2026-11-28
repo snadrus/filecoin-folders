@@ -4,7 +4,8 @@ import { LIVE } from "./helpers";
 import { CHAIN_ID, filBalance, hasWallet, installWallet } from "./wallet";
 
 // Private (read=restricted) dataset on Calibration: open, upload, share by fragment link, open the link as a guest.
-// Uses an existing private dataset of the test wallet (PRIVATE_DATASET), so no dataset is created here.
+// Needs a build without the sponsor for this network (direct wallet mode): sponsored accounts cannot hold private
+// data sets yet. Uses an existing private dataset of the test wallet (PRIVATE_DATASET), so no dataset is created here.
 const DATASET = process.env.PRIVATE_DATASET || "";
 test.skip(!LIVE || !hasWallet() || !DATASET || !process.env.STORIES_SPEND, "live + test wallet + PRIVATE_DATASET + STORIES_SPEND=1");
 test.describe.configure({ timeout: 900_000, retries: 0 });
@@ -23,6 +24,12 @@ test("P1 private dataset: badge, upload, fragment share link opens for a guest",
   page.on("requestfailed", (r) => console.log("[failed]", r.failure()?.errorText, r.method(), r.url().slice(0, 160)));
   page.on("pageerror", (e) => console.log("[pageerror]", e.message.slice(0, 400)));
   await page.goto("/");
+  // Passkeys come first on the start page; the wallet sits under "Advanced: use a wallet".
+  const advanced = page.getByTestId("advanced");
+  await advanced.waitFor({ state: "attached", timeout: 60_000 });
+  // The start page settles after the wallet is detected; open "Advanced" the way a person does.
+  await page.waitForTimeout(1500);
+  if (!(await page.getByTestId("connect-wallet").isVisible())) await page.locator("summary", { hasText: "Advanced: use a wallet" }).click();
   await page.getByTestId("connect-wallet").click();
   await page.getByTestId("account").click({ timeout: 90_000 });
   const menu = page.getByTestId("account-menu");
