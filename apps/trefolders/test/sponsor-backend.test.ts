@@ -416,6 +416,28 @@ describe("sponsor server (fake chain)", () => {
     expect(sends.some((s) => s.label.startsWith("assign"))).toBe(false);
   });
 
+  it("a buyer can open private and public data sets in either order after onboarding", async () => {
+    const { sponsor, as, pay, opened, openedMetadata } = await start({ pool: 1 });
+    await sponsor.refillPool();
+    const user = newUser();
+    const checkout = await as(user.signed)("checkout", checkoutBody(5));
+    await pay(String(checkout.json.id), user.id, 500);
+    await sponsor.settled();
+    expect(opened).toHaveLength(0);
+    const privateMeta = { app: "fifolders", volume: "My Folders", created: "2026-11-28T00:00:01Z", read: "restricted", "foc/enc": "1", "foc/gkid": `0x${"ab".repeat(16)}`, "foc/kc": `v2.${"cd".repeat(16)}` };
+    // First run: private (the default).
+    expect((await as(user.signed)("dataset", { metadata: privateMeta })).json).toMatchObject({ dataSetId: "1001" });
+    expect(openedMetadata.at(-1)).toMatchObject({ read: "restricted" });
+    // Settings: a public data set is still creatable afterwards, and carries no private keys.
+    const pub = await as(user.signed)("dataset", { metadata: { app: "fifolders", volume: "x", created: "2026-11-28T00:00:02Z" } });
+    expect(pub).toMatchObject({ status: 200, json: { dataSetId: "1002" } });
+    expect(openedMetadata.at(-1)).not.toHaveProperty("read");
+    expect(Object.keys(openedMetadata.at(-1)!).sort()).toEqual(["app", "created", "volume"]);
+    expect(sponsor.state.users[user.id]).toMatchObject({ dataSetId: "1002" });
+    expect(sponsor.state.users[user.id]!.privateDataSets).toHaveLength(1);
+    expect(opened).toHaveLength(2);
+  });
+
   it("empty pool: slow path creates, funds, and opens a dataset", async () => {
     const { sponsor, sends, as, pay, opened } = await start({ pool: 0 });
     const user = newUser();
