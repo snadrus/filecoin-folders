@@ -361,6 +361,12 @@ export class Volume {
    * file's `located` piece, and a legacy per-file piece when it has no locator.
    * A piece absent from this set is safe to schedule for removal.
    */
+  /** The root piece of the newest version this volume knows (never older than its own last commit). */
+  async headPiece(): Promise<string> {
+    await this.#reload();
+    return this.#basePiece;
+  }
+
   async referencedPieces(): Promise<string[]> {
     const head = await this.registry.head(this.owner, this.ns, this.key);
     const ids = new Set<string>();
@@ -542,7 +548,10 @@ export class Volume {
           }),
         );
         this.#basePiece = pieceCid;
-        this.#baseVersion = record.version;
+        // The record's version can come from a lagging head read (no decodable event in the receipt):
+        // our commit is at least one past the version we built on.
+        const committedOn = this.#baseVersion;
+        this.#baseVersion = record.version > committedOn ? record.version : committedOn + 1n;
         this.#baseTree = ours;
         this.#loaded = true;
         this.#cache.set(pieceCid, ours);
