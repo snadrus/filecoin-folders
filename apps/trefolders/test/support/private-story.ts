@@ -55,9 +55,9 @@ export async function runPrivateStory(io: StoryIO): Promise<void> {
   const secCreate = await waitFor(page, 12 * 60_000, "private dataset on chain", async () => {
     const text = (await page.locator("body").innerText().catch(() => "")).replace(/\s+/g, " ");
     if (/can't make an encryption key|Dataset was not created|not allowed/.test(text)) throw new Error(`create refused: ${text.slice(0, 300)}`);
-    if (/session key not authorized/.test(text) && Date.now() - lastTry > 45_000) {
+    if (/session key not authorized|internal error/.test(text) && Date.now() - lastTry > 45_000) {
       lastTry = Date.now();
-      say("create hit the session-key race; clicking again");
+      say(`create failed transiently (${/internal error/.test(text) ? "internal error" : "session key race"}); clicking again`);
       await openMenu(page);
       await page.getByTestId("create-private-dataset").first().click().catch(() => undefined);
     }
