@@ -38,6 +38,10 @@ the other pages never had a Fi prefix.
   `application/x-fifolders-paths`, window name `fifolders-limited-wallet`.
 - `scripts/collab-edit-p2p.patch` (applies only to ancient collab-edit refs) is untouched.
 
+TreGrid clipboard HTML attributes `data-figrid-origin` / `data-figrid-raw` were later renamed to
+`data-tregrid-origin` / `data-tregrid-raw` in collab-edit (no compatibility read; there were no active
+copy buffers).
+
 ## Build and CI
 
 - `apps/fifolders` → `apps/trefolders`, `packages/fiperson` → `packages/treperson`, `@fifolders/sponsored-client` →
