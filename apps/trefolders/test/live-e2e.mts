@@ -7,7 +7,8 @@ import { runNoPrfRefusal, runPrivateStory } from "./support/private-story.js";
 const OUT = process.env.LIVE_E2E_OUT || "/workspace/fil-gasless/live";
 const SITE = "https://fifolders.scionbase.ai";
 const PURCHASE_USD = 3.91;
-const CRED_FILE = `${OUT}/webauthn.credential.json`;
+// Virtual passkey credentials are keys: they live under the bot secrets dir, never in /workspace.
+const CRED_FILE = process.env.LIVE_E2E_CRED || `/home/box/.secrets/bots/fil-gasless/webauthn/live-e2e-${OUT.split("/").pop()}.credential.json`;
 const RESUME = process.env.LIVE_E2E_RESUME === "1" || process.argv.includes("--resume");
 const WORKER = "https://fast.scionbase.ai";
 const RPC = "https://api.calibration.node.glif.io/rpc/v1";
@@ -381,7 +382,8 @@ try {
   };
   await waitUntil(20 * 60_000, "drive ready for upload", async () => {
     if (await driveReadyForUpload()) return true;
-    if (await visible(page, "create-dataset") && !clickedCreate && !(await visible(page, "file-input")) && !(await page.getByText("This folder is empty").count())) {
+    // The first-run setup dialog offers Create dataset when the account has none (Private selected by default).
+    if (await visible(page, "create-dataset") && !clickedCreate && ((await visible(page, "setup")) || (!(await visible(page, "file-input")) && !(await page.getByText("This folder is empty").count())))) {
       clickedCreate = true;
       say("clicking create-dataset");
       await page.getByTestId("create-dataset").first().click();
