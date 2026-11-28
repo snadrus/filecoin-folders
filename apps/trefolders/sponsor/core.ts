@@ -476,6 +476,8 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
   // ---------------------------------------------------------------- warm pool
 
   let refilling: Promise<void> | null = null;
+  /** Spares are built without a data set (the buyer picks public or private on first run). Older spares carry a public one. */
+  const hasSpareDataset = (entry: PoolEntry) => Boolean(entry.dataSetId);
   const poolCount = (...statuses: PoolEntry["status"][]) => Object.values(state.pool).filter((entry) => statuses.includes(entry.status)).length;
 
   async function isFactoryAccount(factory: Address, account: Address): Promise<boolean> {
@@ -511,8 +513,8 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
     try {
       entry.hashes.push((await relayer.relay({ to: config.factory, label: `pool create ${account}`, data: encodeFunctionData({ abi: lockedFactoryAbi, functionName: "createPooled", args: [salt, sessionExpiry] }) })).transactionHash);
       entry.hashes.push(await deposit(account, seed, `pool seed ${account}`));
-      const opened = await openDataset(account, datasetMetadata());
-      Object.assign(entry, { dataSetId: opened.dataSetId, dataSetTx: opened.txHash, providerId: config.providerId.toString(), status: "ready" });
+      // No data set here: a public one would be inherited by the buyer, who should get to choose private.
+      Object.assign(entry, { providerId: config.providerId.toString(), status: "ready" });
     } catch (error) {
       entry.status = "failed";
       entry.error = error instanceof Error ? error.message : String(error);
@@ -538,7 +540,7 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
           console.warn("[sponsor] pool refill paused: recent build failures");
           return;
         }
-        while ((await poolOnCurrentFactory("ready", "seeding")).length < poolSize && built < (opts.max ?? Infinity)) {
+        while ((await poolOnCurrentFactory("ready", "seeding")).filter((entry) => !hasSpareDataset(entry)).length < poolSize && built < (opts.max ?? Infinity)) {
           // Keep owed credits whole: build only with USDFC to spare for the seed, and FIL above the gas reserve.
           const funds = await sponsorFunds();
           if (funds.usdfc < pendingUsdfc() + seed || funds.fil < minFil() * 2n) {
@@ -605,7 +607,7 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
     if (Object.keys(state.checkouts).length >= MAX_OPEN_CHECKOUTS) throw new HttpError(503, "Too many open checkouts; please try again later.");
     const record = recordFor(identity);
     if (!record) ownerArgs(identity); // session keys only top up existing accounts
-    const first = !record?.dataSetId;
+    const first = !record;
     const cents = Math.round(Number(body.usd) * 100);
     const min = first ? pricing.minFirstCents : pricing.minTopUpCents;
     if (!Number.isFinite(cents) || cents < min || cents > pricing.maxCents) throw new HttpError(400, `amount must be from $${(min / 100).toFixed(2)} to $${(pricing.maxCents / 100).toFixed(2)}`);
@@ -885,7 +887,7 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
         save();
         // Pre-flight: if the sponsor is short, park the credit before sending anything (so a retry is always safe).
         const amount0 = BigInt(credit.usdfc);
-        const viaPool = !state.users[credit.identity] && (await poolOnCurrentFactory("ready")).length > 0;
+        const viaPool = !state.users[credit.identity] && (await poolOnCurrentFactory("ready")).some((entry) => !hasSpareDataset(entry));
         const needUsdfc = viaPool ? poolTopUp(amount0, seed) : amount0;
         const funds = await sponsorFunds();
         markTiming(credit, "fundsChecked", { session: sessionId, viaPool: viaPool ? 1 : 0 });
@@ -906,10 +908,9 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
             if (receipt) recordInclusion(credit, "deposit", receipt);
           }
           credit.depositUsdfc = amount.toString();
-          if (!record.dataSetId) await attachDataset(record);
         } else {
           if (!identity) throw new Error(`bad identity ${credit.identity}`);
-          const pooled = (await poolOnCurrentFactory("ready"))[0];
+          const pooled = (await poolOnCurrentFactory("ready")).find((entry) => !hasSpareDataset(entry));
           if (pooled) {
             // Warm path: one tx hands the account over and deposits the credit above its seed.
             credit.path = "pool";
@@ -978,7 +979,6 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
               if (receipt) recordInclusion(credit, "deposit", receipt);
             }
             credit.depositUsdfc = amount.toString();
-            await attachDataset(record);
             void refillPool();
           }
         }
@@ -1042,7 +1042,7 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
     const feeMs = Date.now() - feeStarted;
     const raced = state.credits[id] as CreditRecord | undefined;
     if (raced) return { received: true, duplicate: true, credited: raced.usdfc };
-    const first = !state.users[identityId]?.dataSetId;
+    const first = !state.users[identityId];
     const { creditUsdfc, ...quote } = creditFor(pricing, { chargeCents, feeCents, first });
     const paymentIntent = typeof session.payment_intent === "string" ? session.payment_intent : undefined;
     const sessionKey = sessionKeyFromMetadata(metadata);
@@ -1814,7 +1814,8 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
         continue;
       }
       const age = ageDays(spareCreatedAtMs(entry), now());
-      const action = decideSpareCare({ ageDays: age, runwayDays: pay.runwayDays, care: poolCare });
+      // A spare that already carries a public data set would hand it to the buyer: retire it (terminate + sweep).
+      const action = hasSpareDataset(entry) ? "retire" : decideSpareCare({ ageDays: age, runwayDays: pay.runwayDays, care: poolCare });
       if (action === "ok") {
         entry.care = { at: new Date(now()).toISOString(), action: "ok" };
         save();
@@ -1849,7 +1850,7 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
           }
           state.sweeps[entry.account] = { ...result, at: new Date(now()).toISOString() };
           entry.status = "retired";
-          entry.error = "retired: older than max pool age";
+          entry.error = hasSpareDataset(entry) ? "retired: spare with a public data set (buyers pick private or public)" : "retired: older than max pool age";
           entry.care = { at: new Date(now()).toISOString(), action: "retire", ...(hash ? { hash } : {}), ...(result.swept ? { amount: result.swept } : {}) };
           out.retired.push(entry.account);
         } catch (error) {

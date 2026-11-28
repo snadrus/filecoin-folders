@@ -324,7 +324,7 @@ describe("sponsor server (fake chain)", () => {
     const { sponsor, get, as, pay } = await start({ pool: 1, noStripe: true });
     await sponsor.refillPool();
     expect((await get("/health")).json).toMatchObject({ ok: true, network: "calibration", factory: FACTORY, stripe: { checkout: false, webhook: false }, pool: { target: 1, ready: 1 } });
-    expect((await get("/pool")).json).toMatchObject({ counts: { ready: 1 }, entries: [{ status: "ready", dataSetId: "1001" }] });
+    expect((await get("/pool")).json).toMatchObject({ counts: { ready: 1 }, entries: [{ status: "ready" }] });
     expect((await get("/pricing")).json).toMatchObject({ minFirstUsd: 3.91, minTopUpUsd: 2.37, minNetUsd: 2, reserveUsd: 1, setupFeeUsd: 1.5, minCreditUsd: 1, suggestedUsd: 10 });
     const user = newUser();
     const checkout = await as(user.signed)("checkout", checkoutBody(5));
@@ -346,7 +346,8 @@ describe("sponsor server (fake chain)", () => {
     const { sponsor, sends, post, get, as, pay, opened } = await start({ pool: 1 });
     await sponsor.refillPool();
     const [pooled] = Object.values(sponsor.state.pool);
-    expect(pooled).toMatchObject({ status: "ready", dataSetId: "1001" });
+    expect(pooled).toMatchObject({ status: "ready" });
+    expect(pooled!.dataSetId).toBeUndefined(); // spares carry no data set: the buyer picks public or private
     expect(sends.map((s) => s.label.split(" ")[0])).toEqual(["pool", "USDFC", "pool"]); // createPooled, approve, seed
 
     const user = newUser();
@@ -367,12 +368,13 @@ describe("sponsor server (fake chain)", () => {
     const decoded = decodeFunctionData({ abi: lockedFactoryAbi, data: assigns[0]!.data });
     expect(decoded.args).toEqual([pooled!.account, user.key.address, `0x${"0".repeat(64)}`, `0x${"0".repeat(64)}`, 105n * E]);
     expect(sponsor.state.credits[sessionId]).toMatchObject({ status: "done", path: "pool", depositUsdfc: (105n * E).toString(), feeCents: 45, setupCents: 150, reserveCents: 100 });
-    expect(sponsor.state.users[user.id]).toMatchObject({ account: pooled!.account, dataSetId: "1001", via: "pool" });
+    expect(sponsor.state.users[user.id]).toMatchObject({ account: pooled!.account, via: "pool" });
+    expect(sponsor.state.users[user.id]!.dataSetId).toBeUndefined();
     expect(sponsor.state.pool[pooled!.account]!.status).toBe("assigned");
 
     await sponsor.refillPool(); // refilled in the background after the handover
     expect(Object.values(sponsor.state.pool).filter((e) => e.status === "ready")).toHaveLength(1);
-    expect(opened).toHaveLength(2);
+    expect(opened).toHaveLength(0); // neither spares nor the buyer got a data set yet
 
     // Top-up: no creation fee, minimum $2.37, plain deposit.
     expect((await as(user.signed)("checkout", checkoutBody(2.36))).status).toBe(400);
@@ -400,6 +402,20 @@ describe("sponsor server (fake chain)", () => {
     expect(Object.values(sponsor.state.pool).filter((e) => e.status === "ready")).toHaveLength(1);
   });
 
+  it("a spare built before this change (public data set already on it) is never handed to a buyer", async () => {
+    const { sponsor, sends, as, pay } = await start({ pool: 0 });
+    const legacy = "0x00000000000000000000000000000000000000A1" as Address;
+    sponsor.state.pool[legacy] = { account: legacy, salt: "1", sessionExpiry: String(Math.floor(Date.now() / 1000) + 86_400), status: "ready", hashes: [], factory: sponsor.config.factory, dataSetId: "999", providerId: "2" } as never;
+    const user = newUser();
+    const checkout = await as(user.signed)("checkout", checkoutBody(5));
+    await pay(String(checkout.json.id), user.id, 500);
+    await sponsor.settled();
+    expect(sponsor.state.users[user.id]).toMatchObject({ via: "create" });
+    expect(sponsor.state.users[user.id]!.account).not.toBe(legacy);
+    expect(sponsor.state.pool[legacy]!.status).toBe("ready");
+    expect(sends.some((s) => s.label.startsWith("assign"))).toBe(false);
+  });
+
   it("empty pool: slow path creates, funds, and opens a dataset", async () => {
     const { sponsor, sends, as, pay, opened } = await start({ pool: 0 });
     const user = newUser();
@@ -407,8 +423,8 @@ describe("sponsor server (fake chain)", () => {
     await pay(String(checkout.json.id), user.id, 500);
     await sponsor.settled();
     expect(sends.map((s) => s.label.split(" ")[0])).toEqual(["create", "USDFC", "credit"]);
-    expect(opened).toHaveLength(1);
-    expect(sponsor.state.users[user.id]).toMatchObject({ via: "create", dataSetId: "1001" });
+    expect(opened).toHaveLength(0); // no data set until the buyer asks (public or private)
+    expect(sponsor.state.users[user.id]).toMatchObject({ via: "create" });
     expect(sponsor.state.credits[String(checkout.json.id)]).toMatchObject({ path: "create", depositUsdfc: (205n * E).toString() });
   });
 
@@ -427,9 +443,9 @@ describe("sponsor server (fake chain)", () => {
     await pay(String(checkout.json.id), user.id, 500);
     await sponsor.settled();
     const account = sponsor.state.users[user.id]!.account;
-    expect(opened).toHaveLength(1);
+    expect(opened).toHaveLength(0);
 
-    // Public request (the descriptive keys the app always sent): unchanged, returns the existing data set.
+    // Public request (the descriptive keys the app always sent): opens the one public data set (on demand).
     expect(await as(user.signed)("dataset", { metadata: { app: "fifolders", volume: "x", created: "y" } })).toMatchObject({ status: 200, json: { dataSetId: "1001" } });
     expect(opened).toHaveLength(1);
 
