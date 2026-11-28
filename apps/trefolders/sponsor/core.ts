@@ -85,6 +85,19 @@ const payAbi = parseAbi([
   "function accounts(address token, address owner) view returns (uint256 funds, uint256 lockupCurrent, uint256 lockupRate, uint256 lockupLastSettledAt)",
 ]);
 
+/** One-line error text for logs: Workers' log pipe drops a second console argument, so everything goes in one string. */
+export function describeError(error: unknown): string {
+  if (!(error instanceof Error)) return String(typeof error === "object" ? JSON.stringify(error) : error).slice(0, 600);
+  const extra = error as Error & { shortMessage?: string; details?: string; cause?: unknown };
+  const parts = [`${error.name}: ${error.message}`.slice(0, 400)];
+  if (extra.shortMessage && !error.message.startsWith(extra.shortMessage)) parts.push(`short=${extra.shortMessage.slice(0, 200)}`);
+  if (extra.details) parts.push(`details=${String(extra.details).slice(0, 200)}`);
+  if (extra.cause instanceof Error) parts.push(`cause=${extra.cause.name}: ${extra.cause.message.slice(0, 200)}`);
+  const frame = error.stack?.split("\n").slice(1, 4).map((line) => line.trim()).join(" < ");
+  if (frame) parts.push(`at ${frame.slice(0, 300)}`);
+  return parts.join(" | ");
+}
+
 export interface SponsorConfig {
   network: Network;
   chainId: number;
@@ -2169,7 +2182,7 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
       }
       const status = error instanceof HttpError ? error.status : 500;
       const headers = error instanceof HttpError && error.status === 429 ? { "Retry-After": "60" } : undefined;
-      console.error(`[sponsor] ${req.method} ${req.url}:`, error instanceof Error ? error.message : error);
+      console.error(`[sponsor] ${req.method} ${req.url}: ${describeError(error)}`);
       // Internal (non-HTTP) errors can carry RPC URLs or provider detail: log them, answer generically.
       const message = error instanceof HttpError ? error.message : "internal error";
       return { status, body: { error: message }, headers };
