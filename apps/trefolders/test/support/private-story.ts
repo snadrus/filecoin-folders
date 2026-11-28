@@ -142,11 +142,15 @@ export async function runPrivateStory(io: StoryIO): Promise<void> {
   await page.getByTestId("entry").filter({ hasText: name }).first().click({ button: "right" });
   await page.getByRole("button", { name: /Delete forever/ }).first().click();
   // Trash and Delete forever are staged edits: Save commits them and schedules the released piece's removal.
+  await snap(page, "private-delete-staged");
   await page.getByTestId("save-changes").click({ timeout: 60_000 });
   say("saved the delete");
+  await page.waitForTimeout(5_000);
+  await snap(page, "private-delete-saved");
   let lastDump = 0;
+  try {
   let removal: Record<string, unknown> | null = null;
-  const secRemove = await waitFor(page, 10 * 60_000, "piece removal confirmed", async () => {
+  const secRemove = await waitFor(page, 6 * 60_000, "piece removal confirmed", async () => {
     const records = await page.evaluate(() => Object.entries(localStorage).filter(([k]) => /remov/i.test(k)).map(([k, v]) => [k, v] as const));
     for (const [, v] of records) {
       try {
@@ -161,13 +165,19 @@ export async function runPrivateStory(io: StoryIO): Promise<void> {
     }
     if (!removal && Date.now() - lastDump > 60_000) {
       lastDump = Date.now();
-      say(`removal records so far: ${JSON.stringify(records).slice(0, 400)}; txlog ${(await page.getByTestId("activity").innerText().catch(() => "")).replace(/\s+/g, " ").slice(0, 200)}`);
+      const keys = await page.evaluate(() => Object.keys(localStorage).filter((k) => /copies|copy|removal|checkpoint|replic/i.test(k)).map((k) => `${k}=${(localStorage.getItem(k) || "").slice(0, 300)}`));
+      say(`removal records so far: ${JSON.stringify(records).slice(0, 300)}; storage ${JSON.stringify(keys).slice(0, 900)}; body ${(await page.locator("body").innerText().catch(() => "")).replace(/\s+/g, " ").slice(0, 300)}`);
     }
     return Boolean(removal);
   }, 5_000);
   await snap(page, "private-deleted");
   steps.privateDelete = { ok: true, seconds: secRemove, ...(removal ?? {}) };
   say(`piece removal confirmed in ${secRemove}s: ${JSON.stringify(removal)}`);
+  } catch (error) {
+    steps.privateDelete = { ok: false, error: error instanceof Error ? error.message : String(error) };
+    say(`DELETE STEP FAILED (continuing to terminate): ${(steps.privateDelete as { error: string }).error}`);
+    await snap(page, "private-delete-failed");
+  }
 
   // 6. Terminate the private dataset from the account menu.
   await openMenu(page);
