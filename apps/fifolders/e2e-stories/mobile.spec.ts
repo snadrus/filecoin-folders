@@ -131,3 +131,150 @@ test("M05 FiPen phone: Gboard-style composition reaches the doc live, with sente
   });
   expect(Math.abs(gap)).toBeLessThan(10);
 });
+
+async function touchAt(page: import("@playwright/test").Page, x: number, y: number, times = 1): Promise<void> {
+  // Dispatch on #pages so a handle or the action bar sitting over the point cannot swallow the event.
+  await page.evaluate(({ x, y, times }) => {
+    const target = document.querySelector("#pages")!;
+    const fire = () => {
+      for (const type of ["pointerdown", "pointerup"] as const) {
+        target.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, composed: true, pointerType: "touch", pointerId: 1, isPrimary: true, clientX: x, clientY: y, view: window }));
+      }
+    };
+    for (let i = 0; i < times; i++) fire();
+  }, { x, y, times });
+}
+
+async function openDrawer(page: import("@playwright/test").Page): Promise<void> {
+  const btn = page.getByTestId("menu-button");
+  await expect(async () => {
+    if ((await btn.getAttribute("aria-expanded")) !== "true") await btn.tap();
+    await expect(btn).toHaveAttribute("aria-expanded", "true");
+  }).toPass();
+}
+
+test("M06 FiPen phone: double-tap selects a word, handles appear, the action bar can copy, and toolbar bold applies to the selection", async ({ page }) => {
+  await page.goto(url("fipen/"));
+  await page.locator("#blank").click();
+  await page.waitForFunction(() => (window as any).__editor?.ready === true, null, { timeout: 45_000 });
+  await page.evaluate(() => {
+    const ed = (window as any).__editor;
+    ed.insertText("hello world");
+    ed.setSelection(1, 1);
+  });
+  const pos = await page.evaluate(() => {
+    const r = (document.querySelector(".local-caret") as HTMLElement).getBoundingClientRect();
+    return { x: r.x + 10, y: r.y + r.height / 2 };
+  });
+  await touchAt(page, pos.x, pos.y, 2);
+  await expect.poll(async () => page.evaluate(() => {
+    const s = (window as any).__editor.selection();
+    return s.head - s.anchor;
+  })).toBeGreaterThan(0);
+  await expect(page.getByTestId("sel-handle-start")).toBeVisible();
+  await expect(page.getByTestId("sel-handle-end")).toBeVisible();
+  await expect(page.getByTestId("sel-bar")).toBeVisible();
+  await expect(page.getByTestId("sel-bar").getByRole("button", { name: "Copy" })).toBeVisible();
+  await page.locator("#bold").tap();
+  await expect.poll(() => page.evaluate(() => (window as any).__editor.styleAt(1).b === true)).toBe(true);
+  // Tap in the middle of the selected word (not on a handle at either end) to collapse it.
+  const mid = await page.evaluate(() => {
+    const a = document.querySelector("[data-testid=sel-handle-start]")!.getBoundingClientRect();
+    const b = document.querySelector("[data-testid=sel-handle-end]")!.getBoundingClientRect();
+    return { x: (a.left + b.left) / 2, y: Math.min(a.top, b.top) - 8 };
+  });
+  await touchAt(page, mid.x, mid.y, 1);
+  await expect.poll(async () => {
+    const s = await page.evaluate(() => (window as any).__editor.selection());
+    return s.anchor === s.head;
+  }).toBe(true);
+});
+
+test("M07 drive phone: every row type shows a 44px ⋮ that opens the actions sheet", async ({ page }) => {
+  const sizeOf = async (el: import("@playwright/test").Locator) => {
+    const b = (await el.boundingBox())!;
+    return { w: b.width, h: b.height };
+  };
+  await page.goto("/?onboard=1&pay=ready&datasets=1&fcdrive=1");
+  await page.getByTestId("connect-wallet").click();
+  await expect(page.getByTestId("nav-drive")).toBeAttached();
+  await page.getByTestId("file-input").setInputFiles([
+    { name: "doc.txt", mimeType: "text/plain", buffer: Buffer.from("x") },
+  ]);
+  await expect(page.getByTestId("entry").filter({ hasText: "doc.txt" })).toBeVisible();
+  const closeUploads = page.getByRole("button", { name: "Close uploads" });
+  if (await closeUploads.isVisible().catch(() => false)) await closeUploads.click();
+  const fileMore = page.getByTestId("entry").filter({ hasText: "doc.txt" }).getByTestId("row-more");
+  await expect(fileMore).toBeVisible();
+  expect(await sizeOf(fileMore)).toEqual({ w: 44, h: 44 });
+  await fileMore.tap();
+  await expect(page.getByTestId("context-menu").getByRole("button", { name: "Rename", exact: true })).toBeVisible();
+  await page.getByTestId("sheet-scrim").tap({ position: { x: 20, y: 20 } });
+  await page.getByTestId("view-grid").tap();
+  const gridMore = page.getByTestId("entry").filter({ hasText: "doc.txt" }).getByTestId("row-more");
+  await expect(gridMore).toBeVisible();
+  expect(await sizeOf(gridMore)).toEqual({ w: 44, h: 44 });
+  await page.getByTestId("view-list").tap();
+  await page.getByTestId("search").fill("doc");
+  const searchMore = page.getByTestId("entry").filter({ hasText: "doc.txt" }).getByTestId("row-more");
+  await expect(searchMore).toBeVisible();
+  expect(await sizeOf(searchMore)).toEqual({ w: 44, h: 44 });
+  await page.getByTestId("search").fill("");
+  await expect(page.getByTestId("search")).toHaveValue("");
+  await page.getByTestId("search").blur();
+  await expect(fileMore).toBeVisible();
+  // Clearing search enqueues a refresh that can replace the row mid-tap; retry until the sheet stays open.
+  await expect(async () => {
+    if (!(await page.getByTestId("context-menu").isVisible())) await fileMore.tap();
+    await expect(page.getByTestId("context-menu").getByRole("button", { name: "Move to trash", exact: true })).toBeVisible();
+  }).toPass();
+  await page.getByTestId("context-menu").getByRole("button", { name: "Move to trash", exact: true }).click();
+  await expect(page.getByTestId("toast").filter({ hasText: "moved to trash" })).toBeVisible();
+  await expect(page.getByTestId("entry").filter({ hasText: "doc.txt" })).toHaveCount(0);
+  await openDrawer(page);
+  await page.getByTestId("nav-trash").click();
+  await expect(page.getByTestId("nav-trash")).toHaveClass(/on/);
+  const trashMore = page.getByTestId("entry").filter({ hasText: "doc.txt" }).getByTestId("row-more");
+  await expect(trashMore).toBeVisible();
+  expect(await sizeOf(trashMore)).toEqual({ w: 44, h: 44 });
+  await trashMore.tap();
+  await expect(page.getByTestId("context-menu").getByRole("button", { name: "Restore", exact: true })).toBeVisible();
+  await page.getByTestId("sheet-scrim").tap({ position: { x: 20, y: 20 } });
+  await openDrawer(page);
+  await page.getByTestId("nav-loose").click();
+  await expect(page.getByTestId("nav-loose")).toHaveClass(/on/);
+  const loose = page.locator("[data-testid=loose-row]").filter({ hasText: "hello.txt" });
+  await expect(loose).toBeVisible();
+  await expect(loose.getByTestId("loose-adopt")).toBeHidden();
+  const looseMore = loose.getByTestId("row-more");
+  await expect(looseMore).toBeVisible();
+  expect(await sizeOf(looseMore)).toEqual({ w: 44, h: 44 });
+  await looseMore.tap();
+  await expect(page.getByTestId("context-menu").getByRole("button", { name: "Add to folders", exact: true })).toBeVisible();
+});
+
+test("M08 identity, person, share and FiClub are usable on a phone", async ({ page }) => {
+  const noHScroll = async () => page.evaluate(() => document.scrollingElement!.scrollWidth <= document.scrollingElement!.clientWidth + 1);
+  await page.goto("/identity/");
+  await expect(page.locator("h1")).toBeVisible();
+  expect(await noHScroll()).toBe(true);
+  const field = page.locator("input, textarea, select").first();
+  if (await field.count()) {
+    const size = await field.evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
+    expect(size).toBeGreaterThanOrEqual(16);
+  }
+  await page.goto("/person/");
+  await expect(page.getByRole("heading", { name: "Person" })).toBeVisible();
+  expect(await noHScroll()).toBe(true);
+  await page.goto("/share/");
+  await expect(page.locator("h1")).toBeVisible();
+  expect(await noHScroll()).toBe(true);
+  await page.goto("/ficlub/");
+  await expect(page.locator("h1")).toBeVisible();
+  expect(await noHScroll()).toBe(true);
+  const btn = page.locator("button, a.primary, .primary").first();
+  if (await btn.count()) {
+    const box = await btn.boundingBox();
+    if (box) expect(box.height).toBeGreaterThanOrEqual(40);
+  }
+});
