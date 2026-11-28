@@ -55,9 +55,9 @@ export async function runPrivateStory(io: StoryIO): Promise<void> {
   const secCreate = await waitFor(page, 12 * 60_000, "private dataset on chain", async () => {
     const text = (await page.locator("body").innerText().catch(() => "")).replace(/\s+/g, " ");
     if (/can't make an encryption key|Dataset was not created|not allowed/.test(text)) throw new Error(`create refused: ${text.slice(0, 300)}`);
-    if (/session key not authorized/.test(text) && Date.now() - lastTry > 45_000) {
+    if (/session key not authorized|internal error/.test(text) && Date.now() - lastTry > 45_000) {
       lastTry = Date.now();
-      say("create hit the session-key race; clicking again");
+      say(`create failed transiently (${/internal error/.test(text) ? "internal error" : "session key race"}); clicking again`);
       await openMenu(page);
       await page.getByTestId("create-private-dataset").first().click().catch(() => undefined);
     }
@@ -99,12 +99,14 @@ export async function runPrivateStory(io: StoryIO): Promise<void> {
   await page.getByTestId("file-input").setInputFiles({ name, mimeType: "text/plain", buffer: Buffer.from(`${body}\n`) });
   const secUpload = await waitFor(page, 15 * 60_000, "upload saved", async () => {
     const entry = (await page.getByTestId("entry").filter({ hasText: name }).count()) > 0;
-    const busy = (await page.getByTestId("activity-indicator").count()) > 0;
+    const uploads = await page.getByTestId("upload-panel").innerText().catch(() => "");
+    const busy = !/upload(s)? complete/i.test(uploads) || (await page.locator(".upload-row[data-status=uploading]").count()) > 0;
     const err = (await page.locator("[data-testid=activity-item][data-status=error]").count()) > 0;
     if (err) throw new Error(`upload error: ${(await page.getByTestId("activity").innerText().catch(() => "")).slice(0, 300)}`);
     return entry && !busy;
   }, 5_000);
   await snap(page, "private-uploaded");
+  steps.txlogAfterUpload = await page.locator("[data-testid=activity-item]").evaluateAll((els) => els.map((el) => `${(el as HTMLElement).dataset.status}:${el.textContent?.replace(/\s+/g, " ").trim().slice(0, 120)}`)).catch(() => []);
   steps.privateUpload = { ok: true, file: name, seconds: secUpload };
   say(`uploaded ${name} in ${secUpload}s`);
 
@@ -117,6 +119,7 @@ export async function runPrivateStory(io: StoryIO): Promise<void> {
   const href = (await link.getAttribute("href"))!;
   await snap(page, "private-share");
   await page.keyboard.press("Escape").catch(() => undefined);
+  await page.locator("[data-action=close-details], [aria-label=Close]").first().click({ timeout: 3_000 }).catch(() => undefined);
   const guest: BrowserContext = await io.browser.newContext();
   const g = await guest.newPage();
   await g.goto(href);
@@ -138,8 +141,16 @@ export async function runPrivateStory(io: StoryIO): Promise<void> {
   await page.getByTestId("nav-trash").click();
   await page.getByTestId("entry").filter({ hasText: name }).first().click({ button: "right" });
   await page.getByRole("button", { name: /Delete forever/ }).first().click();
+  // Trash and Delete forever are staged edits: Save commits them and schedules the released piece's removal.
+  await snap(page, "private-delete-staged");
+  await page.getByTestId("save-changes").click({ timeout: 60_000 });
+  say("saved the delete");
+  await page.waitForTimeout(5_000);
+  await snap(page, "private-delete-saved");
+  let lastDump = 0;
+  try {
   let removal: Record<string, unknown> | null = null;
-  const secRemove = await waitFor(page, 10 * 60_000, "piece removal confirmed", async () => {
+  const secRemove = await waitFor(page, 6 * 60_000, "piece removal confirmed", async () => {
     const records = await page.evaluate(() => Object.entries(localStorage).filter(([k]) => /remov/i.test(k)).map(([k, v]) => [k, v] as const));
     for (const [, v] of records) {
       try {
@@ -152,11 +163,21 @@ export async function runPrivateStory(io: StoryIO): Promise<void> {
         /* not ours */
       }
     }
+    if (!removal && Date.now() - lastDump > 60_000) {
+      lastDump = Date.now();
+      const keys = await page.evaluate(() => Object.keys(localStorage).filter((k) => /copies|copy|removal|checkpoint|replic/i.test(k)).map((k) => `${k}=${(localStorage.getItem(k) || "").slice(0, 300)}`));
+      say(`removal records so far: ${JSON.stringify(records).slice(0, 300)}; storage ${JSON.stringify(keys).slice(0, 900)}; body ${(await page.locator("body").innerText().catch(() => "")).replace(/\s+/g, " ").slice(0, 300)}`);
+    }
     return Boolean(removal);
   }, 5_000);
   await snap(page, "private-deleted");
   steps.privateDelete = { ok: true, seconds: secRemove, ...(removal ?? {}) };
   say(`piece removal confirmed in ${secRemove}s: ${JSON.stringify(removal)}`);
+  } catch (error) {
+    steps.privateDelete = { ok: false, error: error instanceof Error ? error.message : String(error) };
+    say(`DELETE STEP FAILED (continuing to terminate): ${(steps.privateDelete as { error: string }).error}`);
+    await snap(page, "private-delete-failed");
+  }
 
   // 6. Terminate the private dataset from the account menu.
   await openMenu(page);
