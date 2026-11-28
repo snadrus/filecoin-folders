@@ -119,6 +119,7 @@ export async function runPrivateStory(io: StoryIO): Promise<void> {
   const href = (await link.getAttribute("href"))!;
   await snap(page, "private-share");
   await page.keyboard.press("Escape").catch(() => undefined);
+  await page.locator("[data-action=close-details], [aria-label=Close]").first().click({ timeout: 3_000 }).catch(() => undefined);
   const guest: BrowserContext = await io.browser.newContext();
   const g = await guest.newPage();
   await g.goto(href);
@@ -140,6 +141,10 @@ export async function runPrivateStory(io: StoryIO): Promise<void> {
   await page.getByTestId("nav-trash").click();
   await page.getByTestId("entry").filter({ hasText: name }).first().click({ button: "right" });
   await page.getByRole("button", { name: /Delete forever/ }).first().click();
+  // Trash and Delete forever are staged edits: Save commits them and schedules the released piece's removal.
+  await page.getByTestId("save-changes").click({ timeout: 60_000 });
+  say("saved the delete");
+  let lastDump = 0;
   let removal: Record<string, unknown> | null = null;
   const secRemove = await waitFor(page, 10 * 60_000, "piece removal confirmed", async () => {
     const records = await page.evaluate(() => Object.entries(localStorage).filter(([k]) => /remov/i.test(k)).map(([k, v]) => [k, v] as const));
@@ -153,6 +158,10 @@ export async function runPrivateStory(io: StoryIO): Promise<void> {
       } catch {
         /* not ours */
       }
+    }
+    if (!removal && Date.now() - lastDump > 60_000) {
+      lastDump = Date.now();
+      say(`removal records so far: ${JSON.stringify(records).slice(0, 400)}; txlog ${(await page.getByTestId("activity").innerText().catch(() => "")).replace(/\s+/g, " ").slice(0, 200)}`);
     }
     return Boolean(removal);
   }, 5_000);
