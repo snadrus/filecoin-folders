@@ -26,6 +26,7 @@ import { observeRegistry, type Session } from "./session.js";
 import { setPieceDetailSource, type PieceDetail } from "./drive-pieces.js";
 import { buildFixtureCar } from "./unixfs.js";
 import { INTENTS, intentText, sessionIntent } from "./wallet-prompts.js";
+import { NO_PRF_MESSAGE } from "./private/key-source.js";
 
 export const MOCK_CHAIN_ID = 314159;
 export const MOCK_ADDRESS = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8" as Address;
@@ -245,6 +246,10 @@ export function createMockOnboarding(params: URLSearchParams): OnboardingIO {
       report?.({ flow: "payment", phase: "done", hash: "0xpay" });
     },
     async createDataset(input) {
+      const visibility = input.visibility ?? "private";
+      if (visibility === "private" && params.get("noprf") === "1") {
+        throw new Error(NO_PRF_MESSAGE);
+      }
       const now = new Date();
       const list = datasets();
       const created: DatasetRecord = {
@@ -254,6 +259,7 @@ export function createMockOnboarding(params: URLSearchParams): OnboardingIO {
         pieceCount: "0",
         size: "—",
         created: now.toLocaleDateString(),
+        ...(visibility === "private" ? { visibility: "private" as const } : { visibility: "public" as const }),
       };
       list.push(created);
       localStorage.setItem(DATASETS_KEY, JSON.stringify(list));

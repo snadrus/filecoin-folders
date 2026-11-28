@@ -20,6 +20,13 @@ export const PASSKEY_UNLOCK_INTENT = { title: "Unlock private folders", purpose:
 export const NO_PRF_MESSAGE =
   "This passkey can't make an encryption key, so it can't create or open private folders. Use a passkey saved in iCloud Keychain, Google Password Manager or another PRF-capable passkey, or sign in with a wallet.";
 
+export function isNoPrfError(error: unknown): boolean {
+  return error instanceof Error && error.message.includes("can't make an encryption key");
+}
+
+/** One-line notice when first-run create falls back to a public data set. */
+export const PRIVATE_FALLBACK_NOTICE = "This passkey can't encrypt private folders, so this dataset is public.";
+
 /** The owner key for a PRF output. Deterministic: the same passkey gives the same key on every device. */
 export function ownerKeyFromPrf(prf: Uint8Array): Hex {
   if (prf.length < 32) throw new Error(NO_PRF_MESSAGE);

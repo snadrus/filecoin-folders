@@ -4,6 +4,7 @@ import { canEnter, isSessionPermissionError, type WalletPanel } from "./onboardi
 import type { OnboardingIO } from "./onboarding-io.js";
 import { INTENTS, withWalletIntent } from "./wallet-prompts.js";
 import { storeEncrypt, storeVolumeName, type ChainChoice, type Session } from "./session.js";
+import { isNoPrfError, PRIVATE_FALLBACK_NOTICE } from "./private/key-source.js";
 
 export async function prepareOnboarding(app: DriveApp, io: OnboardingIO): Promise<void> {
   try {
@@ -63,18 +64,27 @@ export async function prepareOnboarding(app: DriveApp, io: OnboardingIO): Promis
       return;
     }
     else if (action === "create-dataset" || action === "create-private-dataset") {
-      const visibility = action === "create-private-dataset" ? ("private" as const) : ("public" as const);
-      const op = app.beginOp({ kind: "dataset", label: "Create dataset", stage: "pending" });
+      const visibility = datasetVisibilityFor(action, value);
+      const op = app.beginOp({ kind: "dataset", label: visibility === "private" ? "Create private dataset" : "Create dataset", stage: "pending" });
       try {
-        // First write for a new account: authorize the session key now (lazy, not at Connect).
-        if (!(await io.snapshot({ chain, volumeName })).sessionReady) await io.authorize(chain, false, report);
-        await app.ensureSession();
+        const run = async (v: "public" | "private") => {
+          // First write for a new account: authorize the session key now (lazy, not at Connect).
+          if (!(await io.snapshot({ chain, volumeName })).sessionReady) await io.authorize(chain, false, report);
+          await app.ensureSession();
+          try {
+            await withWalletIntent(INTENTS.createDataset, () => io.createDataset({ chain, volumeName, visibility: v }));
+          } catch (error) {
+            if (!isSessionPermissionError(error)) throw error;
+            await app.waitForRenewal();
+            await withWalletIntent(INTENTS.createDataset, () => io.createDataset({ chain, volumeName, visibility: v }));
+          }
+        };
         try {
-          await withWalletIntent(INTENTS.createDataset, () => io.createDataset({ chain, volumeName, visibility }));
+          await run(visibility);
         } catch (error) {
-          if (!isSessionPermissionError(error)) throw error;
-          await app.waitForRenewal();
-          await withWalletIntent(INTENTS.createDataset, () => io.createDataset({ chain, volumeName, visibility }));
+          if (visibility !== "private" || !isNoPrfError(error)) throw error;
+          await run("public");
+          app.privateFallbackNotice = PRIVATE_FALLBACK_NOTICE;
         }
         app.finishOp(op);
       } catch (error) {
@@ -304,4 +314,10 @@ function sessionToOptions(app: DriveApp, session: Session, panel: WalletPanel) {
     onSetupAction: app.onSetupAction,
     onDisconnect: app.onDisconnect,
   };
+}
+
+/** Create-dataset defaults to private; public only when the user picked it. */
+export function datasetVisibilityFor(action: string, value?: string): "public" | "private" {
+  if (action === "create-private-dataset") return "private";
+  return value === "public" ? "public" : "private";
 }

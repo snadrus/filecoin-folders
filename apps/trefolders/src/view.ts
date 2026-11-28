@@ -202,6 +202,10 @@ export interface ViewModel {
   walletRdns: string;
   panel: WalletPanel | null;
   setupError: string;
+  /** Set when a passkey without PRF fell back to a public first dataset. */
+  privateFallbackNotice?: string;
+  /** Re-open the connect screen with Connect full wallet expanded. */
+  preferFullWallet?: boolean;
   stagedCount: number;
   restoreNote: string;
   autoSaveUploads: boolean;
@@ -239,6 +243,7 @@ function renderScreen(model: ViewModel): string {
   if (!model.connected) return model.panel ? renderSetupShell(model) : renderConnect(model);
   return `<div class="shell" data-drawer="${model.drawerOpen ? "open" : "closed"}">
     ${renderTop(model)}
+    ${privateFallbackBanner(model)}
     ${renderNav(model)}
     ${renderDrawerScrim(model)}
     <main class="workspace">
@@ -303,7 +308,7 @@ function sponsoredSignIn(model: ViewModel): string {
       ${button("passkey:existing", "Use an existing passkey", false, "passkey-existing")}
       ${passkeys.length ? `<p class="note">A limited wallet is a passkey (Face ID, Touch ID, Windows Hello or a security key) that owns your sponsored storage account. No crypto needed.</p>` : `<p class="note" data-testid="passkey-unavailable">This browser has no passkey support. Connect a full wallet below.</p>`}
     </div>
-    <details class="advanced" data-testid="advanced" ${passkeys.length ? "" : "open"}>
+    <details class="advanced" data-testid="advanced" ${passkeys.length && !model.preferFullWallet ? "" : "open"}>
       <summary>Connect full wallet</summary>
       ${wallets.length ? `<label class="field">Wallet <select name="wallet-pick" data-testid="wallet-pick">${walletOptions}</select></label>` : `<p class="note">No browser wallet found.</p>`}
       <label class="check"><input data-testid="encrypt" name="encrypt" type="checkbox" ${model.encrypt ? "checked" : ""}/> Encrypt this volume (wallet only)</label>
@@ -384,8 +389,8 @@ function renderSetup(model: ViewModel): string {
         `<label class="dataset"><input type="radio" name="dataset" data-testid="dataset-choice" value="${escapeHtml(dataset.id)}" ${dataset.id === panel.selectedDatasetId ? "checked" : ""}/> <span>${escapeHtml(datasetLabel(dataset))}</span> ${visibilityBadge(dataset.visibility)}</label>`,
     )
     .join("");
-  const create = `<button class="${panel.createPrimary ? "primary" : ""}" type="button" data-testid="create-dataset" data-action="create-dataset">Create new dataset</button>
-        ${privateCreateButton()}
+  const create = `${datasetVisibilityPicker()}
+        <button class="${panel.createPrimary ? "primary" : ""}" type="button" data-testid="create-dataset" data-action="create-dataset">Create dataset</button>
         <p class="note">${escapeHtml(model.costs.datasetNote)}</p>`;
   const open =
     panel.selectedDatasetId && panel.paymentsReady && panel.sessionReady
@@ -412,6 +417,7 @@ function renderSetup(model: ViewModel): string {
       </div>
       ${open}
       <p class="note" data-testid="wallet-signatures">Wallet signatures ${panel.signatures}. Connect prompts ${panel.connectPrompts}.</p>
+      ${privateFallbackBanner(model)}
       ${model.setupError ? `<p class="error" data-testid="setup-error">${escapeHtml(friendlyError(model.setupError))}</p>` : ""}
     </div>
   </div>`;
@@ -986,9 +992,10 @@ function renderAccount(model: ViewModel): string {
         : `<button type="button" class="primary slim" data-action="authorize" data-testid="authorize-session">${escapeHtml(step?.action === "authorize" ? step.label : "Authorize session key")}</button>
            <p class="note" data-testid="session-lazy-note">Not needed to browse. Your first save asks for it (1 signature).</p>`}
       ${step && step.action !== "fix-payments" && step.action !== "authorize" ? `<button type="button" class="primary slim" data-action="${step.action}" data-testid="setup-step">${escapeHtml(step.label)}</button>` : ""}
-      <button type="button" data-action="create-dataset" data-testid="create-dataset">Create new dataset</button>
-      ${privateCreateButton()}
+      ${datasetVisibilityPicker()}
+      <button type="button" data-action="create-dataset" data-testid="create-dataset">Create dataset</button>
       <p class="note">${escapeHtml(model.costs.datasetNote)}</p>
+      ${privateFallbackBanner(model)}
       <div class="chain-toggle" role="group" aria-label="Network">
         ${chainButton("calibration", "Calibration", model.chain)}
         ${chainButton("mainnet", "Mainnet", model.chain)}
@@ -1121,7 +1128,15 @@ function renderParticipantCopies(model: ViewModel): string {
   </section>`;
 }
 
-/** Private data sets need a wallet that signs its own encryption key; sponsored (gasless) accounts cannot yet. */
-function privateCreateButton(): string {
-  return `<button type="button" data-testid="create-private-dataset" data-action="create-private-dataset" title="Encrypted. Only people you share a link with can read it.${isSponsored() ? " Needs a wallet or a PRF-capable passkey (iCloud Keychain, Google Password Manager)." : ""}">Create private dataset</button>`;
+/** Default is private; public stays choosable. */
+function datasetVisibilityPicker(): string {
+  return `<div class="visibility-pick" role="radiogroup" aria-label="Dataset visibility">
+    <label class="check"><input type="radio" name="dataset-visibility" value="private" data-testid="visibility-private" checked/> Private — only people you share a link with can read it</label>
+    <label class="check"><input type="radio" name="dataset-visibility" value="public" data-testid="visibility-public"/> Public</label>
+  </div>`;
+}
+
+function privateFallbackBanner(model: ViewModel): string {
+  if (!model.privateFallbackNotice) return "";
+  return `<p class="note private-fallback" data-testid="private-fallback-notice" role="status">${escapeHtml(model.privateFallbackNotice)} <button type="button" class="text-btn" data-action="connect-full-wallet" data-testid="connect-full-wallet">Connect a full wallet for privacy</button></p>`;
 }

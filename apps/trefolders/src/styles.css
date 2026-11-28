@@ -528,3 +528,10 @@ a.place { text-decoration: none; font-size: 14px; }
 .load-slow { margin-top: 12px; color: #5f6368; }
 .load-slow button, [data-testid=load-error] button { margin-left: 8px; color: #0b57d0; font-weight: 500; background: none; border: 1px solid #c4c7c5; border-radius: 16px; padding: 4px 14px; cursor: pointer; }
 .unavailable { padding: 32px; text-align: center; }
+
+.visibility-pick { display: flex; flex-direction: column; gap: 2px; margin: 8px 0; }
+.visibility-pick .check { margin: 0; }
+.private-fallback { padding: 8px 16px; }
+@media (max-width: 800px) {
+  .visibility-pick .check { min-height: 44px; }
+}

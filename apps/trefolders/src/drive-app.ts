@@ -206,6 +206,8 @@ export class DriveApp {
   walletRdns = "";
   panel: WalletPanel | null = null;
   setupError = "";
+  privateFallbackNotice = "";
+  preferFullWallet = false;
 
   nav: NavId = "drive";
   cwd = "/";
@@ -521,6 +523,7 @@ export class DriveApp {
     this.owner = "";
     this.setupError = "";
     this.connectError = "";
+    this.privateFallbackNotice = "";
     this.entries = [];
     this.selected = [];
     this.accountMenu = false;
@@ -1502,6 +1505,11 @@ export class DriveApp {
       void this.renewFromBanner();
       return;
     }
+    if (action === "connect-full-wallet") {
+      this.preferFullWallet = true;
+      this.onDisconnect?.();
+      return;
+    }
     if (action === "readonly-connect") {
       const connect = this.onConnect;
       if (connect) {
@@ -1525,7 +1533,10 @@ export class DriveApp {
     ) {
       void this.enqueue(async () => {
         try {
-          await this.onSetupAction?.(action);
+          const visibility = action === "create-dataset"
+            ? (actionEl?.closest(".setup-card, [data-testid=account-menu], [data-testid=setup]") ?? this.root)?.querySelector<HTMLInputElement>("input[name=dataset-visibility]:checked")?.value
+            : undefined;
+          await this.onSetupAction?.(action, action === "create-dataset" ? (visibility === "public" ? "public" : "private") : undefined);
         } catch (error) {
           const message = isSessionPermissionError(error) ? "Wallet session ended — reconnect from the Transaction log (1 signature)." : errorText(error);
           this.setupError = message;
@@ -3002,6 +3013,8 @@ export class DriveApp {
       walletRdns: this.walletRdns,
       panel: this.panel,
       setupError: this.setupError,
+      privateFallbackNotice: this.privateFallbackNotice,
+      preferFullWallet: this.preferFullWallet,
       stagedCount: this.staged.length,
       restoreNote: this.restoreNote,
       autoSaveUploads: this.autoSaveUploads,
