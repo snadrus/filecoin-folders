@@ -1,6 +1,6 @@
-# Slack notifications (FiPerson `notify`)
+# Slack notifications (TrePerson `notify`)
 
-`fiperson/notify` sends a Slack DM **as the sender** when they approve "Notify <name>?" after an @-mention in FiPen.
+`treperson/notify` sends a Slack DM **as the sender** when they approve "Notify <name>?" after an @-mention in TrePen.
 Everything runs in the browser: there is no server and no client secret.
 
 ## Flow
@@ -32,7 +32,7 @@ simple request, no preflight.
 
 **Another workspace.** A user token can only DM people in its own workspace. If the recipient's `team` differs from
 the one the sender connected (or Slack answers `user_not_found`/`channel_not_found`), `notify()` returns
-`reason: "other-workspace"` with an explanation naming both workspaces and `fallback` text (message + link) that FiPen
+`reason: "other-workspace"` with an explanation naming both workspaces and `fallback` text (message + link) that TrePen
 offers to copy. The sender can press Notify again and pick the right workspace (the popup preselects it).
 
 ## Register the app (Andy, one time, ~3 minutes)
@@ -45,11 +45,11 @@ offers to copy. The sender can press Notify again and pick the right workspace (
    **PKCE** shows enabled (the manifest sets `pkce_enabled: true`; turning it on is one-way).
 6. To let people outside the owner workspace connect: **Manage Distribution** → tick the checklist (no hard-coded
    secrets: true) → **Activate Public Distribution**. (Not needed if only the owner workspace will use it.)
-7. Put the Client ID in `packages/fiperson/src/notify/config.ts` (`SLACK_CLIENT_ID = "…"`) and merge; Pages redeploys.
+7. Put the Client ID in `packages/treperson/src/notify/config.ts` (`SLACK_CLIENT_ID = "…"`) and merge; Pages redeploys.
    Until then the Notify sidebar says Slack is not set up and offers Copy link.
 
 ## Tests
 
-`fiperson/notify/mock` (`createMockSlack`) implements authorize, `oauth.v2.user.access` (verifies the S256 challenge,
+`treperson/notify/mock` (`createMockSlack`) implements authorize, `oauth.v2.user.access` (verifies the S256 challenge,
 rejects a client secret or a preflighted request), `auth.test`, `conversations.open`, `chat.postMessage`. Unit tests use
-it as `fetch`; Playwright routes `https://slack.com/**` to it (`apps/fifolders/e2e/mock-slack-route.ts`). No real Slack traffic.
+it as `fetch`; Playwright routes `https://slack.com/**` to it (`apps/trefolders/e2e/mock-slack-route.ts`). No real Slack traffic.

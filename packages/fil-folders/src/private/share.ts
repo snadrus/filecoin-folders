@@ -3,13 +3,13 @@
  * never a server): the fragment carries a throwaway key T, a Keysmith Delivery whose claim chain names T as
  * bearer (so T can sign Curio `/download/` requests) and whose grant wraps the node key to T, and the
  * providers that hold the piece. This mirrors filecoin-pin's private share links (filecoin-pin#841),
- * extended with a per-file key for files inside FiFolders commit pieces.
+ * extended with a per-file key for files inside TreFolders commit pieces.
  *
  * Kinds:
  * - `file`: one file in a private volume. Grant = that commit piece's key (`piece:<salt>`); plus the file's
  *   own content key, CID and IV. The piece key reveals the commit CAR (encrypted names, other files'
  *   ciphertext); only the file key opens this file.
- * - `group`: a Keysmith group (FiPerson uses `FiPerson/identity`). Opens every piece in that group,
+ * - `group`: a Keysmith group (TrePerson uses `TrePerson/identity`). Opens every piece in that group,
  *   including ones written later, so an identity link keeps working when the profile changes.
  */
 import * as Keysmith from "@filoz/keysmith";
@@ -137,7 +137,7 @@ export async function makeFileShare(input: {
   return share;
 }
 
-/** Share a Keysmith group (e.g. `FiPerson/identity`): opens every piece in it, now and later. */
+/** Share a Keysmith group (e.g. `TrePerson/identity`): opens every piece in it, now and later. */
 export async function makeGroupShare(input: {
   issuer: ShareIssuer;
   ref: { owner: Address; groupKeyId: Hex };

@@ -4,7 +4,7 @@
  * Wallets no longer expose an encryption key (MetaMask deprecated `eth_getEncryptionPublicKey`), and Keysmith
  * grants and claims need a key the holder can use directly: grants are wrapped with ECDH on secp256k1, and a
  * claim's bearer signs each Curio request. So each member signs one fixed EIP-712 message; the signature is
- * hashed into a secp256k1 private key. The public key (and its address) go in the member's FiPerson profile;
+ * hashed into a secp256k1 private key. The public key (and its address) go in the member's TrePerson profile;
  * a group admin wraps the shared folder key to it and names its address as the claim bearer and the
  * SessionKeyRegistry session key. Only the wallet holder can derive the private half again, on any device.
  *
@@ -30,7 +30,7 @@ export function memberKeyTypedData(owner: Address, chainId: number) {
 
 export interface MemberKey {
   privateKey: Hex;
-  /** Keysmith wrap key (publish this in FiPerson; admins wrap the folder key to it). */
+  /** Keysmith wrap key (publish this in TrePerson; admins wrap the folder key to it). */
   wrapKey: Hex;
   address: Address;
 }

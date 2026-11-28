@@ -4,7 +4,7 @@
  * `filecoin-encryption-envelope` (FilOzone/synapse-sdk), so pieces interoperate with filecoin-pin,
  * Filecoin Drive, the Filecoin encryption viewer and Curio's gate.
  *
- *   plaintext (a FiFolders commit CAR, or any bytes)
+ *   plaintext (a TreFolders commit CAR, or any bytes)
  *     └─ FEE scheme 2 (chunked AES-256-GCM STREAM, 256 KiB), content type application/vnd.ipld.car,
  *        appMetadata = Keysmith pieceMetadata { foc/v: 2, foc/own, foc/gkid, foc/group?, foc/salt }
  *          └─ outer CAR: UnixFS directory { "encrypted.fee" }  ← the uploaded piece
@@ -25,7 +25,7 @@ export const GROUP_KEY_COMMITMENT_KEY = Keysmith.COMMITMENT_KEY;
 /** The FEE content type of the inner bytes (the same label the filecoin-pin CLI writes). */
 export const CAR_CONTENT_TYPE = "application/vnd.ipld.car";
 
-/** Keysmith group for FiPerson identity pieces: a share link carries this group's key, not one piece's. */
+/** Keysmith group for TrePerson identity pieces: a share link carries this group's key, not one piece's. */
 export const IDENTITY_GROUP = "FiPerson/identity";
 
 export type Visibility = "public" | "private" | "encrypted";
@@ -63,7 +63,7 @@ export function privateDataSetMetadata(input: {
 }
 
 /**
- * The owner's default group key id, identical across filecoin-pin, Filecoin Drive and FiFolders:
+ * The owner's default group key id, identical across filecoin-pin, Filecoin Drive and TreFolders:
  * `keccak256(utf8("filecoin/default-group-key") ‖ owner as 20 raw bytes)[0:16]`.
  */
 export function defaultGroupKeyId(owner: Address): Hex {
@@ -71,7 +71,7 @@ export function defaultGroupKeyId(owner: Address): Hex {
   return slice(keccak256(concat([toHex("filecoin/default-group-key"), owner])), 0, 16);
 }
 
-/** Opaque Keysmith group for one FiFolders volume (group names travel in the clear, volume names should not). */
+/** Opaque Keysmith group for one TreFolders volume (group names travel in the clear, volume names should not). */
 export function volumeGroup(volumeName: string): string {
   return `FiFolders/v${keccak256(toHex(`fil-folders/volume/${volumeName}`)).slice(2, 18)}`;
 }

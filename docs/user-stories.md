@@ -1,10 +1,10 @@
-# FiFolders · FiPen · FiGrid user stories
+# TreFolders · TrePen · TreGrid user stories
 
-Each story has an ID used by the Playwright suite in `apps/fifolders/e2e-stories/` (test titles start with the ID).
+Each story has an ID used by the Playwright suite in `apps/trefolders/e2e-stories/` (test titles start with the ID).
 Suites: **mock** = local build with the mock chain (`VITE_E2E=1`) + staged editors; **live** = injected EIP-1193 wallet on Calibration against `STORIES_URL`; **both** = editor-only stories that run anywhere.
 `blocked` = needs Andy's approval to spend (payment approval, deposit, dataset creation, uploads, deployments).
 
-## FiFolders: first visit, wallet, signing
+## TreFolders: first visit, wallet, signing
 
 | ID | Story | Acceptance criteria | Suite |
 |---|---|---|---|
@@ -13,13 +13,13 @@ Suites: **mock** = local build with the mock chain (`VITE_E2E=1`) + staged edito
 | S03 | As a user I connect my wallet. | One `eth_requestAccounts`; short address shown; folders visible. | live |
 | S04 | As a user I can browse right after Connect; the session key waits for my first save. | Connect asks for no session key (0 signatures). My Folders, Recent, Trash navigable; note "You can browse now. Your first save sets up a wallet session (1 signature)." The first save/upload/Delete shows "Setting up your wallet session (1 signature, one time)… N changes will save right after"; uploads show "waiting for wallet setup"; then it saves. Refused → toast, changes kept, Save retries. | mock + live |
 | S05 | Every wallet request says what it is for and what it costs. | Setup steps and the wallet toast read "<title> — <purpose> (<cost>)". Transaction log rows are titled by purpose only ("Save “Notes” to My Folders", "Authorize this browser to save", "Add 3 Filecoin Drive files"; never "Send transaction"/gas); cost is the secondary line. | mock + live |
-| S06 | Session-key authorization is one labeled pop-up. | "Authorize session key — lets FiFolders save for 7 days without asking each time (~0.05 FIL)"; after approval the note clears and the signature count is 1. | mock |
+| S06 | Session-key authorization is one labeled pop-up. | "Authorize session key — lets TreFolders save for 7 days without asking each time (~0.05 FIL)"; after approval the note clears and the signature count is 1. | mock |
 | S07 | I can see what happened on chain. | One "Transaction log" sidebar entry (spinner + pending count while anything is pending) opens the log: purpose rows, on-chain details; finished rows show a blue progress bar and auto-dismiss after ~10 s. A lapsed/expiring session is a pending "Reconnect wallet session" row with a Reconnect button (log opens itself on expiry) plus the wallet toast — no split panel or setup pop-up. | mock |
 | S08 | My dataset choice sticks. | Selecting a dataset in the account menu survives reload. | mock |
 | S09 | Loose pieces add up. | "N pieces: X in folders, Y manifests, Z loose" with X+Y+Z = N and Z rows listed; hidden when nothing is loose. Clicking Loose pieces switches view at once with a spinner/skeleton; rows appear as each piece resolves ("Reading pieces k of N…"). | mock |
 | S10 | Refresh keeps my tree. | A folder created before reload is listed after reload. | mock |
 | S10b | A fresh browser/origin recovers my tree from chain (FolderRegistry manifest). | New profile, same wallet → same tree. | live (spend: STORIES_SPEND=1) |
-| S11 | Old links still work. | `/felarumi/…` → `/fipen/…`, `/felanumio/…` → `/figrid/…`, query and hash preserved. | mock |
+| S11 | Old links still work. | `/felarumi/…` → `/trepen/…`, `/felanumio/…` → `/tregrid/…`, query and hash preserved. | mock |
 | S40 | Slow signature. | Connect: "Check your wallet — Connect wallet (free)" toast while waiting; UI stays usable; folders open; toast clears. No session-key request at Connect (it comes at the first save). | live |
 | S41 | I reject a signature. | Plain error with Retry (or Connect again); approving next time opens your folders with no further prompt (no session-key request at Connect); nothing stuck. | live |
 | S42 | My wallet is locked. | Clear error; connect works after unlock. | live |
@@ -27,20 +27,20 @@ Suites: **mock** = local build with the mock chain (`VITE_E2E=1`) + staged edito
 | S44 | Wallet switches account or chain mid-session. | No reload, no prompt: account change restarts the session in place for the new account; chain change shows a toast and the view stays; saving asks to switch back. | live |
 | S45 | Payment approval, deposit, dataset creation, uploads on live. | Labeled, one prompt each, cost shown, results in Activity/Tx log. | live (spend: STORIES_SPEND=1) |
 
-## FiPen / FiGrid inside FiFolders
+## TrePen / TreGrid inside TreFolders
 
 | ID | Story | Acceptance criteria | Suite |
 |---|---|---|---|
-| S12 | New FiPen with no filename prompt. | New → FiPen document opens a tab, no dialog; title "Untitled document"; Save button + status sit right of the title, vertically aligned; status "New, unsaved" until the first Filecoin save. | mock |
-| S13 | Save works by button, Cmd+S and Ctrl+S. | Typing → "Unsaved changes"; each save → "Saved to Filecoin"; typing continues in the doc after clicking Save; FiFolders shows no stale "Save pending". | mock |
+| S12 | New TrePen with no filename prompt. | New → TrePen document opens a tab, no dialog; title "Untitled document"; Save button + status sit right of the title, vertically aligned; status "New, unsaved" until the first Filecoin save. | mock |
+| S13 | Save works by button, Cmd+S and Ctrl+S. | Typing → "Unsaved changes"; each save → "Saved to Filecoin"; typing continues in the doc after clicking Save; TreFolders shows no stale "Save pending". | mock |
 | S14 | Autosave every 5 min only if dirty. | Clean doc: no save rows written; dirty doc: one save, then none while clean. (Interval shortened via `__p2pAutosaveMs`.) | mock |
 | S15 | Reopening a saved doc shows its content. | Open the `.fipen` from your folders → same text; status not "Unsaved". | mock |
-| S16 | Reload matrix (single user). | Dirty → reload: text kept, still "Unsaved changes". Queued (FiFolders closed) → reload: "Queued for FiFolders". FiFolders back → "Saved to Filecoin", still after reload. | mock |
+| S16 | Reload matrix (single user). | Dirty → reload: text kept, still "Unsaved changes". Queued (TreFolders closed) → reload: "Queued for TreFolders". TreFolders back → "Saved to Filecoin", still after reload. | mock |
 | S17 | Caret in the embedded editor. | Home/End/arrows/typing land correctly; caret survives Save. | mock |
-| S18 | FiGrid cell edit, save, reload. | A1 focused on open → type 42 (no click) ⏎ → `=A1*2` ⏎ → A2 shows 84; Ctrl+S → "Saved to Filecoin"; reload keeps values and status; folders have the `.figrid`. | mock |
-| S19 | Stale chunk after a deploy. | Missing lazy chunk → "FiPen was updated. Reload the page to continue." with a Reload button that recovers. | mock |
+| S18 | TreGrid cell edit, save, reload. | A1 focused on open → type 42 (no click) ⏎ → `=A1*2` ⏎ → A2 shows 84; Ctrl+S → "Saved to Filecoin"; reload keeps values and status; folders have the `.figrid`. | mock |
+| S19 | Stale chunk after a deploy. | Missing lazy chunk → "TrePen was updated. Reload the page to continue." with a Reload button that recovers. | mock |
 
-## FiPen editing (standalone or embedded)
+## TrePen editing (standalone or embedded)
 
 | ID | Story | Acceptance criteria | Suite |
 |---|---|---|---|
@@ -54,7 +54,7 @@ Suites: **mock** = local build with the mock chain (`VITE_E2E=1`) + staged edito
 | S27 | Comment via right-click; no quoted text. | Context menu → Comment → card shows the comment, not the selected text. | both |
 | S28 | Mobile comment bubble. | Touch device + selection → "💬 Comment" bubble. | both |
 | S29 | Guest names. | "Adjective Animal"; same wallet → same name (xoshiro128++ seed); different wallet → different name. | both |
-| S30 | Display-name override. | FiFolders display name wins over the guest name; clicking your name opens the identity pop-up, whose "Just use a different name here" wins over both. | both |
+| S30 | Display-name override. | TreFolders display name wins over the guest name; clicking your name opens the identity pop-up, whose "Just use a different name here" wins over both. | both |
 
 ## Two users (trystero over Nostr relays, two browser contexts)
 
@@ -66,28 +66,28 @@ Suites: **mock** = local build with the mock chain (`VITE_E2E=1`) + staged edito
 | S34 | Reload a clean standalone doc. | Content kept. | both |
 | S35 | Leaving with unsaved changes warns. | `beforeunload` prompt. | both |
 | S36 | Guest edits survive an owner reload. | Guest types, owner reloads, guest types again → both see each edit exactly once (no loss, no dupes). | both |
-| S46 | FiPen signature function (Insert → Signature) with approve/reject/delay. | Labeled prompt; reject leaves the doc editable; approve locks it. | live (spend: STORIES_SPEND=1) |
-| S47 | Standalone FiPen "Save to Filecoin" with a wallet. | Ctrl+S → dialog → Calibration → Save with wallet → PieceCID shown; status "Saved to Filecoin". | live (spend: STORIES_SPEND=1) |
+| S46 | TrePen signature function (Insert → Signature) with approve/reject/delay. | Labeled prompt; reject leaves the doc editable; approve locks it. | live (spend: STORIES_SPEND=1) |
+| S47 | Standalone TrePen "Save to Filecoin" with a wallet. | Ctrl+S → dialog → Calibration → Save with wallet → PieceCID shown; status "Saved to Filecoin". | live (spend: STORIES_SPEND=1) |
 
 ## Suite features (added Nov 3 2026)
 
 | ID | Story | Acceptance criteria | Suite |
 |---|---|---|---|
-| S48 | I save my identity with a picture on /identity/ and see it everywhere. | Save → read back on a fresh load; FiFolders header/owner column and FiPen show the name + avatar, not a guest name. Pointer commit re-reads the head and retries once on a CAS conflict. | live (spend) |
+| S48 | I save my identity with a picture on /identity/ and see it everywhere. | Save → read back on a fresh load; TreFolders header/owner column and TrePen show the name + avatar, not a guest name. Pointer commit re-reads the head and retries once on a CAS conflict. | live (spend) |
 | S49 | Transaction log tells me what is happening. | One sidebar entry; spinner + count while pending; rows titled by purpose, cost secondary; finished rows auto-dismiss; errors show "!" and stay until dismissed; works at 390px width. | mock |
 | S50 | Loose pieces with Filecoin Drive, then Add to drive. | Loose pieces lists Filecoin Drive files with names; select one or more → "Add to folders" names the count and cost before the wallet prompt; after commit the files appear in My Folders without re-uploading and leave Loose pieces. | mock + live (spend) |
 | S51 | Registry v2 migration is one labeled step. | A volume whose head is only on v1 reads normally; the next save performs the move labeled "Move folders pointer to new registry" (session key, no root-wallet prompt); afterwards reads come from v2 and history links back to v1. | mock + anvil |
-| S52 | FiClub add/remove and the 2-signature admin removal. | Admin adds/removes members and admins; removing an admin from a club with 3+ admins needs a step-1 signature (shareable blob) and a second admin's step-2 signature; expired/foreign blobs are rejected with a clear reason. | mock + anvil |
-| S53 | FiPerson everywhere. | The same name + avatar for a wallet in the FiFolders header, owner column, account menu, FiClub member rows, FiPen/FiGrid avatars and the identity pop-up; guest name only when no identity exists. | mock + live |
+| S52 | TreClub add/remove and the 2-signature admin removal. | Admin adds/removes members and admins; removing an admin from a club with 3+ admins needs a step-1 signature (shareable blob) and a second admin's step-2 signature; expired/foreign blobs are rejected with a clear reason. | mock + anvil |
+| S53 | TrePerson everywhere. | The same name + avatar for a wallet in the TreFolders header, owner column, account menu, TreClub member rows, TrePen/TreGrid avatars and the identity pop-up; guest name only when no identity exists. | mock + live |
 | S54 | The dataset picker. | Wallet menu lists every dataset the wallet owns, current one checked, newest marked; switching reloads your folders in place with a loading state; choice survives reload (S08). | mock |
-| S55 | Wallet & setup menu. | Shows account (FiPerson name, address secondary), network, dataset, session expiry, Add funds, Disconnect; every action that prompts says why and what it costs first. | mock |
+| S55 | Wallet & setup menu. | Shows account (TrePerson name, address secondary), network, dataset, session expiry, Add funds, Disconnect; every action that prompts says why and what it costs first. | mock |
 | S56 | Switching account or network restarts in place. | accountsChanged → folders for the new account without reload or prompt; chainChanged → toast, view kept, save asks to switch back (S44). | mock + live |
-| S57 | /fideploy/ shows contract status and deploys from my wallet. | Status per contract by known address + exact runtime-bytecode match; gas estimate after connecting; Deploy shows "Deploy <contract>" before the wallet prompt; after the receipt the new address is bytecode-verified and the deployments JSON can be copied/downloaded. | mock |
+| S57 | /tredeploy/ shows contract status and deploys from my wallet. | Status per contract by known address + exact runtime-bytecode match; gas estimate after connecting; Deploy shows "Deploy <contract>" before the wallet prompt; after the receipt the new address is bytecode-verified and the deployments JSON can be copied/downloaded. | mock |
 | S58 | Mainnet deploys need an explicit acknowledgement. | On chain 314 the Deploy buttons stay disabled until "I understand this … spends real FIL" is ticked. | mock |
-| S59 | Private FiClub instance on Calibration via /fideploy/. | One contract-creation tx from the test wallet; record shows "✓ bytecode verified". | live (spend) |
+| S59 | Private TreClub instance on Calibration via /tredeploy/. | One contract-creation tx from the test wallet; record shows "✓ bytecode verified". | live (spend) |
 
 ### S61 Screen-reader names
-As a screen-reader user, every button, link and field in FiFolders, Identity, FiClub and FiDeploy announces a name (no bare "button" or icon ligature text such as "more_vert").
+As a screen-reader user, every button, link and field in TreFolders, Identity, TreClub and TreDeploy announces a name (no bare "button" or icon ligature text such as "more_vert").
 
 ### S62 Large uploads
 As a user uploading a file of tens of MB, it appears in your folders right away and saves; if it is too big to back up across a tab close I'm told plainly to Save first (no raw "quota exceeded" error, no lost upload).
@@ -105,7 +105,7 @@ As a user who pressed Delete by mistake, I see "“name” moved to trash · Und
 After uploads finish, the Uploads panel shrinks to "N uploads complete" (expandable, closable), like Drive; it stays open while uploading or if any failed.
 
 ### S67 Offline notice
-When my connection drops, FiFolders, FiPen and FiGrid show "You're offline" (like Drive/Docs/Sheets) and it clears when I reconnect.
+When my connection drops, TreFolders, TrePen and TreGrid show "You're offline" (like Drive/Docs/Sheets) and it clears when I reconnect.
 
 ### S68 Same-name upload
 Uploading a file whose name already exists asks, like Drive, "Replace existing file" (it becomes a new version) or "Keep all items" (adds "name (1)"); Escape or Cancel uploads nothing.
@@ -117,11 +117,11 @@ From a file's menu, "Manage versions" lists its saved versions newest first (Dri
 Wallet menu → "Disconnect session and refund" sends the session key's leftover tFIL/FIL back to my wallet (signed by the key, no wallet prompt), forgets the key in this browser and says how much came back. The next save asks for a session again. A later login in the same browser reuses a key that still holds gas (`login`, no new 0.05 funding) instead of funding a new one.
 
 ### S73 Share page for guests (decision 4)
-Details → share link opens a FiFolders page (`/share/?cid=…&name=…&by=…`) with the file name, size, who shared it (FiPerson name/avatar, links to their person page), Open and Download (saved with the real file name, not `<cid>`). The raw gateway URL stays as "Gateway preview".
+Details → share link opens a TreFolders page (`/share/?cid=…&name=…&by=…`) with the file name, size, who shared it (TrePerson name/avatar, links to their person page), Open and Download (saved with the real file name, not `<cid>`). The raw gateway URL stays as "Gateway preview".
 
 ### S74 Signatures say what they are for (decision 5)
-FiClub "remove admin" signatures (EIP-712 v2, contract `0x412B9363019591588073B3489CB09d28d2a55A03` on Calibration) carry the plain-language purpose "Remove this admin from the FiClub". FiPen signatures (EIP-712 v2) carry a purpose I type ("I sign this document." by default), shown first in the wallet and in the signature details; old v1 FiPen signatures still verify.
+TreClub "remove admin" signatures (EIP-712 v2, contract `0x412B9363019591588073B3489CB09d28d2a55A03` on Calibration) carry the plain-language purpose "Remove this admin from the FiClub". TrePen signatures (EIP-712 v2) carry a purpose I type ("I sign this document." by default), shown first in the wallet and in the signature details; old v1 TrePen signatures still verify.
 
-### S75 FiPen on phones (decision 7)
-On a phone FiPen reflows text to the screen width (no sideways scroll; the document's page size is unchanged for others). Home/End move to the start/end of the visual line. A guest's copy waits in the guest's own folders under `/Copies/`; the guest always sees a save status ("Your edits are saved with the owner" / "Owner offline. Your edits are kept here…" / "Copy waiting in your folders (/Copies/…)").
+### S75 TrePen on phones (decision 7)
+On a phone TrePen reflows text to the screen width (no sideways scroll; the document's page size is unchanged for others). Home/End move to the start/end of the visual line. A guest's copy waits in the guest's own folders under `/Copies/`; the guest always sees a save status ("Your edits are saved with the owner" / "Owner offline. Your edits are kept here…" / "Copy waiting in your folders (/Copies/…)").
 

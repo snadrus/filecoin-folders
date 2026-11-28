@@ -23,7 +23,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Build packages the script imports
-        run: pnpm --filter fil-folders build && pnpm --filter @fifolders/sponsored-client build
+        run: pnpm --filter fil-folders build && pnpm --filter @trefolders/sponsored-client build
       - name: Verify v2 factory and session-key rules
         env:
           SPONSOR_KEY: ${{ secrets.SPONSOR_KEY_CALIBRATION }}
@@ -35,7 +35,7 @@ jobs:
             exit 1
           fi
           set +e
-          ./node_modules/.bin/tsx apps/fifolders/sponsor/verify-v2.ts > "$RUNNER_TEMP/verify.out" 2> "$RUNNER_TEMP/verify.err"
+          ./node_modules/.bin/tsx apps/trefolders/sponsor/verify-v2.ts > "$RUNNER_TEMP/verify.out" 2> "$RUNNER_TEMP/verify.err"
           status=$?
           set -e
           # Public output only (the script never prints the key).

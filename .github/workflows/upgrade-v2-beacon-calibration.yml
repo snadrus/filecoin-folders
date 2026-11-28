@@ -47,7 +47,7 @@ jobs:
             exit 1
           fi
           forge build --root contracts
-          pnpm exec tsx apps/fifolders/sponsor/upgrade-beacon.ts | tee /tmp/upgrade.json
+          pnpm exec tsx apps/trefolders/sponsor/upgrade-beacon.ts | tee /tmp/upgrade.json
           jq -e '.implementation and .beacon and .upgradeTx' /tmp/upgrade.json >/dev/null
           {
             echo "### Calibration v2 beacon upgrade"

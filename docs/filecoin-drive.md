@@ -1,4 +1,4 @@
-# Filecoin Drive compatibility (FiFolders, FiPen, FiGrid, FiPerson)
+# Filecoin Drive compatibility (TreFolders, TrePen, TreGrid, TrePerson)
 
 Sources: [filecoin-pin](https://github.com/filecoin-project/filecoin-pin) (`src/core/synapse/constants.ts`, `src/core/upload/synapse.ts`),
 [Filecoin Drive / filecoin-pin-website](https://github.com/filecoin-project/filecoin-pin-website)
@@ -18,17 +18,17 @@ It does not. Uploading the same name again adds a second piece; both rows are li
 key, IPNS name or pointer. Delete is a user action that calls `deletePieces` (schedule removal) on every copy.
 Nothing keeps history.
 
-## What FiFolders writes
+## What TreFolders writes
 Each save is one commit piece (CAR: manifest root + new file bytes as raw `bafkrei` blocks). Its piece metadata:
 - one plaintext file changed: `label` = file name, `path` = folder, `ipfsRootCID` = that file's raw CID, `version` = N.
   Drive downloads it as the file (it reads `ipfsRootCID` from the CAR).
 - several files or only moves/renames: `label` = `<volume>.manifest.json`, `path` = `.fifolders`, `ipfsRootCID` = manifest root.
 - encrypted volumes: only `version` (names stay private).
 
-FiPerson profile pieces: `label: profile.json`, `path: FiPerson`, `version: N`.
+TrePerson profile pieces: `label: profile.json`, `path: TrePerson`, `version: N`.
 
-Reading: FiFolders lists Drive pieces (by `label`/`name`, `path`/`carPath`, `ipfsRootCID`) and can add them to folders
-without re-uploading. Pieces with `version` are older FiFolders versions, not loose uploads.
+Reading: TreFolders lists Drive pieces (by `label`/`name`, `path`/`carPath`, `ipfsRootCID`) and can add them to folders
+without re-uploading. Pieces with `version` are older TreFolders versions, not loose uploads.
 
 ## Versions and retention
 History is the commit chain (registry head → manifest `prev` → …), browsable in Manage versions.

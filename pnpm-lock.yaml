@@ -31,11 +31,8 @@ importers:
         specifier: ^2.38.3
         version: 2.57.14(typescript@5.9.3)(zod@4.6.7)
 
-  apps/fifolders:
+  apps/trefolders:
     dependencies:
-      '@fifolders/sponsored-client':
-        specifier: workspace:*
-        version: link:../../packages/sponsored-client
       '@filoz/synapse-core':
         specifier: ^0.4.1
         version: 0.4.1(typescript@5.9.3)(viem@2.57.14(typescript@5.9.3)(zod@3.25.76))
@@ -48,18 +45,21 @@ importers:
       '@noble/curves':
         specifier: 1.9.7
         version: 1.9.7
+      '@trefolders/sponsored-client':
+        specifier: workspace:*
+        version: link:../../packages/sponsored-client
       '@walletconnect/ethereum-provider':
         specifier: ^2.26.0
         version: 2.26.0(@types/react@19.3.0)(typescript@5.9.3)(zod@3.25.76)
       fil-folders:
         specifier: workspace:*
         version: link:../../packages/fil-folders
-      fiperson:
-        specifier: workspace:*
-        version: link:../../packages/fiperson
       material-symbols:
         specifier: ^0.31.8
         version: 0.31.9
+      treperson:
+        specifier: workspace:*
+        version: link:../../packages/treperson
       uqr:
         specifier: ^0.1.3
         version: 0.1.3
@@ -117,24 +117,6 @@ importers:
         specifier: ^3.2.4
         version: 3.2.7(@types/node@22.20.5)(happy-dom@18.0.1)(tsx@4.23.15)
 
-  packages/fiperson:
-    devDependencies:
-      esbuild:
-        specifier: ^0.25.0
-        version: 0.25.12
-      happy-dom:
-        specifier: ^18.0.1
-        version: 18.0.1
-      typescript:
-        specifier: ^5.9.3
-        version: 5.9.3
-      viem:
-        specifier: ^2.38.3
-        version: 2.57.14(typescript@5.9.3)(zod@4.6.7)
-      vitest:
-        specifier: ^3.2.4
-        version: 3.2.7(@types/node@22.20.5)(happy-dom@18.0.1)(tsx@4.23.15)
-
   packages/sponsored-client:
     dependencies:
       '@noble/curves':
@@ -162,6 +144,24 @@ importers:
       typescript:
         specifier: ^5.9.3
         version: 5.9.3
+      vitest:
+        specifier: ^3.2.4
+        version: 3.2.7(@types/node@22.20.5)(happy-dom@18.0.1)(tsx@4.23.15)
+
+  packages/treperson:
+    devDependencies:
+      esbuild:
+        specifier: ^0.25.0
+        version: 0.25.12
+      happy-dom:
+        specifier: ^18.0.1
+        version: 18.0.1
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+      viem:
+        specifier: ^2.38.3
+        version: 2.57.14(typescript@5.9.3)(zod@4.6.7)
       vitest:
         specifier: ^3.2.4
         version: 3.2.7(@types/node@22.20.5)(happy-dom@18.0.1)(tsx@4.23.15)
@@ -1647,6 +1647,7 @@ packages:
 
   axios-retry@4.5.0:
     resolution: {integrity: sha512-aR99oXhpEDGo0UuAlYcn2iGRds30k366Zfa05XWScR9QaQD4JYiP3/1Qt1u7YlefUOK+cn0CcwoL1oefavQUlQ==}
+    deprecated: axios-retry is no longer maintained. See https://github.com/softonic/axios-retry for alternatives.
     peerDependencies:
       axios: 0.x || 1.x
 

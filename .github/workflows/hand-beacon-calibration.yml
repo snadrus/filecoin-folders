@@ -83,7 +83,7 @@ jobs:
             yes=(--yes)
           fi
           set +e
-          ./node_modules/.bin/tsx apps/fifolders/sponsor/recover.ts \
+          ./node_modules/.bin/tsx apps/trefolders/sponsor/recover.ts \
             --factory "$FACTORY" \
             --hand-beacon "$NEW_OWNER" \
             "${yes[@]+"${yes[@]}"}" \

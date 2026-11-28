@@ -1,15 +1,15 @@
 # Private folders (read-restricted data sets)
 
-FiFolders can keep a volume in a **private** data set: the storage provider stores only encrypted pieces and
+TreFolders can keep a volume in a **private** data set: the storage provider stores only encrypted pieces and
 serves them only to a request signed by someone the owner authorized. This page records how that works on
-Filecoin today, and how FiFolders uses it.
+Filecoin today, and how TreFolders uses it.
 
 ## How private data works on Filecoin (research, Nov 2026)
 
 | Piece | What it is | Source |
 | --- | --- | --- |
 | FEE (Filecoin Encryption Envelope) | A COSE header (tag 16 `COSE_Encrypt0`, or tag 96 with recipients) followed by the ciphertext. Protected header: algorithm `-65793`, content type `application/vnd.filecoin-encryption+cose`, a 7-byte base nonce, chunk size, optional plaintext length and app metadata. Content is AES-256-GCM in 256 KiB chunks (STREAM: nonce = base ‖ chunk index ‖ last flag). | [FRC draft, FIPs#1294](https://github.com/filecoin-project/FIPs/pull/1294); TS [`filecoin-encryption-envelope`](https://www.npmjs.com/package/filecoin-encryption-envelope) ([source](https://github.com/FilOzone/synapse-sdk/tree/master/packages/filecoin-encryption-envelope)); Go port [`go-fee`](https://github.com/filecoin-project/go-fee) with shared vectors |
-| Keysmith keys | One **group key** per owner, derived from an EIP-712 `GroupKey{owner, groupKeyId}` wallet signature (domain `Filecoin Encryption` v2) plus HKDF. **Groups** are slash paths (`FiPerson/identity`); holding a group's key opens it and every group below it. Each piece has a random salt; its key is `pieceKey(nodeKey, salt)`. The labels (`foc/v`, `foc/own`, `foc/gkid`, `foc/group`, `foc/salt`) ride in the envelope's app metadata, in the clear. | [`@filoz/keysmith`](https://www.npmjs.com/package/@filoz/keysmith) ([README](https://github.com/FilOzone/synapse-sdk/tree/master/packages/keysmith)) |
+| Keysmith keys | One **group key** per owner, derived from an EIP-712 `GroupKey{owner, groupKeyId}` wallet signature (domain `Filecoin Encryption` v2) plus HKDF. **Groups** are slash paths (`TrePerson/identity`); holding a group's key opens it and every group below it. Each piece has a random salt; its key is `pieceKey(nodeKey, salt)`. The labels (`foc/v`, `foc/own`, `foc/gkid`, `foc/group`, `foc/salt`) ride in the envelope's app metadata, in the clear. | [`@filoz/keysmith`](https://www.npmjs.com/package/@filoz/keysmith) ([README](https://github.com/FilOzone/synapse-sdk/tree/master/packages/keysmith)) |
 | Key wrapping | A **grant** wraps a node key (group key, group, or one piece) to a recipient's secp256k1 key by ECDH + AES-GCM; the descriptor is authenticated. Recipients publish `publicKeyOf(privateKey)` (a derived key-agreement key, not the address key). | keysmith `wrap.ts` |
 | Read rights | A **claim chain**: an owner-signed EIP-712 `ReadGrant` root naming a node, a bearer address, an expiry and a delegation depth; each delegate can sign a narrower link (max 8). Claims cannot be revoked, only expire. A **Delivery** = chain + grant. | keysmith `claims.ts` |
 | Curio enforcement | A data set created with metadata `read=restricted` is ACL'd. Every piece added must be a CAR with one root: a UnixFS file, or a directory whose single entry is `encrypted.fee`, starting with a valid envelope (`requireACLEnvelopes`). Restricted pieces are served only from `/download/<pieceCid or root CID>` with `Authorization: FOC-Grant <presentation>` (also accepted as cookie, basic-auth password, or `foc_grant` query): the presentation is the chain plus a `ReadRequest` for that piece signed by the final bearer, valid ≤ 300 s. No grant → `401 WWW-Authenticate: FOC-Grant`; a bad one → `403`. | Curio [#1617](https://github.com/filecoin-project/curio/pull/1617), [#1668](https://github.com/filecoin-project/curio/pull/1668); `pdp/fee_check.go`, `lib/keysmith/envelope.go`, `market/retrieval/piecehandler.go` (Curio `main`; not in v1.29.3) |
@@ -25,9 +25,9 @@ Notes:
 - A second copy of a private piece currently fails (the secondary's pull from the primary is refused), so
   private volumes store **one copy**.
 - The default group key id is `keccak256("filecoin/default-group-key" ‖ owner)[0:16]` in filecoin-pin,
-  Filecoin Drive and FiFolders, so one wallet signature opens all three.
+  Filecoin Drive and TreFolders, so one wallet signature opens all three.
 
-## How FiFolders uses it (`fil-folders/private`)
+## How TreFolders uses it (`fil-folders/private`)
 
 - **Visibility** — `datasetVisibility(metadata)`: `private` when `read=restricted`, `encrypted` when only
   `foc/enc` is set, otherwise `public`. `privateDataSetMetadata()` builds the metadata for a new private data set.
@@ -46,38 +46,38 @@ Notes:
   delegates, no prompt) and wrap the piece's (or group's) key to T. Everything secret is in the URL
   **fragment** (`#v=pf1&…`), which browsers never send to a server. Links last a year by default and cannot
   be revoked before that.
-- **FiPerson identity** — profiles in a private data set use group `FiPerson/identity`; the identity share
+- **TrePerson identity** — profiles in a private data set use group `TrePerson/identity`; the identity share
   link carries that group's key, so it keeps opening whatever profile version the registry points to.
 - **Member keys** — `deriveMemberKey` turns a deterministic EIP-712 signature into a secp256k1 key whose
-  wrap key and address go in the member's FiPerson profile. secp256k1 (not X25519) because Keysmith grants
+  wrap key and address go in the member's TrePerson profile. secp256k1 (not X25519) because Keysmith grants
   and Curio bearer signatures use it.
 
 Only wallet (EOA) owners can make private folders: passkey and sponsored accounts cannot sign the `GroupKey`
 message deterministically.
 
-## Club folders (FiClub + FiClubVault)
+## Club folders (TreClub + TreClubVault)
 
-FiClub already had membership: clubs with member and admin lists, `clubsOf(wallet)`, the `/ficlub/` page,
-and "Find all my Clubs" in `/identity/` (`fiperson/clubs`). What it lacked was a shared private folder and
-a way to hand its key to members. `FiClubVault` adds that next to FiClub, without changing it:
+TreClub already had membership: clubs with member and admin lists, `clubsOf(wallet)`, the `/treclub/` page,
+and "Find all my Clubs" in `/identity/` (`treperson/clubs`). What it lacked was a shared private folder and
+a way to hand its key to members. `TreClubVault` adds that next to TreClub, without changing it:
 
 - Calibration: [`0x935009a6a3Bee6BbF86BF352c0FE16c4689b7CF3`](https://filecoin-testnet.blockscout.com/address/0x935009a6a3Bee6BbF86BF352c0FE16c4689b7CF3)
-  (bound to FiClub `0x412B…2A55A03`; Sourcify exact match; `deployments/ficlubvault-calibration.json`).
+  (bound to TreClub `0x412B…2A55A03`; Sourcify exact match; `deployments/treclubvault-calibration.json`).
 - `setFolder(clubId, descriptor)` — admins point the club at its private folder (owner, group key id,
   group, volume, data set, providers; public JSON).
 - `grant(clubId, member, memberKey, delivery, entry)` — the Accept step. `delivery` is a Keysmith Delivery:
   an owner-signed read claim on the folder's group naming `memberKey` as bearer, plus the group's key wrapped
-  to the member's published wrap key. `entry` is the member's directory entry (their FiPerson link),
+  to the member's published wrap key. `entry` is the member's directory entry (their TrePerson link),
   encrypted under the folder key so only members can read the directory.
 - `revoke(clubId, member)` drops the stored delivery. It cannot take back a key the member already read:
   to cut someone off, move the folder to a new group and Accept the remaining members again.
 
 The flow:
 
-1. A person sets up FiPerson. Their profile publishes `memberKey: { address, wrapKey }`, derived from a
+1. A person sets up TrePerson. Their profile publishes `memberKey: { address, wrapKey }`, derived from a
    deterministic wallet signature (`deriveMemberKey`), so any device with the wallet can derive it again.
 2. They give their person link (`/person/?id=0x…`) to a club admin.
-3. The admin clicks **Accept**: FiClub `addMember`, FiClubVault `grant` (one ReadGrant signature + one
+3. The admin clicks **Accept**: TreClub `addMember`, TreClubVault `grant` (one ReadGrant signature + one
    transaction), and a SessionKeyRegistry login from the folder owner's wallet authorizing the member key to
    add pieces to the folder's data set and commit the folder.
 4. The person's **Find my groups** (`findMyGroups`) lists their clubs, each club's folder, and whether a key
@@ -97,7 +97,7 @@ reproduce.
   volume is stored under the registry name `<volume> (private)`, so a public volume of the same name in
   another dataset is never mixed with it. Uploads keep one copy.
 - **Details → share link** for a file in a private folder is `…/share/#v=pf1&…` (TrePen / TreGrid files:
-  `…/fipen/#fp=…`, `…/figrid/#fp=…`). The guest page fetches the encrypted piece from `/download/` with the
+  `…/trepen/#fp=…`, `…/tregrid/#fp=…`). The guest page fetches the encrypted piece from `/download/` with the
   link's own throwaway key and decrypts it in the browser.
 - Verified on Calibration (`e2e-stories/live-private.spec.ts`, dataset 58383 on ezpdpz): upload, link,
   guest open; anonymous `/piece/` of the same piece returns 404 and `/download/` without a grant returns 401.

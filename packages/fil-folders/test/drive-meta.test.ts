@@ -69,7 +69,7 @@ describe("Filecoin Drive piece metadata", () => {
     });
     expect(readDriveMetadata({ name: "site.car", carPath: "" })?.importedCar).toBe(true);
     expect(readDriveMetadata({ source: "x" })).toBeNull();
-    // pieces from earlier FiFolders builds still read their version
+    // pieces from earlier TreFolders builds still read their version
     expect(readDriveMetadata({ label: "a.txt", path: "", version: "4" })?.version).toBe(4n);
   });
 });

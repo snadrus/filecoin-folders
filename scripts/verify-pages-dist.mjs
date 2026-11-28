@@ -2,8 +2,8 @@ import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
 
-const dist = path.resolve(process.argv[2] || "apps/fifolders/dist");
-const routes = ["/", "/identity/", "/ficlub/", "/person/", "/slack/callback/", "/wallet/", "/fipen/", "/figrid/", "/felarumi/", "/felanumio/"];
+const dist = path.resolve(process.argv[2] || "apps/trefolders/dist");
+const routes = ["/", "/identity/", "/treclub/", "/person/", "/slack/callback/", "/wallet/", "/trepen/", "/tregrid/", "/felarumi/", "/felanumio/", "/fipen/", "/figrid/", "/ficlub/", "/fideploy/", "/tredeploy/"];
 
 function localFile(urlPath) {
   const clean = decodeURIComponent(urlPath.split("?")[0]);
@@ -42,12 +42,17 @@ const origin = `http://127.0.0.1:${port}`;
 const missing = [];
 
 for (const [file, needle] of [
-  ["felarumi/index.html", "/fipen/"],
-  ["felanumio/index.html", "/figrid/"],
+  ["felarumi/index.html", "/trepen/"],
+  ["felanumio/index.html", "/tregrid/"],
+  ["fipen/index.html", "/trepen/"],
+  ["figrid/index.html", "/tregrid/"],
+  ["ficlub/index.html", "/treclub/"],
+  ["fideploy/index.html", "/tredeploy/"],
   ["404.html", "/fipen"],
-  ["404.html", "/figrid"],
-  ["fipen/favicon.svg", "#0090FF"],
-  ["figrid/favicon.svg", "#178F4B"],
+  ["404.html", "/trepen"],
+  ["404.html", "/tregrid"],
+  ["trepen/favicon.svg", "#0090FF"],
+  ["tregrid/favicon.svg", "#178F4B"],
 ]) {
   const full = path.join(dist, file);
   if (!fs.existsSync(full)) {

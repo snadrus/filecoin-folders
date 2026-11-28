@@ -120,7 +120,7 @@ contract LockedSignerAccountV2Test is Test {
         acct.initialize(user, 0, 0, EXP);
     }
 
-    // ---- session key: any non-fund contract, including registry, FWSS terminate, FiClub
+    // ---- session key: any non-fund contract, including registry, FWSS terminate, TreClub
     function test_sessionCanCallAnyNonFundContract() public {
         _addSession();
         _execAs(sessPk, address(reg), abi.encodeCall(LRegistry.commit, (bytes32(0), bytes32(0), "x", 0)));

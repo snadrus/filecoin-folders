@@ -1,5 +1,5 @@
 /**
- * Filecoin Drive (filecoin-pin-website) piece metadata conventions, shared by every FiFolders writer.
+ * Filecoin Drive (filecoin-pin-website) piece metadata conventions, shared by every TreFolders writer.
  *
  * Drive names a piece by its Synapse *piece metadata*:
  * - `label` (or `name`): the file name, at most 96 UTF-8 bytes,
@@ -8,11 +8,11 @@
  * Drive only lists data sets whose data-set metadata has `source: "filecoin-pin"`.
  * Drive has no versions: each upload is its own piece, and Delete schedules piece removal.
  *
- * FiFolders writes exactly Drive's keys, on every network: FWSS (filecoin-services ≥ v1.3.0, live on Calibration
+ * TreFolders writes exactly Drive's keys, on every network: FWSS (filecoin-services ≥ v1.3.0, live on Calibration
  * and mainnet) caps piece metadata at MAX_KEYS_PER_PIECE = 3 keys, 32-byte keys and 96-byte values, and Drive itself
  * spends all three (`label`, `path`|`carPath`, `ipfsRootCID`; a directory is a trailing "/" on `label`, not a 4th key).
  * The commit version is not piece metadata: the FolderRegistry is the source of truth for versions, and a commit
- * piece is recognised by its bytes (a FiFolders CAR whose root block is a folder manifest, {@link isCommitPiece}).
+ * piece is recognised by its bytes (a TreFolders CAR whose root block is a folder manifest, {@link isCommitPiece}).
  * Pieces written by earlier builds may still carry a `version` key; readers accept it.
  */
 import { decodeCar } from "./car.js";
@@ -21,10 +21,10 @@ import type { DirNode, Node } from "./types.js";
 
 export const DRIVE_METADATA_BYTES = 96;
 export const DRIVE_SOURCE = "filecoin-pin";
-export const FIFOLDERS_SOURCE = "fifolders";
-/** Legacy (pre-v1.3 FWSS) FiFolders key; read for old pieces, never written. */
+export const TREFOLDERS_SOURCE = "fifolders";
+/** Legacy (pre-v1.3 FWSS) TreFolders key; read for old pieces, never written. */
 export const VERSION_KEY = "version";
-/** Folder Drive shows FiFolders commits that change several files at once. */
+/** Folder Drive shows TreFolders commits that change several files at once. */
 export const SYSTEM_FOLDER = ".fifolders";
 
 const utf8 = (value: string) => new TextEncoder().encode(value);
@@ -69,7 +69,7 @@ export function driveMetadata(input: DriveMetadataInput): Record<string, string>
   return out;
 }
 
-/** True for a FiFolders commit piece: a FiFolders CAR whose root block is a folder manifest. */
+/** True for a TreFolders commit piece: a TreFolders CAR whose root block is a folder manifest. */
 export function isCommitPiece(bytes: Uint8Array): boolean {
   try {
     const car = decodeCar(bytes);
@@ -91,7 +91,7 @@ export interface DrivePieceInfo {
   version?: bigint;
 }
 
-/** Read Drive (and FiFolders) piece metadata. Null when the piece carries none. */
+/** Read Drive (and TreFolders) piece metadata. Null when the piece carries none. */
 export function readDriveMetadata(metadata: Record<string, string> | undefined | null): DrivePieceInfo | null {
   if (!metadata) return null;
   const fileName = (metadata.name || metadata.label || "").trim();

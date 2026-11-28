@@ -207,7 +207,7 @@ describe("private data sets", () => {
       file: { cid: info.contentCid, iv: info.iv, key: info.fileKey, name: "secret.txt", size: info.size, mime: "text/plain" },
     });
     const fragment = encodeShareFragment(share);
-    const url = `https://fifolders.example/share/#${fragment}`;
+    const url = `https://trefolders.example/share/#${fragment}`;
     expect(new URL(url).search).toBe("");
     expect(isPrivateShareFragment(`#${fragment}`)).toBe(true);
     const parsed = parseShareFragment(`#${fragment}`);
@@ -251,7 +251,7 @@ describe("private data sets", () => {
     expect(decode((await openPiece(outer, opened.key, opened.grant)).plaintext)).toBe("profile v2");
     expect(typeof fetchSharedPiece).toBe("function");
     // A different group is out of reach.
-    const elsewhere = await sealPiece(Keysmith.writeTarget(Keysmith.grantDescriptor(descriptor, "groupKey"), key, "FiFolders/vdeadbeef"), text("not yours"));
+    const elsewhere = await sealPiece(Keysmith.writeTarget(Keysmith.grantDescriptor(descriptor, "groupKey"), key, "TreFolders/vdeadbeef"), text("not yours"));
     await expect(openPiece(elsewhere.car, opened.key, opened.grant)).rejects.toThrow();
   });
 
