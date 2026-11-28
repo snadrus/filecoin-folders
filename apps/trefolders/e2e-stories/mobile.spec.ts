@@ -289,3 +289,15 @@ test("M09 TrePen phone: tapping the first line places the caret instead of openi
   await expect.poll(() => page.evaluate(() => (window as any).__editor.selection().head)).toBeLessThan(11);
   await expect(page.locator("#dialog")).toBeHidden();
 });
+
+test("M10 TreGrid phone: the cell shows what you type in the formula bar, which does not autocapitalize", async ({ page }) => {
+  await page.goto(url("tregrid/"));
+  await page.locator("#blank").click();
+  const g = (await page.locator("#grid").boundingBox())!;
+  await page.touchscreen.tap(g.x + 150, g.y + 60);
+  await page.touchscreen.tap(g.x + 150, g.y + 60);
+  await expect(page.locator("#formula")).toBeFocused();
+  expect(await page.locator("#formula").getAttribute("autocapitalize")).toBe("off");
+  await page.keyboard.type("typed live");
+  await expect.poll(() => page.evaluate(() => (window as any).__sheet.painted() as string[])).toContain("typed live");
+});
