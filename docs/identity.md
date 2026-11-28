@@ -1,13 +1,13 @@
 # Wallet identity (`/identity/`)
 
-One profile per wallet, shared by FiFolders, FiPen and FiGrid, and the base for a future address book.
+One profile per wallet, shared by TreFolders, TrePen and TreGrid, and the base for a future address book.
 
 ## Where it lives
 
 | Part | Value |
 |---|---|
-| Page | `https://fifolders.scionbase.ai/identity/` (own Vite entry `apps/fifolders/identity/index.html`, own bundle; not part of your folders UI). `?return=<same-origin URL>` sends the user back after Save. |
-| Piece | JSON document stored with Synapse in the wallet's existing FiFolders dataset (same path as folder uploads). |
+| Page | `https://fifolders.scionbase.ai/identity/` (own Vite entry `apps/trefolders/identity/index.html`, own bundle; not part of your folders UI). `?return=<same-origin URL>` sends the user back after Save. |
+| Piece | JSON document stored with Synapse in the wallet's existing TreFolders dataset (same path as folder uploads). |
 | Chain pointer | Existing **FolderRegistry** (`calibration 0x4893FfF3611240fbB4Be68eFe4AA0Ec634279331`), `commit(ns, key, pieceCid, prevPieceCid)` from the wallet itself. No new contract. |
 | `ns` | `keccak256("fil-identity")` (`identityNamespace()`) |
 | `key` | `keccak256("profile")` (`identityProfileKey()`) |
@@ -45,11 +45,11 @@ Same namespace, key `keccak256("contacts")` (`identityContactsKey()`), pointing 
 { "v": 1, "schema": "fil-identity/contacts", "address": "0xowner", "contacts": [ { "address": "0x…", "label": "Mom", "note": "" } ], "updatedAt": "…" }
 ```
 
-Each contact's name/avatar resolves through `resolveIdentity(contact.address)`; `label` is the owner's private override (encrypt the piece if needed, as FiFolders does for encrypted volumes).
+Each contact's name/avatar resolves through `resolveIdentity(contact.address)`; `label` is the owner's private override (encrypt the piece if needed, as TreFolders does for encrypted volumes).
 
-## Library: `packages/fiperson`
+## Library: `packages/treperson`
 
-See packages/fiperson/README.md. Readers use `fiperson/view`; the /identity/ page uses `fiperson/edit`. The API list below is historical (it now lives in fiperson):
+See packages/treperson/README.md. Readers use `treperson/view`; the /identity/ page uses `treperson/edit`. The API list below is historical (it now lives in treperson):
 
 - `buildIdentity(address, draft)`, `parseIdentity`, `encodeIdentity` / `decodeIdentity`
 - `resolveIdentity(address, { head, fetchPiece, cache?, maxAgeMs?, force? })` → `{ displayName, avatar, bio, source: "chain" | "cache" | "guest", identity, pieceCid, version }`
@@ -66,8 +66,8 @@ All entry pages reload once on `vite:preloadError`, so a tab opened before a dep
 
 ## Costs and prompts
 
-Save = (1) free EIP-712 signature to add the piece to the existing dataset (a few hundred bytes, billed from the existing storage deposit, far below $0.01/month) and (2) one `commit` transaction (gas ~0.01 FIL). The page never deposits, approves payments or creates a dataset: if those are missing it stops and links to FiFolders setup.
+Save = (1) free EIP-712 signature to add the piece to the existing dataset (a few hundred bytes, billed from the existing storage deposit, far below $0.01/month) and (2) one `commit` transaction (gas ~0.01 FIL). The page never deposits, approves payments or creates a dataset: if those are missing it stops and links to TreFolders setup.
 
 ## Notification contacts (optional)
 
-`notify: { preferred: "slack", contacts: [{ channel: "slack", team: "T…", user: "U…", domain?: "acme" }] }` (max 4, invalid entries dropped on read). Public. Used by `fiperson/notify`; see [slack-app.md](slack-app.md).
+`notify: { preferred: "slack", contacts: [{ channel: "slack", team: "T…", user: "U…", domain?: "acme" }] }` (max 4, invalid entries dropped on read). Public. Used by `treperson/notify`; see [slack-app.md](slack-app.md).

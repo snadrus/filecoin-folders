@@ -25,7 +25,7 @@ import { hexToBytes, type Hex } from "viem";
 const ACTION: Record<LimitedWalletRequest["method"], (params: LimitedWalletRequest["params"]) => string> = {
   create: (params) => `create a passkey${"name" in params && params.name ? ` (“${params.name}”)` : ""}`,
   assert: (params) => ("action" in params && params.action ? params.action : "sign a request with your passkey"),
-  discover: () => "use an existing FiFolders passkey",
+  discover: () => "use an existing TreFolders passkey",
 };
 
 export function webauthnPolicyAllows(method: LimitedWalletRequest["method"]): boolean {

@@ -1,6 +1,6 @@
-# Adopted Filecoin Drive (UnixFS) files in the FiFolders manifest
+# Adopted Filecoin Drive (UnixFS) files in the TreFolders manifest
 
-FiFolders can reference files that Filecoin Pin's **Filecoin Drive** already stored, without
+TreFolders can reference files that Filecoin Pin's **Filecoin Drive** already stored, without
 re-uploading them ("Add to folders" in Loose pieces).
 
 ## Manifest fields (additive, `v: 1` unchanged)
@@ -45,5 +45,5 @@ item in one compare-and-swap commit: one small manifest piece plus one registry 
 ## Pieces in another dataset
 
 Allowed when the piece is readable (piece retrieval by CID from its provider). The adopted file
-then depends on **that** dataset staying paid and not deleting the piece; FiFolders does not
+then depends on **that** dataset staying paid and not deleting the piece; TreFolders does not
 schedule removal of `located` pieces it references, but cannot keep another dataset alive.

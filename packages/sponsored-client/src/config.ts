@@ -66,7 +66,7 @@ export function isSponsored(chain: ChainChoice = readNetworkPreference()): boole
 }
 
 export const SPONSORED_DEPOSIT_NOTE = "Pay by card. Credits pay only for storage; no FIL or USDFC needed. First purchase includes a one-time $1.50 account setup (minimum $3.91; top-ups from $2.37).";
-export const SPONSORED_DATASET_NOTE = "Created once for you and paid from your FiFolders credits.";
+export const SPONSORED_DATASET_NOTE = "Created once for you and paid from your TreFolders credits.";
 
 export interface SponsorPricing {
   minFirstUsd: number;

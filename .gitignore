@@ -9,8 +9,8 @@ contracts/out/
 contracts/cache/
 contracts/broadcast/
 coverage/
-apps/fifolders/test-results/
-apps/fifolders/playwright-report/
-apps/fifolders/blob-report/
-apps/fifolders/sponsor/sponsor-state*.json
-apps/fifolders/sponsor/.wrangler/
+apps/trefolders/test-results/
+apps/trefolders/playwright-report/
+apps/trefolders/blob-report/
+apps/trefolders/sponsor/sponsor-state*.json
+apps/trefolders/sponsor/.wrangler/

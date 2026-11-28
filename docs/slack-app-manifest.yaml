@@ -1,9 +1,9 @@
-# Slack app for FiPerson notifications (FiPen @-mentions → "Notify <name>?").
+# Slack app for TrePerson notifications (TrePen @-mentions → "Notify <name>?").
 # Create at https://api.slack.com/apps → Create New App → From a manifest → paste this.
 # User-token only (no bot), PKCE public client: no client secret is ever used or shipped.
 display_information:
-  name: FiFolders
-  description: Lets FiPen send a Slack DM, as you, when you @-mention someone in a document.
+  name: TreFolders
+  description: Lets TrePen send a Slack DM, as you, when you @-mention someone in a document.
   background_color: "#1a73e8"
 oauth_config:
   redirect_urls:

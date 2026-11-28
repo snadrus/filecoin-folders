@@ -1,10 +1,10 @@
 /**
- * Club (FiClub) shared private folders: the crypto half. Chain I/O lives in `fiperson/groups`.
+ * Club (TreClub) shared private folders: the crypto half. Chain I/O lives in `treperson/groups`.
  *
  * Accept (admin, who owns the folder's data set): sign one ReadGrant root claim on the folder's group, naming
  * the member's derived key as bearer, and wrap the group's key to the member's published wrap key. The
- * resulting Delivery is stored on-chain (FiClubVault) — inert to everyone but the member. The admin also
- * encrypts the member's directory entry (their FiPerson identity link) under the folder key, so every
+ * resulting Delivery is stored on-chain (TreClubVault) — inert to everyone but the member. The admin also
+ * encrypts the member's directory entry (their TrePerson identity link) under the folder key, so every
  * member can read the club directory but outsiders cannot.
  *
  * Find my groups (member): re-derive the member key from the wallet, open the Delivery, and use the key
@@ -14,7 +14,7 @@ import * as Keysmith from "@filoz/keysmith";
 import { getAddress, type Address, type Hex } from "viem";
 import { asBuffer, base64UrlToBytes, bytesToBase64Url } from "../bytes.js";
 
-/** What FiClubVault.setFolder stores (JSON, public): where the club's private folder lives. */
+/** What TreClubVault.setFolder stores (JSON, public): where the club's private folder lives. */
 export interface ClubFolderDescriptor {
   v: 1;
   /** Data set owner (payer) wallet; the folder's Keysmith owner. */
@@ -22,7 +22,7 @@ export interface ClubFolderDescriptor {
   groupKeyId: Hex;
   /** Keysmith group of the folder (opaque `FiFolders/v…`). */
   group: string;
-  /** FiFolders volume name (shown to members). */
+  /** TreFolders volume name (shown to members). */
   volume: string;
   dataSetId?: string;
   providers?: string[];
@@ -103,7 +103,7 @@ async function directoryKey(folderKey: Uint8Array): Promise<CryptoKey> {
   );
 }
 
-/** A member's directory entry (e.g. their FiPerson identity share link), readable by club members only. */
+/** A member's directory entry (e.g. their TrePerson identity share link), readable by club members only. */
 export interface DirectoryEntry {
   member: Address;
   name?: string;

@@ -33,7 +33,7 @@ After those clicks, the next cron tick that needs to notify will send via the `E
 If Email Routing is not ready, set a Worker secret:
 
 1. Create a [Resend](https://resend.com) API key (the key is only stored as a secret; do not put it in the repo or logs).
-2. Add it as the GitHub Actions secret `RESEND_API_KEY`. The sponsor-worker deploy uploads non-empty secrets with `wrangler secret bulk`. Or run `npx wrangler secret put RESEND_API_KEY` in `apps/fifolders/sponsor` against this Cloudflare account.
+2. Add it as the GitHub Actions secret `RESEND_API_KEY`. The sponsor-worker deploy uploads non-empty secrets with `wrangler secret bulk`. Or run `npx wrangler secret put RESEND_API_KEY` in `apps/trefolders/sponsor` against this Cloudflare account.
 3. Until a domain is verified on Resend, mail is sent from `onboarding@resend.dev`. After verifying `scionbase.ai` on Resend, set the Worker var or secret `RESEND_FROM=sponsor@scionbase.ai`.
 
 `/status` → `alerts.lastChannel` will read `resend`. The Worker tries Email Routing first and only uses Resend when the `EMAIL` binding is missing.

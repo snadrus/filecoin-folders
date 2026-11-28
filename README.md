@@ -1,6 +1,6 @@
 # Filecoin Folders
 
-A library for folder volumes on Filecoin, plus FiFolders, a static file manager in `apps/fifolders`.
+A library for folder volumes on Filecoin, plus TreFolders, a static file manager in `apps/trefolders`.
 
 The library stores an immutable JSON manifest as a [Synapse](https://docs.filecoin.cloud/) piece. A small FEVM contract, `FolderRegistry`, points at the current root with compare-and-swap.
 
@@ -22,7 +22,7 @@ flowchart LR
 | `contracts/` | Foundry project. `FolderRegistry` plus Calibration and mainnet deploy scripts. |
 | `packages/fil-folders` | TypeScript ESM package. Browser and Node.js 22+. |
 | `examples/cli.ts` | `ls` / `put` / `get` against Calibration. |
-| `apps/fifolders` | FiFolders, a static Vite file manager on `fil-folders`. FiPen documents and FiGrid spreadsheets are at `/fipen/` and `/figrid/`. |
+| `apps/trefolders` | TreFolders, a static Vite file manager on `fil-folders`. TrePen documents and TreGrid spreadsheets are at `/trepen/` and `/tregrid/`. |
 
 ## Registry
 
@@ -73,7 +73,7 @@ Constructor arguments are the deployer address (admin) and the SessionKeyRegistr
 | Calibration (314159) | `0x518411c2062E119Aaf7A8B12A2eDf9a939347655` |
 | Mainnet (314) | `0x74FD50525A958aF5d484601E252271f9625231aB` |
 
-The Calibration address in [deployments/calibration.json](deployments/calibration.json) is the previous contract. It has no session-key check. Deploy this build from your own machine (do not reuse that address) and point FiFolders at the new address with `VITE_FOLDER_REGISTRY` and `VITE_REGISTRY_FROM_BLOCK`.
+The Calibration address in [deployments/calibration.json](deployments/calibration.json) is the previous contract. It has no session-key check. Deploy this build from your own machine (do not reuse that address) and point TreFolders at the new address with `VITE_FOLDER_REGISTRY` and `VITE_REGISTRY_FROM_BLOCK`.
 
 The contract is unaudited.
 
@@ -180,7 +180,7 @@ pnpm install
 pnpm test
 ```
 
-`pnpm test` runs `forge test`, the fil-folders vitest suite (CRUD, mv/rm, history, conflict merge, encryption, and the anvil registry test), the package typecheck, the example typecheck, and the FiFolders unit tests. FiFolders browser tests are `pnpm --filter fifolders e2e`.
+`pnpm test` runs `forge test`, the fil-folders vitest suite (CRUD, mv/rm, history, conflict merge, encryption, and the anvil registry test), the package typecheck, the example typecheck, and the TreFolders unit tests. TreFolders browser tests are `pnpm --filter trefolders e2e`.
 
 ## License
 

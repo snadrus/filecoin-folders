@@ -1,6 +1,6 @@
 # Cross-domain passkeys for the limited wallet
 
-The limited-wallet client lives in `@fifolders/sponsored-client` (there is no separate `limited_wallet` package). Passkeys own a `LockedSignerAccount`. They must work from any dApp origin, not only `fifolders.scionbase.ai`.
+The limited-wallet client lives in `@trefolders/sponsored-client` (there is no separate `limited_wallet` package). Passkeys own a `LockedSignerAccount`. They must work from any dApp origin, not only `fifolders.scionbase.ai`.
 
 Re-enrollment is expected: there are no production users yet, and earlier passkeys were created without an `rp.id`, so the browser bound them to the exact hostname (`fifolders.scionbase.ai`).
 
@@ -8,7 +8,7 @@ Re-enrollment is expected: there are no production users yet, and earlier passke
 
 `packages/sponsored-client/src/passkey.ts` now sets `rp.id` to `scionbase.ai` whenever the page itself is on `scionbase.ai` or a subdomain. That is a valid RP ID for `fifolders.scionbase.ai`, `wallet.scionbase.ai`, and any future scionbase.ai host. Localhost and other dev hosts omit `rp.id` (using `scionbase.ai` there would throw a `SecurityError`).
 
-The sponsor (`apps/fifolders/sponsor/auth.ts`) and `LockedSignerAccount` still check only the WebAuthn type, the challenge, the user-present flag, and the P-256 signature. They do not check `origin` or `rpIdHash`. A signature produced on any origin would verify on chain. The browser, not the contract, is what stops a foreign page from minting that signature: it will only offer a passkey whose RP ID matches the current document.
+The sponsor (`apps/trefolders/sponsor/auth.ts`) and `LockedSignerAccount` still check only the WebAuthn type, the challenge, the user-present flag, and the P-256 signature. They do not check `origin` or `rpIdHash`. A signature produced on any origin would verify on chain. The browser, not the contract, is what stops a foreign page from minting that signature: it will only offer a passkey whose RP ID matches the current document.
 
 Because the chain is not origin-bound, the wallet page always shows the requesting dApp origin and the action, and waits for an explicit Continue before `navigator.credentials.create` / `get`.
 
@@ -35,7 +35,7 @@ Discoverable credentials (`residentKey: "required"`) are required. Third-party i
 | Safari macOS / iOS | No / unreliable | No | WebKit does not implement credential *creation* in a cross-origin iframe ([standards-positions #304](https://github.com/WebKit/standards-positions/issues/304)). caniuse still reports no support for the `allow` token on `get` either, including current Safari 27. Use a popup. Chrome/Firefox on iOS are WebKit and inherit this. |
 | Android / iOS in-app webviews | Often no | Often no | Many WKWebView and Android WebView shells, and social in-app browsers, break WebAuthn or third-party frames. A popup or a handoff to the system browser may still fail. Treat this as best-effort. |
 
-A Playwright Chromium test in this repo (`apps/fifolders/e2e-wallet/cross-origin-passkey.spec.ts`) creates two distinct origins (`localhost:4177` and `localhost:4178` (two ports, so two origins; IP addresses are not valid WebAuthn RP IDs)) and a CDP virtual authenticator:
+A Playwright Chromium test in this repo (`apps/trefolders/e2e-wallet/cross-origin-passkey.spec.ts`) creates two distinct origins (`localhost:4177` and `localhost:4178` (two ports, so two origins; IP addresses are not valid WebAuthn RP IDs)) and a CDP virtual authenticator:
 
 - **With** `allow="publickey-credentials-get *; publickey-credentials-create *"`: both `create()` and `get()` succeed.
 - **Without** the `allow` attribute: both reject with `NotAllowedError` / a Permissions Policy error.
@@ -77,7 +77,7 @@ import {
   findExistingPasskey,
   passkeyAssert,
   directPasskeyHost,
-} from "@fifolders/sponsored-client";
+} from "@trefolders/sponsored-client";
 
 // Third-party dApp (any origin):
 const passkeys = connectLimitedWallet({
@@ -88,11 +88,11 @@ const key = await passkeys.create("Ada");
 const assertion = await passkeys.assert(key.credentialId, digest);
 const existing = await findExistingPasskey(lookup, passkeys);
 
-// First-party FiFolders on *.scionbase.ai (or localhost tests):
-const key2 = await createPasskey("FiFolders"); // rp.id set automatically when the host allows it
+// First-party TreFolders on *.scionbase.ai (or localhost tests):
+const key2 = await createPasskey("TreFolders"); // rp.id set automatically when the host allows it
 ```
 
-`connectLimitedWallet` implements `PasskeyHost`. `signIn` / `ownerSigner` accept `identity.passkeys` so a dApp can thread the connector all the way through session-key authorization. FiFolders itself keeps the direct host: it already runs on a scionbase.ai origin (so `rp.id = scionbase.ai` works in-page), and the Node e2e soft authenticator mocks `navigator.credentials` on the app page.
+`connectLimitedWallet` implements `PasskeyHost`. `signIn` / `ownerSigner` accept `identity.passkeys` so a dApp can thread the connector all the way through session-key authorization. TreFolders itself keeps the direct host: it already runs on a scionbase.ai origin (so `rp.id = scionbase.ai` works in-page), and the Node e2e soft authenticator mocks `navigator.credentials` on the app page.
 
 The postMessage protocol (`limited-wallet`, `v: 1`) is in `packages/sponsored-client/src/limited-wallet.ts`:
 
@@ -100,11 +100,11 @@ The postMessage protocol (`limited-wallet`, `v: 1`) is in `packages/sponsored-cl
 - Requests carry a random `requestId`. Results with the wrong origin or id are ignored.
 - The wallet replies `need-popup` without prompting if Permissions Policy would reject `create` / `get` in the iframe.
 
-The wallet page ships with the existing GitHub Pages deploy at `https://fifolders.scionbase.ai/wallet/` (`apps/fifolders/wallet/`). No new DNS is required for that URL. A later dedicated host such as `wallet.scionbase.ai` can serve the same page without re-enrollment, because the RP ID is already `scionbase.ai`. That hostname needs a Cloudflare DNS record and a route or Pages/Worker target; it is not wired in this change.
+The wallet page ships with the existing GitHub Pages deploy at `https://fifolders.scionbase.ai/wallet/` (`apps/trefolders/wallet/`). No new DNS is required for that URL. A later dedicated host such as `wallet.scionbase.ai` can serve the same page without re-enrollment, because the RP ID is already `scionbase.ai`. That hostname needs a Cloudflare DNS record and a route or Pages/Worker target; it is not wired in this change.
 
 ## Tests
 
 - Unit: `packages/sponsored-client/test/passkey.test.ts`, `packages/sponsored-client/test/limited-wallet.test.ts` (RP ID selection, origin checks, Safari popup preference, iframe `allow` attribute, need-popup fallback).
-- Cross-origin e2e: `pnpm --filter fifolders e2e:wallet` (empirical iframe matrix in Chromium, plus the real connector in iframe and popup modes).
+- Cross-origin e2e: `pnpm --filter trefolders e2e:wallet` (empirical iframe matrix in Chromium, plus the real connector in iframe and popup modes).
 
-Existing FiFolders unit tests and sponsor e2e keep using the direct `createPasskey` / `passkeyAssert` path.
+Existing TreFolders unit tests and sponsor e2e keep using the direct `createPasskey` / `passkeyAssert` path.

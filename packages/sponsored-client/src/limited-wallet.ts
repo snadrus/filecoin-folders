@@ -3,7 +3,7 @@
  * scionbase.ai itself, so this module opens a wallet page (iframe first, popup if the iframe cannot run
  * the ceremony) and talks to it with a strict postMessage protocol.
  *
- * First-party FiFolders pages on *.scionbase.ai should keep using {@link directPasskeyHost}; the browser
+ * First-party TreFolders pages on *.scionbase.ai should keep using {@link directPasskeyHost}; the browser
  * will issue and accept passkeys with RP ID scionbase.ai in that document.
  */
 import type { Hex } from "viem";
@@ -12,7 +12,7 @@ import type { DiscoverableAssertion, PasskeyAssertion, PasskeyHost, PasskeyPubli
 export const LIMITED_WALLET_CHANNEL = "limited-wallet" as const;
 export const LIMITED_WALLET_PROTOCOL = 1 as const;
 
-/** Production wallet page, shipped with the FiFolders Pages deploy. */
+/** Production wallet page, shipped with the TreFolders Pages deploy. */
 export const DEFAULT_LIMITED_WALLET_URL = "https://fifolders.scionbase.ai/wallet/";
 
 /**
@@ -232,7 +232,7 @@ export function connectLimitedWallet(options: LimitedWalletOptions = {}): Limite
     iframeReady = new Promise<Window>((resolve, reject) => {
       const frame = document.createElement("iframe");
       frame.setAttribute("allow", LIMITED_WALLET_IFRAME_ALLOW);
-      frame.setAttribute("title", "FiFolders limited wallet");
+      frame.setAttribute("title", "TreFolders limited wallet");
       frame.setAttribute("data-testid", "limited-wallet-iframe");
       Object.assign(frame.style, {
         position: "fixed",

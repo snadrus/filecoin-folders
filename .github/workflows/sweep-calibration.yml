@@ -32,7 +32,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Build packages the sweep script imports
-        run: pnpm --filter fil-folders build && pnpm --filter @fifolders/sponsored-client build
+        run: pnpm --filter fil-folders build && pnpm --filter @trefolders/sponsored-client build
       - name: Sweep to Calibration treasury
         env:
           SPONSOR_KEY: ${{ secrets.SPONSOR_KEY_CALIBRATION }}
@@ -51,10 +51,10 @@ jobs:
           fi
 
           # Normalize to a space-separated argv list and refuse current ready pool spares.
-          mapfile -t ACCT_ARR < <(python3 apps/fifolders/sponsor/refuse-ready-pool.py)
+          mapfile -t ACCT_ARR < <(python3 apps/trefolders/sponsor/refuse-ready-pool.py)
 
           set +e
-          ./node_modules/.bin/tsx apps/fifolders/sponsor/sweep.ts "${ACCT_ARR[@]}" > "$RUNNER_TEMP/sweep.out" 2> "$RUNNER_TEMP/sweep.err"
+          ./node_modules/.bin/tsx apps/trefolders/sponsor/sweep.ts "${ACCT_ARR[@]}" > "$RUNNER_TEMP/sweep.out" 2> "$RUNNER_TEMP/sweep.err"
           status=$?
           set -e
           cat "$RUNNER_TEMP/sweep.out"

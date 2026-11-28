@@ -45,11 +45,11 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter fil-folders build
-      - run: pnpm --filter fiperson build
-      - run: pnpm --filter @fifolders/sponsored-client build
-      - run: pnpm --filter fifolders build
+      - run: pnpm --filter treperson build
+      - run: pnpm --filter @trefolders/sponsored-client build
+      - run: pnpm --filter trefolders build
         env:
-          # Gasless mode on Calibration: sponsor Worker (apps/fifolders/sponsor/worker.ts) + Stripe test mode.
+          # Gasless mode on Calibration: sponsor Worker (apps/trefolders/sponsor/worker.ts) + Stripe test mode.
           VITE_SPONSOR_URL: https://fast.scionbase.ai
           # Mainnet sponsor (served at /mainnet) is deployed; add it here once its wallet holds USDFC.
           VITE_SPONSOR_NETWORKS: calibration
@@ -58,7 +58,7 @@ jobs:
           VITE_REGISTRY_FROM_BLOCK_MAINNET: "6580537"
           VITE_STRIPE_PUBLISHABLE_KEY_MAINNET: pk_live_51Ug71bAQKJpucjVchcZvlNbOViSWgtgYn98cVWpw7EudZ7rZQLgUJty5pb1NoWXF2jkuBv9Mwrzby3UDKBzyqaaB00UrydX8lE
           VITE_STRIPE_PUBLISHABLE_KEY: pk_test_51Ug4s1AFTWNVBowWWqiKGCzkvif6rJKZQmzCHfLHobIBYyb82eWvIUg1jmLlk3A6k83AYGPd7BomXHwvGyFlqnGS00Pz8paxAS
-      - name: Build FiPen and FiGrid
+      - name: Build TrePen and TreGrid
         working-directory: collab-edit
         run: |
           if [ ! -f p2p/src/host-base.ts ]; then
@@ -67,28 +67,33 @@ jobs:
           fi
           npm install --ignore-scripts
           node scripts/install-fil-folders.mjs
-          # FiPen/FiGrid must use this commit's fil-folders (e.g. 360-block log scans), not the older pin.
+          # TrePen/TreGrid must use this commit's fil-folders (e.g. 360-block log scans), not the older pin.
           rm -rf node_modules/fil-folders/dist
           cp -R ../packages/fil-folders/dist node_modules/fil-folders/dist
-          # Same for FiPerson (names, identity, avatars).
-          rm -rf node_modules/fiperson/dist
-          mkdir -p node_modules/fiperson
-          cp ../packages/fiperson/package.json node_modules/fiperson/
-          cp -R ../packages/fiperson/dist node_modules/fiperson/dist
-          # Same for the gasless client. Pages copies this commit's dist (like fil-folders/fiperson)
-          # rather than a git or npm dependency, because @fifolders/sponsored-client is not published
+          # Same for TrePerson (names, identity, avatars).
+          rm -rf node_modules/treperson/dist
+          mkdir -p node_modules/treperson
+          cp ../packages/treperson/package.json node_modules/treperson/
+          cp -R ../packages/treperson/dist node_modules/treperson/dist
+          # Same for the gasless client. Pages copies this commit's dist (like fil-folders/treperson)
+          # rather than a git or npm dependency, because @trefolders/sponsored-client is not published
           # and the editors' pin cannot see this commit until after the monorepo is pushed.
-          rm -rf node_modules/@fifolders/sponsored-client
-          mkdir -p node_modules/@fifolders/sponsored-client
-          cp ../packages/sponsored-client/package.json node_modules/@fifolders/sponsored-client/
-          cp -R ../packages/sponsored-client/dist node_modules/@fifolders/sponsored-client/dist
+          rm -rf node_modules/@trefolders/sponsored-client
+          mkdir -p node_modules/@trefolders/sponsored-client
+          cp ../packages/sponsored-client/package.json node_modules/@trefolders/sponsored-client/
+          cp -R ../packages/sponsored-client/dist node_modules/@trefolders/sponsored-client/dist
+          # Transition: a collab-edit ref that predates the rename still imports the old package names, so expose this commit's dist under both.
+          rm -rf node_modules/fiperson node_modules/@fifolders
+          mkdir -p node_modules/fiperson node_modules/@fifolders/sponsored-client
+          cp -R node_modules/treperson/. node_modules/fiperson/
+          cp -R node_modules/@trefolders/sponsored-client/. node_modules/@fifolders/sponsored-client/
           BUILD_ONLY=1 node --disable-warning=ExperimentalWarning --experimental-strip-types p2p/serve.ts
       - run: node scripts/stage-editors.mjs collab-edit/p2p/dist
-      - run: printf '%s\n' 'fifolders.scionbase.ai' > apps/fifolders/dist/CNAME
-      - run: node scripts/verify-pages-dist.mjs apps/fifolders/dist
+      - run: printf '%s\n' 'fifolders.scionbase.ai' > apps/trefolders/dist/CNAME
+      - run: node scripts/verify-pages-dist.mjs apps/trefolders/dist
       - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
         with:
-          path: apps/fifolders/dist
+          path: apps/trefolders/dist
 
   deploy:
     needs: build

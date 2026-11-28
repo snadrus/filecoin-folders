@@ -15,9 +15,9 @@ import { bytesToHex, encodeAbiParameters, hexToBytes, type Hex } from "viem";
 
 const N = 0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551n;
 
-/** Stable WebAuthn RP ID. Any scionbase.ai host (fifolders, wallet, …) can use the same passkeys. */
+/** Stable WebAuthn RP ID. Any scionbase.ai host (trefolders, wallet, …) can use the same passkeys. */
 export const PASSKEY_RP_ID = "scionbase.ai";
-export const PASSKEY_RP_NAME = "FiFolders";
+export const PASSKEY_RP_NAME = "TreFolders";
 
 /**
  * RP ID for a WebAuthn call in this document. Production hosts under scionbase.ai use {@link PASSKEY_RP_ID}.
@@ -114,7 +114,7 @@ export function encodeContractAssertion(assertion: PasskeyAssertion): Hex {
   );
 }
 
-/** Register a passkey for FiFolders (discoverable, so another device can pick it later). Bound to {@link PASSKEY_RP_ID} on scionbase.ai hosts. */
+/** Register a passkey for TreFolders (discoverable, so another device can pick it later). Bound to {@link PASSKEY_RP_ID} on scionbase.ai hosts. */
 export async function createPasskey(name: string): Promise<PasskeyPublicKey> {
   const credential = (await navigator.credentials.create({
     publicKey: {
@@ -147,7 +147,7 @@ export async function passkeyAssert(credentialId: string, challenge: Hex): Promi
   };
 }
 
-/** Raw discoverable assertion: the browser lists every FiFolders passkey (synced or on a security key). */
+/** Raw discoverable assertion: the browser lists every TreFolders passkey (synced or on a security key). */
 export async function discoverablePasskeyAssert(challenge: Uint8Array, credentialId?: string): Promise<DiscoverableAssertion> {
   const challengeBytes = new Uint8Array(challenge);
   const credential = (await navigator.credentials.get({
@@ -187,7 +187,7 @@ export const directPasskeyHost: PasskeyHost = {
 };
 
 /**
- * Returning user on any device: pick an existing FiFolders passkey and get its public key back.
+ * Returning user on any device: pick an existing TreFolders passkey and get its public key back.
  * 1) the sponsor knows the credential (it is recorded at the first purchase), else
  * 2) ECDSA-recover the two candidate keys and ask the sponsor which one owns an account, else
  * 3) a second signature pins the key down (a passkey that never bought credits has no account yet).

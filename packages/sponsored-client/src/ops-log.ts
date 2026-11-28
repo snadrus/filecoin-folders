@@ -1,4 +1,4 @@
-/** Write unconfirmed sponsored work into the FiFolders Transaction log (`fifolders:ops`). */
+/** Write unconfirmed sponsored work into the TreFolders Transaction log (`fifolders:ops`). */
 export const SPONSORED_OPS_KEY = "fifolders:ops";
 export const SPONSORED_OPS_CHANNEL = "fifolders-ops";
 

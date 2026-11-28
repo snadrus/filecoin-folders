@@ -70,7 +70,7 @@ jobs:
           if [ "${GITHUB_EVENT_NAME}" = "schedule" ]; then SEND=false; fi
           ARGS=()
           if [ "$SEND" = "true" ]; then ARGS+=(--send); fi
-          ./node_modules/.bin/tsx apps/fifolders/sponsor/refill-usdfc.ts "${ARGS[@]}" > "$RUNNER_TEMP/refill.json"
+          ./node_modules/.bin/tsx apps/trefolders/sponsor/refill-usdfc.ts "${ARGS[@]}" > "$RUNNER_TEMP/refill.json"
           # The script prints only a public report (no keys).
           python3 - <<'PY'
           import json, os, pathlib
