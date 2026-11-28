@@ -462,6 +462,32 @@ try {
     if (!firstDataset.ok) throw new Error(`first-run dataset was not private: ${vis || attr}`);
   }
 
+  // On chain: the buyer's first (and only) data set must be read=restricted with the three Keysmith keys.
+  if (clickedCreate) {
+    const { Synapse } = await import("@filoz/synapse-sdk");
+    const { calibration } = await import("@filoz/synapse-core/chains");
+    const { createPublicClient, custom, http } = await import("viem");
+    const client = createPublicClient({ transport: http(RPC) });
+    const transport = custom({ request: (args: { method: string; params?: unknown }) => client.request(args as never) });
+    const synapse = Synapse.create({ account: payer as `0x${string}`, chain: calibration as never, transport, source: "fifolders" } as never);
+    let sets: Array<{ dataSetId: bigint; metadata?: Record<string, string> }> = [];
+    for (let i = 0; i < 40 && !sets.length; i++) {
+      sets = (await synapse.storage.findDataSets({ address: payer as `0x${string}` })) as typeof sets;
+      if (!sets.length) await page.waitForTimeout(5_000);
+    }
+    const first = sets[0];
+    const meta = first?.metadata ?? {};
+    const keys = Object.keys(meta).sort();
+    const ok = sets.length === 1 && meta.read === "restricted" && meta["foc/enc"] === "1" && Boolean(meta["foc/gkid"]) && Boolean(meta["foc/kc"]);
+    steps.firstDatasetOnChain = { ok, datasetId: first?.dataSetId.toString(), count: sets.length, read: meta.read, keys };
+    say(`first dataset on chain: #${first?.dataSetId} count=${sets.length} read=${meta.read} keys=${keys.join(",")}`);
+    if (!ok) throw new Error(`first dataset on chain is not private: count=${sets.length} read=${meta.read} keys=${keys.join(",")}`);
+    if (process.env.LIVE_E2E_FIRSTRUN_ONLY === "1") {
+      log.ok = true;
+      throw Object.assign(new Error("first-run private check done"), { done: true });
+    }
+  }
+
   if (process.env.LIVE_E2E_PRIVATE === "1") {
     // Private folders only: create, upload, share, guest opens, delete, terminate; then the no-PRF refusal.
     const credentials = ((await cdp.send("WebAuthn.getCredentials", { authenticatorId })) as { credentials: unknown[] }).credentials;
