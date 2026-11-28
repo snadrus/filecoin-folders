@@ -2,6 +2,7 @@
 import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { chromium, type Page } from "@playwright/test";
 import { payOnPage } from "./support/stripe-pay.js";
+import { runNoPrfRefusal, runPrivateStory } from "./support/private-story.js";
 
 const OUT = process.env.LIVE_E2E_OUT || "/workspace/fil-gasless/live";
 const SITE = "https://fifolders.scionbase.ai";
@@ -35,8 +36,10 @@ const { authenticatorId } = await cdp.send("WebAuthn.addVirtualAuthenticator", {
     hasUserVerification: true,
     isUserVerified: true,
     automaticPresenceSimulation: true,
+    // Synced platform passkeys support PRF; private folders derive their key from it.
+    hasPrf: true,
   },
-});
+} as never);
 
 const executeBodies: unknown[] = [];
 const sponsorPaths: string[] = [];
@@ -449,6 +452,16 @@ try {
   await snap(page, "session-ready");
   say(`session ready ${log.secPaymentToSessionReady}s after payment return`);
 
+  if (process.env.LIVE_E2E_PRIVATE === "1") {
+    // Private folders only: create, upload, share, guest opens, delete, terminate; then the no-PRF refusal.
+    const credentials = ((await cdp.send("WebAuthn.getCredentials", { authenticatorId })) as { credentials: unknown[] }).credentials;
+    const io = { page, browser, say, snap, steps, payer, credentials, site: SITE };
+    await runPrivateStory(io);
+    await runNoPrfRefusal(io);
+    log.ok = true;
+    throw Object.assign(new Error("private story done"), { done: true });
+  }
+
   // --- Drive file save ---
   const fileName = "live-e2e.txt";
   const fileBytes = Buffer.from(`hello from live e2e ${new Date().toISOString()}\n`);
@@ -707,6 +720,9 @@ try {
 
   log.ok = true;
 } catch (error) {
+  if ((error as { done?: boolean }).done) {
+    say("private story done");
+  } else {
   log.ok = false;
   log.error = error instanceof Error ? error.message.split("\n")[0] : String(error);
   log.at = page.url().replace(/session_id=[^&]+/, "session_id=…");
@@ -718,6 +734,7 @@ try {
     await snap(extra, `error-tab${i}`).catch(() => undefined);
   }
   say(`FAIL: ${log.error}`);
+  }
 } finally {
   stopCreditPoll();
   const txs = executeBodies

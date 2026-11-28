@@ -963,6 +963,18 @@ export function createLiveOnboarding(options: LiveOnboardingOptions = {}): Onboa
         const wallet = passkey ? null : await walletClient(input.chain);
         const cacheKey = `fifolders:volume-sig:${chain.id}:${address.toLowerCase()}:${config.address.toLowerCase()}:${input.volumeName}`;
         let cas: Session["cas"] | undefined;
+        // Upload checkpoints also feed the copy catalog that Delete forever uses to remove pieces.
+        const onReplication = (notice: { phase: UploadCheckpoint["phase"]; expectedCopies: number; providers: UploadCheckpoint["providers"]; error?: string }) => {
+          const checkpoint: UploadCheckpoint = {
+            phase: notice.phase,
+            expectedCopies: notice.expectedCopies,
+            providers: notice.providers,
+            checks: 0,
+            nextCheckAt: 0,
+            ...(notice.error ? { error: notice.error } : {}),
+          };
+          saveCheckpoint(`${address.toLowerCase()}:${input.volumeName}`, checkpoint);
+        };
         reportLoadStep("Reading your folders from Filecoin…");
         const opened = await openSponsoredVolume({
           chain: input.chain,
@@ -976,17 +988,7 @@ export function createLiveOnboarding(options: LiveOnboardingOptions = {}): Onboa
             return observed.registry;
           },
           wrapMigration: labelMigration,
-          onReplication: (notice) => {
-            const checkpoint: UploadCheckpoint = {
-              phase: notice.phase,
-              expectedCopies: notice.expectedCopies,
-              providers: notice.providers,
-              checks: 0,
-              nextCheckAt: 0,
-              ...(notice.error ? { error: notice.error } : {}),
-            };
-            saveCheckpoint(`${address.toLowerCase()}:${input.volumeName}`, checkpoint);
-          },
+          onReplication,
           // Private (read=restricted) data sets: encrypted pieces read through the provider's gate.
           privateVolume: async ({ synapse, datasetId: id }) =>
             privateEnter({
@@ -998,7 +1000,7 @@ export function createLiveOnboarding(options: LiveOnboardingOptions = {}): Onboa
               wallet: () => privateSigner(input.chain),
               session: loadSession(chain.id, address),
               volumeName: input.volumeName,
-              storageOptions: { dataSetId: BigInt(id) },
+              storageOptions: { dataSetId: BigInt(id), onReplication: onReplication as never },
               wrap: (inner) => inner,
               prompt: (intent, run) => withWalletIntent(intent as never, run),
             }),
