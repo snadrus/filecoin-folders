@@ -5,7 +5,7 @@ import { createPublicClient, http, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { filecoinCalibration } from "viem/chains";
 
-const ENV = process.env.CALIB_WALLET_ENV || "/workspace/scionhub/secrets/calib-wallet.env";
+const ENV = process.env.CALIB_WALLET_ENV || "/home/box/.secrets/bots/scionhub/calib-wallet.env";
 export const RPC = process.env.CALIB_RPC || "https://api.calibration.node.glif.io/rpc/v1";
 export const CHAIN_ID = "0x4cb2f"; // 314159
 
