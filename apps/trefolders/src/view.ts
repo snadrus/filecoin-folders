@@ -996,9 +996,12 @@ function renderAccount(model: ViewModel): string {
       <p class="account-line">Volume ${escapeHtml(volumeLabel(model.volumeName))} · encryption ${model.encrypted ? "on" : "off"}</p>
       ${(() => {
         const d = panel.datasets.find((x) => x.id === panel.selectedDatasetId);
-        // Sponsored (gasless) data sets are always created public.
-        const v = d?.visibility ?? (panel.selectedDatasetId && isSponsored() ? "public" : undefined);
-        return v ? `<p class="account-line" data-testid="current-visibility">This dataset: ${visibilityBadge(v)}</p>` : "";
+        const v = d?.visibility;
+        const badge = v ? `<p class="account-line" data-testid="current-visibility">This dataset: ${visibilityBadge(v)}</p>` : "";
+        const terminate = d && /^\d+$/.test(d.id) && panel.sessionReady
+          ? `<button type="button" class="danger slim" data-action="terminate-dataset" data-testid="terminate-dataset" title="Ends storage for this dataset. Its files can no longer be read.">Delete dataset #${escapeHtml(d.id)}</button>`
+          : "";
+        return badge + terminate;
       })()}
     </section>`
     : `<div class="chain-toggle" role="group" aria-label="Network">
@@ -1120,7 +1123,5 @@ function renderParticipantCopies(model: ViewModel): string {
 
 /** Private data sets need a wallet that signs its own encryption key; sponsored (gasless) accounts cannot yet. */
 function privateCreateButton(): string {
-  return isSponsored()
-    ? ""
-    : `<button type="button" data-testid="create-private-dataset" data-action="create-private-dataset" title="Only people you share a link or key with can read it. Wallet sign-in only.">Create private dataset</button>`;
+  return `<button type="button" data-testid="create-private-dataset" data-action="create-private-dataset" title="Encrypted. Only people you share a link with can read it.${isSponsored() ? " Needs a wallet or a PRF-capable passkey (iCloud Keychain, Google Password Manager)." : ""}">Create private dataset</button>`;
 }

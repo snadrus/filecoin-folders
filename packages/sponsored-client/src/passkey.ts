@@ -123,6 +123,8 @@ export async function createPasskey(name: string): Promise<PasskeyPublicKey> {
       challenge: crypto.getRandomValues(new Uint8Array(32)),
       pubKeyCredParams: [{ type: "public-key", alg: -7 }],
       authenticatorSelection: { residentKey: "required", userVerification: "required" },
+      // Ask for PRF so private folders can derive an encryption key from this passkey later (ignored if unsupported).
+      extensions: { prf: {} } as AuthenticationExtensionsClientInputs,
     },
   })) as PublicKeyCredential | null;
   if (!credential) throw new Error("Passkey creation was cancelled.");

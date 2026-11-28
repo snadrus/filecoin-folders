@@ -1518,6 +1518,7 @@ export class DriveApp {
       action === "add-funds" ||
       action === "create-dataset" ||
       action === "create-private-dataset" ||
+      action === "terminate-dataset" ||
       action === "refresh-session" ||
       action === "refund-session" ||
       action === "open-drive"

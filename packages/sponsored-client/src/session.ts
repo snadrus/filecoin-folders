@@ -204,6 +204,18 @@ export interface OpenSponsoredVolumeOptions {
   wrapMigration?: ViemRegistryOptions["wrapMigration"];
   encryption?: OpenVolumeOptions["encryption"];
   onReplication?: Parameters<typeof createSynapseStorage>[1] extends infer O ? O extends { onReplication?: infer C } ? C : never : never;
+  /**
+   * Private (read=restricted) data sets: return the storage, encryption and registry volume name to open the volume
+   * with, or null for a public data set. The app supplies this (it holds the Keysmith signer); nothing here sees keys.
+   */
+  privateVolume?: (ctx: { synapse: Synapse; datasetId: string }) => Promise<PrivateVolumeParts | null>;
+}
+
+export interface PrivateVolumeParts {
+  storage: Storage;
+  encryption: NonNullable<OpenVolumeOptions["encryption"]>;
+  name: string;
+  opened?(volume: Volume): void;
 }
 
 /** Build Synapse + registry + volume for a live sponsored session. Throws if the session key or dataset is missing. */
@@ -235,7 +247,9 @@ export async function openSponsoredVolume(opts: OpenSponsoredVolumeOptions): Pro
     copies: 1,
     ...(opts.onReplication ? { onReplication: opts.onReplication } : {}),
   });
-  storage = guardStorage(opts.wrapStorage ? opts.wrapStorage(storage) : storage);
+  const privateParts = opts.privateVolume ? await opts.privateVolume({ synapse, datasetId }) : null;
+  if (privateParts) storage = privateParts.storage;
+  storage = guardStorage(opts.wrapStorage && !privateParts ? opts.wrapStorage(storage) : storage);
 
   const config = registryConfig(chain);
   const registryWallet = createWalletClient({
@@ -255,7 +269,8 @@ export async function openSponsoredVolume(opts: OpenSponsoredVolumeOptions): Pro
   if (opts.wrapRegistry) registry = opts.wrapRegistry(registry);
   ({ storage, registry } = withHandoverCalls(storage, registry));
 
-  const volume = await openVolume({ storage, registry, owner: payer, name: volumeName, encryption: opts.encryption });
+  const volume = await openVolume({ storage, registry, owner: payer, name: privateParts?.name ?? volumeName, encryption: privateParts?.encryption ?? opts.encryption });
+  privateParts?.opened?.(volume);
   const identity = opts.identity;
   const signer = identity ? sponsorSignerFor(payer, identity, chain) : sessionSponsorSigner(payer, stored.privateKey);
   const removals = liveRemovalAdapters({

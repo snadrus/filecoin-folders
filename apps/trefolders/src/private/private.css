@@ -2,3 +2,9 @@
 .visibility-badge .material-symbols-outlined { font-size: 14px; }
 .visibility-badge.is-private { background: #fde7c8; color: #7a4500; }
 .visibility-badge.is-public { background: var(--badge); color: var(--muted); }
+
+/* Delete (terminate) dataset, account menu. */
+button.danger {
+  color: #b3261e;
+  border-color: color-mix(in srgb, #b3261e 40%, transparent);
+}

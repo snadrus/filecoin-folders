@@ -61,7 +61,8 @@ export async function privateEnter(input: {
   chain: "calibration" | "mainnet";
   chainId: number;
   owner: Address;
-  wallet: WalletSigner | null;
+  /** The Keysmith owner, or a getter called only once the data set turns out to be private (it may prompt). */
+  wallet: WalletSigner | null | (() => Promise<WalletSigner>);
   session: { privateKey: Hex; expiry: string } | null;
   volumeName: string;
   storageOptions: SynapseStorageOptions;
@@ -85,13 +86,14 @@ export async function privateEnter(input: {
   } else {
     return null;
   }
-  if (!input.wallet) throw new Error("This dataset is private. Sign in with the wallet that owns it to open it.");
+  if (!input.wallet) throw new Error("This dataset is private. Sign in with the wallet or passkey that owns it to open it.");
+  const wallet = typeof input.wallet === "function" ? await input.wallet() : input.wallet;
   if (!input.session) throw new Error("Authorize the session key first.");
   const providers = [context?.provider?.pdp?.serviceURL].filter((u): u is string => Boolean(u));
   console.info("TreFolders private dataset", datasetId, "providers", providers.join(",") || "(none)");
   const credential = await privateCredential({
     chainId: input.chainId,
-    wallet: input.wallet,
+    wallet,
     session: { privateKey: input.session.privateKey, expiry: Number(input.session.expiry) },
     ...(metadata?.["foc/kc"] ? { commitment: metadata["foc/kc"] } : {}),
     prompt: input.prompt,

@@ -36,6 +36,7 @@ import {
   findPasskeyByCredential,
   findSponsoredAccount,
   passkeySponsorSigner,
+  passkeyRpId,
   waitForCredit,
   sponsoredCreditStatus,
   creditLooksReady,
@@ -62,6 +63,8 @@ import { discoverWallets, safeOn, type AnnouncedWallet } from "./eip6963.js";
 import { createPasskey, findExistingPasskey, encodeContractAssertion, passkeyAssert, type PasskeyPublicKey } from "./passkey.js";
 import { activeProviderUrls } from "./filecoin-api.js";
 import { createDatasetMetadata, noteVisibility, privateEnter, savePendingPrivate } from "./private/enter.js";
+import { privateCreateMetadata, type WalletSigner } from "./private/private-volume.js";
+import { PASSKEY_UNLOCK_INTENT, lockPasskeyOwners, passkeyPrivateSigner } from "./private/key-source.js";
 import { knownVisibility } from "./private/visibility.js";
 import { FILECOIN_DRIVE_SOURCE, isDriveSource, loadPieceDetails, setPieceDetailSource, type PieceDetail } from "./drive-pieces.js";
 import { REGISTRY_NOT_DEPLOYED, registryReady } from "./network.js";
@@ -241,6 +244,16 @@ export function createLiveOnboarding(options: LiveOnboardingOptions = {}): Onboa
   /** Payer and volume owner: the sponsored account in gasless mode, else the wallet. */
   function owner(): Address {
     return payer ?? requireRoot();
+  }
+
+  /** Keysmith signer for private folders: the wallet, or (passkey sign-in) a key derived from the passkey's PRF. */
+  async function privateSigner(choice: ChainChoice): Promise<WalletSigner> {
+    if (passkey) {
+      const credentialId = passkey.credentialId;
+      return passkeyPrivateSigner({ credentialId, ...(passkeyRpId() ? { rpId: passkeyRpId()! } : {}), prompt: (run) => withWalletIntent(PASSKEY_UNLOCK_INTENT as never, run) });
+    }
+    const address = requireRoot();
+    return { address, signTypedData: async (args) => (await walletClient(choice)).signTypedData({ account: address, ...args }) };
   }
 
   /** Back from Stripe (`?checkout=success&session_id=…`): wait for the sponsor to apply the payment, once. */
@@ -478,7 +491,8 @@ export function createLiveOnboarding(options: LiveOnboardingOptions = {}): Onboa
       source: "fifolders",
     });
     const found = await synapse.storage.findDataSets({ address: owner() });
-    const remote = found.filter((dataset) => dataset.isLive !== false).map((dataset) => toDataset(choice, dataset));
+    // Terminated (pdpEndEpoch set) data sets are on their way out: not offered any more.
+    const remote = found.filter((dataset) => dataset.isLive !== false && !((dataset as { pdpEndEpoch?: bigint }).pdpEndEpoch ?? 0n)).map((dataset) => toDataset(choice, dataset));
     const pending = loadPending(choice, owner());
     const ids = new Set(remote.map((dataset) => dataset.id));
     return [...remote, ...pending.filter((dataset) => !ids.has(dataset.id))];
@@ -870,12 +884,19 @@ export function createLiveOnboarding(options: LiveOnboardingOptions = {}): Onboa
       report?.({ flow: "payment", phase: "done", hash });
     },
     async createDataset(input) {
-      if (input.visibility === "private" && (isSponsored() || passkey)) throw new Error("Private folders need a wallet sign-in (passkey and sponsored accounts cannot sign the encryption key).");
       if (isSponsored()) {
         const account = await ensurePayer();
         const createdAt = new Date().toISOString();
-        const made = await createSponsoredDataset(await sponsorSigner(input.chain), chainOf(input.chain).id, { app: "fifolders", volume: input.volumeName, created: createdAt });
-        saveLastDataset(chainOf(input.chain).id, account, made.dataSetId);
+        const chainId = chainOf(input.chain).id;
+        const base = { app: "fifolders", volume: input.volumeName, created: createdAt };
+        // Private: the Keysmith owner (wallet, or a passkey-PRF key) signs the group key here; the sponsor only sees
+        // read=restricted and the key's id and commitment.
+        const privateMetadata = input.visibility === "private"
+          ? await privateCreateMetadata(await privateSigner(input.chain), chainId, base, (intent, run) => withWalletIntent(intent as never, run))
+          : null;
+        const made = await createSponsoredDataset(await sponsorSigner(input.chain), chainId, privateMetadata ?? base);
+        if (privateMetadata) noteVisibility(chainId, made.dataSetId, privateMetadata);
+        saveLastDataset(chainId, account, made.dataSetId);
         selectedDataset = made.dataSetId;
         return;
       }
@@ -942,6 +963,18 @@ export function createLiveOnboarding(options: LiveOnboardingOptions = {}): Onboa
         const wallet = passkey ? null : await walletClient(input.chain);
         const cacheKey = `fifolders:volume-sig:${chain.id}:${address.toLowerCase()}:${config.address.toLowerCase()}:${input.volumeName}`;
         let cas: Session["cas"] | undefined;
+        // Upload checkpoints also feed the copy catalog that Delete forever uses to remove pieces.
+        const onReplication = (notice: { phase: UploadCheckpoint["phase"]; expectedCopies: number; providers: UploadCheckpoint["providers"]; error?: string }) => {
+          const checkpoint: UploadCheckpoint = {
+            phase: notice.phase,
+            expectedCopies: notice.expectedCopies,
+            providers: notice.providers,
+            checks: 0,
+            nextCheckAt: 0,
+            ...(notice.error ? { error: notice.error } : {}),
+          };
+          saveCheckpoint(`${address.toLowerCase()}:${input.volumeName}`, checkpoint);
+        };
         reportLoadStep("Reading your folders from Filecoin…");
         const opened = await openSponsoredVolume({
           chain: input.chain,
@@ -955,17 +988,22 @@ export function createLiveOnboarding(options: LiveOnboardingOptions = {}): Onboa
             return observed.registry;
           },
           wrapMigration: labelMigration,
-          onReplication: (notice) => {
-            const checkpoint: UploadCheckpoint = {
-              phase: notice.phase,
-              expectedCopies: notice.expectedCopies,
-              providers: notice.providers,
-              checks: 0,
-              nextCheckAt: 0,
-              ...(notice.error ? { error: notice.error } : {}),
-            };
-            saveCheckpoint(`${address.toLowerCase()}:${input.volumeName}`, checkpoint);
-          },
+          onReplication,
+          // Private (read=restricted) data sets: encrypted pieces read through the provider's gate.
+          privateVolume: async ({ synapse, datasetId: id }) =>
+            privateEnter({
+              synapse: synapse as never,
+              datasetId: id,
+              chain: input.chain,
+              chainId: chain.id,
+              owner: address,
+              wallet: () => privateSigner(input.chain),
+              session: loadSession(chain.id, address),
+              volumeName: input.volumeName,
+              storageOptions: { dataSetId: BigInt(id), onReplication: onReplication as never },
+              wrap: (inner) => inner,
+              prompt: (intent, run) => withWalletIntent(intent as never, run),
+            }),
           encryption: input.encrypt
             ? {
                 signer: {
@@ -1178,12 +1216,20 @@ export function createLiveOnboarding(options: LiveOnboardingOptions = {}): Onboa
         const stored = loadSession(chain.id, address);
         if (!stored) throw new Error("Authorize the session key first.");
         const key = privateKeyToAccount(stored.privateKey);
-        return relayExecute({ client: publicClient(choice), chainId: chain.id, account: payer, target: chain.contracts.fwss.address, data, sign: (typed) => key.signTypedData(typed) });
+        const hash = await relayExecute({ client: publicClient(choice), chainId: chain.id, account: payer, target: chain.contracts.fwss.address, data, sign: (typed) => key.signTypedData(typed) });
+        const receipt = await publicClient(choice).waitForTransactionReceipt({ hash });
+        if (receipt.status !== "success") throw new Error(`Deleting dataset #${datasetId} failed (${hash}).`);
+        if (selectedDataset === datasetId || loadLastDataset(chain.id, address) === datasetId) {
+          selectedDataset = "";
+          saveLastDataset(chain.id, address, "");
+        }
+        return hash;
       }
       const client = await walletClient(choice);
       return client.sendTransaction({ account: address, chain, to: chain.contracts.fwss.address, data });
     },
     disconnect() {
+      lockPasskeyOwners();
       root = null;
       payer = null;
       passkey = null;

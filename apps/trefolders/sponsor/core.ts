@@ -30,6 +30,7 @@ import { lockedAccountAbi, lockedFactoryAbi, type SponsorOwner } from "../src/sp
 import { AuthError, parseIdentityId, passkeyId, verifyAuth, type Identity } from "./auth.js";
 import { DEFAULT_PRICING, creditFor, poolTopUp, pricingFromEnv, type Pricing } from "./pricing.js";
 import { RateLimiter } from "./ratelimit.js";
+import { DatasetMetadataError, MAX_PRIVATE_DATASETS, parseDatasetRequestMetadata, type PrivateDatasetMetadata } from "./private-dataset.js";
 import { SponsorWalletRelayer, chainFor, publicClient, type Relayer } from "./relayer.js";
 import { sweepAccount, type SweepResult } from "./sweeplib.js";
 import { assertStripeMode, checkoutSessionIdForPaymentIntent, createCheckoutSession, estimateStripeFeeCents, fakeCheckoutSession, refundPayment, retrieveCheckoutSession, stripeFeeCents, verifyStripeSignature, type CheckoutSession, type Network } from "./stripe.js";
@@ -133,6 +134,8 @@ export interface UserRecord {
   dataSetTx?: Hex;
   /** "pool" (warm handover) or "create" (slow path). */
   via?: "pool" | "create";
+  /** read=restricted data sets opened for this account (see private-dataset.ts). */
+  privateDataSets?: { dataSetId: string; txHash: Hex; providerId: string; createdAt: string }[];
 }
 
 export interface PoolEntry {
@@ -1098,9 +1101,30 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
   }
 
   /** Dataset for an account that has none (normally made by the pool or the slow path). */
-  async function ensureDataset(identity: Identity): Promise<{ dataSetId: string; providerId: string; hash?: Hex }> {
+  /** One more data set, read=restricted, for the caller's own account (capped; same funds check as the first). */
+  async function openPrivateDataset(record: UserRecord, metadata: PrivateDatasetMetadata): Promise<{ dataSetId: string; providerId: string; hash?: Hex }> {
+    const made = (record.privateDataSets ??= []);
+    if (made.length >= MAX_PRIVATE_DATASETS) throw new HttpError(429, `at most ${MAX_PRIVATE_DATASETS} private data sets per account`);
+    const [funds] = (await pub.readContract({ address: PAY, abi: payAbi, functionName: "accounts", args: [USDFC, record.account] })) as readonly bigint[];
+    if (!funds) throw new HttpError(402, "buy storage credits first");
+    const opened = await openDataset(record.account, { ...datasetMetadata(), ...metadata });
+    const providerId = config.providerId.toString();
+    made.push({ dataSetId: opened.dataSetId, txHash: opened.txHash, providerId, createdAt: new Date(now()).toISOString() });
+    save();
+    return { dataSetId: opened.dataSetId, providerId, hash: opened.txHash };
+  }
+
+  async function ensureDataset(identity: Identity, body: Record<string, unknown> = {}): Promise<{ dataSetId: string; providerId: string; hash?: Hex }> {
+    let privateMetadata: PrivateDatasetMetadata | null;
+    try {
+      privateMetadata = parseDatasetRequestMetadata(body.metadata);
+    } catch (error) {
+      if (error instanceof DatasetMetadataError) throw new HttpError(400, error.message);
+      throw error;
+    }
     const record = recordFor(identity);
     if (!record) throw new HttpError(402, "buy storage credits first");
+    if (privateMetadata) return openPrivateDataset(record, privateMetadata);
     if (!record.dataSetId) {
       const [funds] = (await pub.readContract({ address: PAY, abi: payAbi, functionName: "accounts", args: [USDFC, record.account] })) as readonly bigint[];
       if (!funds) throw new HttpError(402, "buy storage credits first");
@@ -2132,7 +2156,7 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
       }
       if (req.method === "POST" && url.pathname === "/dataset") {
         const body = parseJson(req.body);
-        return ok(await ensureDataset(await authenticate("dataset", body, limits.setup)));
+        return ok(await ensureDataset(await authenticate("dataset", body, limits.setup), body));
       }
       if (req.method === "POST" && url.pathname === "/execute") {
         const ip = req.header("cf-connecting-ip") || req.header("x-forwarded-for")?.split(",")[0]?.trim();
