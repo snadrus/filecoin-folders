@@ -18,6 +18,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./private": {
+      "types": "./dist/private/index.d.ts",
+      "import": "./dist/private/index.js"
     }
   },
   "scripts": {
@@ -26,6 +30,8 @@
     "test": "vitest run && tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@filoz/keysmith": "^0.2.0",
+    "filecoin-encryption-envelope": "^0.1.1",
     "viem": "^2.38.3"
   },
   "peerDependencies": {
