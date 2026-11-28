@@ -153,6 +153,9 @@ importers:
       esbuild:
         specifier: ^0.25.0
         version: 0.25.12
+      fil-folders:
+        specifier: workspace:*
+        version: link:../fil-folders
       happy-dom:
         specifier: ^18.0.1
         version: 18.0.1

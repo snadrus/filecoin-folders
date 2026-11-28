@@ -48,3 +48,12 @@ Schema and on-chain layout: [docs/identity.md](../../docs/identity.md).
 - `notify(target, message, url)` → `{ ok: true, … } | { ok: false, reason, message, fallback }`. Call it from a click. Slack via PKCE user OAuth, see [docs/slack-app.md](../../docs/slack-app.md).
 - `connectSlack({ team? })`, `handleSlackCallback()` (the `/slack/callback/` page), `slackConnections()`, `forgetSlackToken()`, `configureNotify({...})`, `SLACK_CLIENT_ID` (config.ts).
 - `treperson/notify/mock`: `createMockSlack()` for tests.
+
+## TrePerson on a private data set (`treperson/private`)
+
+When your folders live in a private (`read=restricted`) data set, save the profile piece through
+`identityStorage(inner, credential)`: it is sealed into the Keysmith group `FiPerson/identity`.
+`identityShareFragment(...)` makes one link (`#v=pg1&…`, key only in the URL fragment) that opens every piece in
+that group, so after you update your profile the same link still opens whichever piece the registry points at.
+Readers pass `privateIdentityFetcher(fragment)` as `fetchPiece` to `resolveIdentity` (reads go through Curio's
+gated `/download/`).

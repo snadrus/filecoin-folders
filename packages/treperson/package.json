@@ -37,6 +37,10 @@
     "./groups": {
       "types": "./dist/groups/index.d.ts",
       "import": "./dist/groups/index.js"
+    },
+    "./private": {
+      "types": "./dist/private/index.d.ts",
+      "import": "./dist/private/index.js"
     }
   },
   "scripts": {
@@ -48,9 +52,16 @@
     "happy-dom": "^18.0.1",
     "typescript": "^5.9.3",
     "viem": "^2.38.3",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.4",
+    "fil-folders": "workspace:*"
   },
   "peerDependencies": {
-    "viem": "^2.38.3"
+    "viem": "^2.38.3",
+    "fil-folders": "workspace:*"
+  },
+  "peerDependenciesMeta": {
+    "fil-folders": {
+      "optional": true
+    }
   }
 }
