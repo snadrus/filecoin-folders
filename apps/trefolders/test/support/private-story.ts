@@ -99,12 +99,14 @@ export async function runPrivateStory(io: StoryIO): Promise<void> {
   await page.getByTestId("file-input").setInputFiles({ name, mimeType: "text/plain", buffer: Buffer.from(`${body}\n`) });
   const secUpload = await waitFor(page, 15 * 60_000, "upload saved", async () => {
     const entry = (await page.getByTestId("entry").filter({ hasText: name }).count()) > 0;
-    const busy = (await page.getByTestId("activity-indicator").count()) > 0;
+    const uploads = await page.getByTestId("upload-panel").innerText().catch(() => "");
+    const busy = !/upload(s)? complete/i.test(uploads) || (await page.locator(".upload-row[data-status=uploading]").count()) > 0;
     const err = (await page.locator("[data-testid=activity-item][data-status=error]").count()) > 0;
     if (err) throw new Error(`upload error: ${(await page.getByTestId("activity").innerText().catch(() => "")).slice(0, 300)}`);
     return entry && !busy;
   }, 5_000);
   await snap(page, "private-uploaded");
+  steps.txlogAfterUpload = await page.locator("[data-testid=activity-item]").evaluateAll((els) => els.map((el) => `${(el as HTMLElement).dataset.status}:${el.textContent?.replace(/\s+/g, " ").trim().slice(0, 120)}`)).catch(() => []);
   steps.privateUpload = { ok: true, file: name, seconds: secUpload };
   say(`uploaded ${name} in ${secUpload}s`);
 
