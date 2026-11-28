@@ -1422,7 +1422,8 @@ export function createSponsorCore(config: SponsorConfig, deps: SponsorDeps = {})
     const current = await poolOnCurrentFactory("ready");
     const currentSet = new Set(current.map((entry) => entry.account));
     const stale = Object.values(state.pool).filter((entry) => entry.status === "ready" && !currentSet.has(entry.account));
-    const excess = current.slice(Math.max(0, poolSize));
+    // Older spares that still carry a public data set are retired by maintainPoolSpares; they must not push new ones out.
+    const excess = current.filter((entry) => !hasSpareDataset(entry)).slice(Math.max(0, poolSize));
     const victims = [...stale, ...excess].filter((entry) => entry.status === "ready" && !assigningNow.has(entry.account));
     for (const entry of victims) {
       entry.status = "trimming";
