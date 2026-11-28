@@ -13,7 +13,9 @@ class LaggingRegistry extends MemoryRegistry {
   }
   override async commit(...args: Parameters<MemoryRegistry["commit"]>) {
     this.#previous = await super.head(args[0].owner, args[0].ns, args[0].key);
-    return super.commit(...args);
+    const record = await super.commit(...args);
+    // Like the viem registry without a decodable event: the version comes from a (lagging) head read.
+    return this.lag ? { ...record, version: this.#previous.version } : record;
   }
 }
 
@@ -29,5 +31,8 @@ describe("stale registry head after our own commit", () => {
     const released = [...before].filter((piece) => !live.has(piece));
     expect(released.length).toBeGreaterThan(0);
     await expect(volume.stat("/a.txt")).rejects.toBeInstanceOf(NotFoundError);
+    // The copy catalog keys on the head: it must be the new root, not the lagging one.
+    expect(live.has(await volume.headPiece())).toBe(true);
+    expect(before.has(await volume.headPiece())).toBe(false);
   });
 });

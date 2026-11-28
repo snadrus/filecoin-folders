@@ -48,11 +48,15 @@ try {
   await page.getByRole("button", { name: /Delete forever/ }).first().click();
   await page.waitForTimeout(1500);
   await snap("staged");
+  say("pre-save store: " + JSON.stringify(await page.evaluate(() => Object.keys(localStorage).filter((k) => /copies|replication|removal/.test(k)).map((k) => `${k}=${(localStorage.getItem(k) || "").slice(0, 500)}`))).slice(0, 1500));
   say("staged; save visible=" + (await vis("save-changes")) + " ops: " + (await ops()).slice(0, 800));
   await page.getByTestId("save-changes").click();
-  for (let i = 0; i < 20; i++) {
+  for (let i = 0; i < 12; i++) {
     await page.waitForTimeout(15_000);
     const removals = await page.evaluate(() => Object.entries(localStorage).filter(([k]) => k.startsWith("fifolders:removals")).map(([k, v]) => `${k}=${v.slice(0, 300)}`));
+    const toast = (await page.getByTestId("toast").allInnerTexts().catch(() => [])).join(" | ");
+    const store = await page.evaluate(() => Object.keys(localStorage).filter((k) => /copies|replication|removal/.test(k)).map((k) => `${k}=${(localStorage.getItem(k) || "").slice(0, 500)}`));
+    say(`toast=${toast.slice(0, 300)} store=${JSON.stringify(store).slice(0, 1500)}`);
     say(`t+${(i + 1) * 15}s save visible=${await vis("save-changes")} removals=${JSON.stringify(removals)} ops=${(await ops()).slice(0, 700)}`);
     if (i === 1 || i === 8) await snap(`after-save-${i}`);
     if (!(await vis("save-changes")) && removals.length) break;

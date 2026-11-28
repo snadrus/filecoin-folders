@@ -3161,7 +3161,8 @@ export class DriveApp {
 
   private async rememberCopies(): Promise<void> {
     if (!this.volume) return;
-    const head = (await this.volume.history()).at(-1)?.pieceCid;
+    // The event log can lag our own commit: the volume's head never does.
+    const head = (await this.volume.headPiece?.().catch(() => "")) || (await this.volume.history()).at(-1)?.pieceCid;
     if (!head) return;
     const scope = this.scopeKey();
     const catalog = loadCopyCatalog(scope);
