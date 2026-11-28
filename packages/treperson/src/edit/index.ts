@@ -45,7 +45,7 @@ export interface PieceWriter {
 }
 
 /** Folder Filecoin Drive / TreFolders show TrePerson pieces under. */
-export const IDENTITY_DRIVE_FOLDER = "FiPerson";
+export const IDENTITY_DRIVE_FOLDER = "TrePerson";
 
 /** Filecoin Drive-style piece metadata (public: names no secrets). Version lives on the registry, not as a fourth metadata key. */
 export function identityPieceMetadata(fileName: string, _version?: bigint): Record<string, string> {

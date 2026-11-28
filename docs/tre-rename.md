@@ -20,9 +20,9 @@ the other pages never had a Fi prefix.
 
 ## Kept verbatim (data and protocols that live users, other tabs or deployed contracts depend on)
 
-- **Files and folders on Filecoin**: the `.fipen` / `.figrid` extensions and the `/FiPen`, `/FiGrid`, `FiPerson` folder
-  labels. New saves keep writing them so version history does not fork; `.trepen` / `.tregrid` files also open. Flip
-  the write side later by changing `NEW_EXT` (apps/trefolders/src/blank.ts) and the `*_DIR` constants in collab-edit.
+- **Old files and folders on Filecoin** still open and list: `.fipen` / `.figrid` files and the `/FiPen`, `/FiGrid`,
+  `FiPerson` folders. New saves write `.trepen` / `.tregrid` into `/TrePen` and `/TreGrid` (identity pieces show under
+  `TrePerson`), so version history of an older file does not continue under its new name.
 - **Dataset metadata**: `source: "fifolders"`, `app: "fifolders"`, `volume: "FiFolders"`, system folder `.fifolders`.
 - **Browser storage and cross-tab protocol**: every `fifolders:*`, `fipen:*`, `fiperson:*`, `ficlub:*`, `fideploy:*`
   localStorage key, BroadcastChannels `fifolders-ops` / `fiperson-slack`, IndexedDB `fiperson`, the `?fifolders=1`

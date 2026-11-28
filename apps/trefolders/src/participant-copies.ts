@@ -39,8 +39,8 @@ function clean(name: string): string {
 /** Where taking a copy writes: over the original (a new version) when it still fits, else beside it. */
 export function copyTarget(copy: ParticipantCopy): { path: string; mode: "version" | "side" } {
   if (copy.fit === "version" && copy.path) return { path: copy.path, mode: "version" };
-  const ext = copy.kind === "doc" ? ".fipen" : ".figrid";
-  const dir = copy.path ? copy.path.slice(0, copy.path.lastIndexOf("/")) || "" : copy.kind === "doc" ? "/FiPen" : "/FiGrid";
+  const ext = copy.kind === "doc" ? ".trepen" : ".tregrid";
+  const dir = copy.path ? copy.path.slice(0, copy.path.lastIndexOf("/")) || "" : copy.kind === "doc" ? "/TrePen" : "/TreGrid";
   const base = clean(copy.title || "Untitled") || "Untitled";
   return { path: `${dir}/${base} (copy from ${clean(copy.from) || "participant"})${ext}`, mode: "side" };
 }

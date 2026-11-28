@@ -50,7 +50,7 @@ test.describe("TrePen inside TreFolders", () => {
     await doc.keyboard.press("Control+s");
     await expect(doc.locator("#status")).toHaveText("Saved to Filecoin", { timeout: 20_000 });
     await page.bringToFront(); // saved next to where it was created (My Folders root)
-    await expect(page.getByTestId("entry").filter({ hasText: "Untitled document.fipen" })).not.toContainText("Save pending");
+    await expect(page.getByTestId("entry").filter({ hasText: "Untitled document.trepen" })).not.toContainText("Save pending");
     expect(await entries(page)).not.toMatch(/Save pending/);
   });
 
@@ -90,7 +90,7 @@ test.describe("TrePen inside TreFolders", () => {
     await doc.close();
     await page.bringToFront(); // saved next to where it was created (My Folders root)
     const popup = page.context().waitForEvent("page");
-    await page.getByTestId("entry").filter({ hasText: "Untitled document.fipen" }).dblclick();
+    await page.getByTestId("entry").filter({ hasText: "Untitled document.trepen" }).dblclick();
     const again = await popup;
     await again.bringToFront();
     await editorReady(again);
@@ -175,7 +175,7 @@ test.describe("TreGrid inside TreFolders", () => {
     await expect.poll(sheet).toEqual(["42", "84"]);
     await expect(grid.locator("#status")).toHaveText("Saved to Filecoin");
     await page.bringToFront(); // saved next to where it was created (My Folders root)
-    await expect(page.getByTestId("entry").filter({ hasText: ".figrid" })).not.toContainText("Save pending");
+    await expect(page.getByTestId("entry").filter({ hasText: ".tregrid" })).not.toContainText("Save pending");
   });
 });
 
@@ -188,9 +188,9 @@ test.describe("New from a folder (Drive behavior)", () => {
     await page.keyboard.press("Enter");
     await openFolder(page, "Projects");
     const doc = await newFromDrive(page, "TrePen document");
-    await expect.poll(() => new URL(doc.url()).searchParams.get("path")).toBe("/Projects/Untitled document.fipen");
+    await expect.poll(() => new URL(doc.url()).searchParams.get("path")).toBe("/Projects/Untitled document.trepen");
     await page.bringToFront();
-    await expect(page.getByTestId("entry").filter({ hasText: "Untitled document.fipen" })).toHaveCount(1);
+    await expect(page.getByTestId("entry").filter({ hasText: "Untitled document.trepen" })).toHaveCount(1);
     await editorReady(doc);
     await focusDoc(doc);
     await doc.keyboard.type("Plan for the week");
@@ -198,10 +198,10 @@ test.describe("New from a folder (Drive behavior)", () => {
     await expect(doc.locator("#status")).toHaveText("Saved to Filecoin", { timeout: 20_000 });
     await page.bringToFront();
     const rows = page.getByTestId("entry");
-    await expect(rows.filter({ hasText: "Untitled document.fipen" })).toHaveCount(1);
+    await expect(rows.filter({ hasText: "Untitled document.trepen" })).toHaveCount(1);
     await expect(rows.filter({ hasText: "Save pending" })).toHaveCount(0, { timeout: 20_000 });
     await expect(rows).toHaveCount(1);
-    await page.getByTestId("entry").filter({ hasText: "Untitled document.fipen" }).dblclick();
+    await page.getByTestId("entry").filter({ hasText: "Untitled document.trepen" }).dblclick();
     await page.getByTestId("breadcrumb").getByText("My Folders").click().catch(() => {});
     await page.bringToFront();
     await page.goto("/");

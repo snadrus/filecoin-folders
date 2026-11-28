@@ -28,7 +28,7 @@ test.describe("TrePen title survives saving", () => {
     await doc.locator("#p2p-save").click();
     await expect(doc.locator("#status")).toHaveText("Saved to Filecoin", { timeout: 20_000 });
     await page.bringToFront();
-    await expect(page.getByTestId("entry").filter({ hasText: "Quarterly plan.fipen" })).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByTestId("entry").filter({ hasText: "Quarterly plan.trepen" })).toBeVisible({ timeout: 20_000 });
     await expect(page.getByTestId("entry").filter({ hasText: "Untitled document" })).toHaveCount(0);
 
     await doc.reload();
@@ -46,16 +46,16 @@ test.describe("TrePen title survives saving", () => {
     await doc.waitForTimeout(1500);
     await expect(doc.locator("#title")).toHaveValue("Quarterly plan v2");
     await page.bringToFront();
-    await expect(page.getByTestId("entry").filter({ hasText: "Quarterly plan v2.fipen" })).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByTestId("entry").filter({ hasText: "Quarterly plan v2.trepen" })).toBeVisible({ timeout: 20_000 });
     await doc.close();
 
     const popup = page.context().waitForEvent("page");
-    await page.getByTestId("entry").filter({ hasText: "Quarterly plan v2.fipen" }).first().dblclick();
+    await page.getByTestId("entry").filter({ hasText: "Quarterly plan v2.trepen" }).first().dblclick();
     const again = await popup;
     await editorReady(again);
     await again.waitForTimeout(1500);
     await expect(again.locator("#title")).toHaveValue("Quarterly plan v2");
-    await expect.poll(async () => (await page.getByTestId("entry").allInnerTexts()).join(" / ")).not.toMatch(/Quarterly plan\.fipen|Untitled document/);
+    await expect.poll(async () => (await page.getByTestId("entry").allInnerTexts()).join(" / ")).not.toMatch(/Quarterly plan\.trepen|Untitled document/);
   });
 
   test("S91 a guest's presence does not clobber the owner's renamed title on save", async ({ page, browser }) => {
@@ -84,7 +84,7 @@ test.describe("TrePen title survives saving", () => {
     await doc.keyboard.press("Control+s");
     await expect(doc.locator("#status")).toHaveText("Saved to Filecoin", { timeout: 20_000 });
     await page.bringToFront();
-    await expect(page.getByTestId("entry").filter({ hasText: "Team notes (edited by guest).fipen" })).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByTestId("entry").filter({ hasText: "Team notes (edited by guest).trepen" })).toBeVisible({ timeout: 20_000 });
     await doc.reload();
     await editorReady(doc);
     await doc.waitForTimeout(1500);
@@ -106,20 +106,20 @@ test.describe("TrePen title follows a folders rename", () => {
     await expect(doc.locator("#status")).toHaveText("Saved to Filecoin", { timeout: 20_000 });
     await doc.close();
     await page.bringToFront();
-    const row = page.getByTestId("entry").filter({ hasText: "Spec.fipen" }).first();
+    const row = page.getByTestId("entry").filter({ hasText: "Spec.trepen" }).first();
     await row.click();
     await page.keyboard.press("F2");
-    await expect(page.getByTestId("dialog-input")).toHaveValue("Spec.fipen");
-    await page.getByTestId("dialog-input").fill("Spec final.fipen");
+    await expect(page.getByTestId("dialog-input")).toHaveValue("Spec.trepen");
+    await page.getByTestId("dialog-input").fill("Spec final.trepen");
     await page.keyboard.press("Enter");
-    const renamed = page.getByTestId("entry").filter({ hasText: "Spec final.fipen" }).first();
+    const renamed = page.getByTestId("entry").filter({ hasText: "Spec final.trepen" }).first();
     await expect(renamed).toBeVisible({ timeout: 20_000 });
     const popup = page.context().waitForEvent("page");
     await renamed.dblclick();
     const again = await popup;
     await editorReady(again);
     await again.waitForTimeout(2500);
-    expect(new URL(again.url()).searchParams.get("name")).toBe("Spec final.fipen");
+    expect(new URL(again.url()).searchParams.get("name")).toBe("Spec final.trepen");
     await expect(again.locator("#title")).toHaveValue("Spec final");
     await expect.poll(() => again.evaluate(() => (window as any).__editor.getText())).toContain("Draft");
   });
@@ -158,12 +158,12 @@ test.describe("TrePen guest wallet", () => {
     await guest.screenshot({ path: "/workspace/trepen-guest-copy.png" });
     await guestFolders.bringToFront();
     await guestFolders.getByTestId("entry").filter({ hasText: "Copies" }).first().dblclick();
-    await expect(guestFolders.getByTestId("entry").filter({ hasText: "Roadmap (my copy).fipen" })).toBeVisible({ timeout: 20_000 });
+    await expect(guestFolders.getByTestId("entry").filter({ hasText: "Roadmap (my copy).trepen" })).toBeVisible({ timeout: 20_000 });
     await guestFolders.screenshot({ path: "/workspace/trepen-guest-copy-folders.png" });
     // The owner's title and item did not change.
     await expect(doc.locator("#title")).toHaveValue("Roadmap");
     await page.bringToFront();
-    await expect(page.getByTestId("entry").filter({ hasText: "Roadmap.fipen" })).toBeVisible();
+    await expect(page.getByTestId("entry").filter({ hasText: "Roadmap.trepen" })).toBeVisible();
     await gctx.close();
   });
 });

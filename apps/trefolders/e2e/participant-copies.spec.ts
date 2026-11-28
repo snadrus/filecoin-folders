@@ -15,8 +15,8 @@ test("owner takes participant copies into their drive: new version or side by si
       localStorage.setItem(
         "fifolders:copies",
         JSON.stringify([
-          { id: "v1", kind: "doc", title: "Plan", from: "Ada", content: a, origin: { doc: "doc:abc", owner: "", baseRev: 3, by: "Ada", at: 1 }, fit: "version", path: "/FiPen/Plan.fipen", received: 1 },
-          { id: "d1", kind: "doc", title: "Plan", from: "Grace", content: b, origin: { doc: "doc:abc", owner: "", baseRev: 1, by: "Grace", at: 2 }, fit: "diverged", path: "/FiPen/Plan.fipen", received: 2 },
+          { id: "v1", kind: "doc", title: "Plan", from: "Ada", content: a, origin: { doc: "doc:abc", owner: "", baseRev: 3, by: "Ada", at: 1 }, fit: "version", path: "/TrePen/Plan.trepen", received: 1 },
+          { id: "d1", kind: "doc", title: "Plan", from: "Grace", content: b, origin: { doc: "doc:abc", owner: "", baseRev: 1, by: "Grace", at: 2 }, fit: "diverged", path: "/TrePen/Plan.trepen", received: 2 },
         ]),
       );
     },
@@ -34,8 +34,8 @@ test("owner takes participant copies into their drive: new version or side by si
   await section.getByRole("button", { name: "Copy to my folders" }).click();
   await expect(page.getByTestId("participant-copies")).toHaveCount(0);
   expect(await page.evaluate(() => localStorage.getItem("fifolders:copies"))).toBe("[]");
-  await expect(page.getByTestId("entry").filter({ hasText: "FiPen" })).toBeVisible({ timeout: 20_000 });
-  await page.getByTestId("entry").filter({ hasText: "FiPen" }).dblclick();
+  await expect(page.getByTestId("entry").filter({ hasText: "TrePen" })).toBeVisible({ timeout: 20_000 });
+  await page.getByTestId("entry").filter({ hasText: "TrePen" }).dblclick();
   await expect.poll(async () => (await page.getByTestId("entry").allInnerTexts()).join(" | "), { timeout: 20_000 }).toContain("Plan (copy from Grace)");
-  await expect.poll(async () => (await page.getByTestId("entry").allInnerTexts()).join(" | ")).toMatch(/(^|\| )Plan(\.fipen)?\n/);
+  await expect.poll(async () => (await page.getByTestId("entry").allInnerTexts()).join(" | ")).toMatch(/(^|\| )Plan(\.trepen)?\n/);
 });

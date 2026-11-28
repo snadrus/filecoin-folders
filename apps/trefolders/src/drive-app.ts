@@ -2554,7 +2554,7 @@ export class DriveApp {
     const byPath = new Map(entries.map((entry) => [entry.path, entry]));
     const cwd = this.cwd || "/";
     if (cwd === "/" && this.nav === "drive") {
-      for (const name of ["FiPen", "FiGrid", "Felarumi", "Felanumio"]) {
+      for (const name of ["TrePen", "TreGrid", "FiPen", "FiGrid", "Felarumi", "Felanumio"]) {
         const path = `/${name}`;
         if (ops.some((op) => op.path?.startsWith(`${path}/`)) && !byPath.has(path)) {
           byPath.set(path, { name, path, type: "dir", size: 0, mtime: Date.now() });

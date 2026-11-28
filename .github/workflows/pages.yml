@@ -82,11 +82,6 @@ jobs:
           mkdir -p node_modules/@trefolders/sponsored-client
           cp ../packages/sponsored-client/package.json node_modules/@trefolders/sponsored-client/
           cp -R ../packages/sponsored-client/dist node_modules/@trefolders/sponsored-client/dist
-          # Transition: a collab-edit ref that predates the rename still imports the old package names, so expose this commit's dist under both.
-          rm -rf node_modules/fiperson node_modules/@fifolders
-          mkdir -p node_modules/fiperson node_modules/@fifolders/sponsored-client
-          cp -R node_modules/treperson/. node_modules/fiperson/
-          cp -R node_modules/@trefolders/sponsored-client/. node_modules/@fifolders/sponsored-client/
           BUILD_ONLY=1 node --disable-warning=ExperimentalWarning --experimental-strip-types p2p/serve.ts
       - run: node scripts/stage-editors.mjs collab-edit/p2p/dist
       - run: printf '%s\n' 'fifolders.scionbase.ai' > apps/trefolders/dist/CNAME
