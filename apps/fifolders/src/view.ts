@@ -60,6 +60,15 @@ export interface DialogState {
   label?: string;
 }
 
+export interface ContextItem {
+  action?: string;
+  href?: string;
+  icon: string;
+  label: string;
+  cid?: string;
+  path?: string;
+}
+
 export interface ContextState {
   x: number;
   y: number;
@@ -68,6 +77,8 @@ export interface ContextState {
   starred: boolean;
   /** Bottom-sheet heading on phones: the file name, or "N items". */
   title?: string;
+  /** Loose pieces and UnixFS entries: actions launched from the row's ⋮. */
+  items?: ContextItem[];
 }
 
 export interface ActivityRow {
@@ -736,6 +747,7 @@ function renderUnixfsEntries(piece: LooseRow, entries: UnixfsEntry[], prefix: st
           ${isDir ? "" : `<button type="button" data-action="loose-entry-download" data-cid="${escapeHtml(piece.pieceCid)}" data-path="${escapeHtml(path)}" data-testid="unixfs-download">Download</button>`}
           ${piece.ipfsRoot ? `<a href="${escapeHtml(gatewayUrl(piece.ipfsRoot, path))}" target="_blank" rel="noreferrer" data-testid="unixfs-gateway">Gateway</a>` : ""}
         </span>
+        <button type="button" class="row-more" data-action="loose-more" data-testid="row-more" aria-label="More actions for ${escapeHtml(entry.name)}" data-cid="${escapeHtml(piece.pieceCid)}" data-name="${escapeHtml(entry.name)}" data-path="${escapeHtml(path)}" ${isDir ? "" : `data-download="1"`} ${piece.ipfsRoot ? `data-gateway="${escapeHtml(gatewayUrl(piece.ipfsRoot, path))}"` : ""}><span class="material-symbols-outlined" aria-hidden="true">more_vert</span></button>
       </div>${isDir && entry.children ? renderUnixfsEntries(piece, entry.children, path, depth + 1) : ""}`;
     })
     .join("");
@@ -766,6 +778,7 @@ function renderLoose(piece: LooseRow): string {
         ${dir ? "" : `<button type="button" data-action="loose-open" data-cid="${escapeHtml(piece.pieceCid)}" data-testid="loose-open">Open</button>`}
         ${piece.ipfsRoot ? `<a href="${escapeHtml(gatewayUrl(piece.ipfsRoot))}" target="_blank" rel="noreferrer" data-testid="loose-gateway">Gateway</a>` : ""}
       </span>
+      <button type="button" class="row-more" data-action="loose-more" data-testid="row-more" aria-label="More actions for ${escapeHtml(piece.name)}" data-cid="${escapeHtml(piece.pieceCid)}" data-name="${escapeHtml(piece.name)}" data-download="1" data-adopt="1" ${dir ? "" : `data-open="1"`} ${piece.ipfsRoot ? `data-gateway="${escapeHtml(gatewayUrl(piece.ipfsRoot))}"` : ""}><span class="material-symbols-outlined" aria-hidden="true">more_vert</span></button>
     </div>${dir && piece.expanded && piece.children ? renderUnixfsEntries(piece, piece.children, "", 1) : ""}`;
   }
   return `<div class="entry list" role="row" data-testid="loose-row" data-cid="${escapeHtml(piece.pieceCid)}">
@@ -777,6 +790,7 @@ function renderLoose(piece: LooseRow): string {
       <button type="button" data-action="loose-download" data-cid="${escapeHtml(piece.pieceCid)}" data-testid="loose-download">Download</button>
       <button type="button" data-action="loose-open" data-cid="${escapeHtml(piece.pieceCid)}" data-testid="loose-open">Open</button>
     </span>
+    <button type="button" class="row-more" data-action="loose-more" data-testid="row-more" aria-label="More actions for ${escapeHtml(piece.name)}" data-cid="${escapeHtml(piece.pieceCid)}" data-name="${escapeHtml(piece.name)}" data-download="1" data-open="1"><span class="material-symbols-outlined" aria-hidden="true">more_vert</span></button>
   </div>`;
 }
 
@@ -811,10 +825,19 @@ function emptyCopy(model: ViewModel): string {
 function renderContext(context: ContextState): string {
   const item = (action: string, icon: string, label: string, disabled = false) =>
     `<button type="button" data-action="${action}" ${disabled ? "disabled" : ""}><span class="material-symbols-outlined" aria-hidden="true">${icon}</span> ${label}</button>`;
+  const title = context.title ? `<div class="sheet-title" data-testid="sheet-title">${escapeHtml(context.title)}</div>` : "";
+  if (context.items?.length) {
+    const body = context.items.map((it) => {
+      const attrs = `${it.cid ? ` data-cid="${escapeHtml(it.cid)}"` : ""}${it.path ? ` data-path="${escapeHtml(it.path)}"` : ""}`;
+      return it.href
+        ? `<a class="menu-link" href="${escapeHtml(it.href)}" target="_blank" rel="noreferrer"${attrs}><span class="material-symbols-outlined" aria-hidden="true">${it.icon}</span> ${escapeHtml(it.label)}</a>`
+        : `<button type="button" data-action="${it.action ?? ""}"${attrs}><span class="material-symbols-outlined" aria-hidden="true">${it.icon}</span> ${escapeHtml(it.label)}</button>`;
+    }).join("");
+    return `<div class="menu floating" data-menu="context" data-testid="context-menu" style="left:${context.x}px;top:${context.y}px">${title}${body}</div>`;
+  }
   const trashItems = context.trash
     ? `${item("restore", "restore_from_trash", "Restore")}${item("delete-forever", "delete_forever", "Delete forever")}`
     : `${item("trash", "delete", "Move to trash")}`;
-  const title = context.title ? `<div class="sheet-title" data-testid="sheet-title">${escapeHtml(context.title)}</div>` : "";
   if (context.trash) {
     // Like Drive's Trash: only restore, delete forever, or look at it.
     return `<div class="menu floating" data-menu="context" data-testid="context-menu" style="left:${context.x}px;top:${context.y}px">

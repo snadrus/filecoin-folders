@@ -134,6 +134,8 @@ interface ContextModel {
   y: number;
   paths: string[];
   target: string;
+  title?: string;
+  items?: { action?: string; href?: string; icon: string; label: string; cid?: string; path?: string }[];
 }
 
 /** Snackbar lifetimes (plain / with an action button). */
@@ -1543,6 +1545,28 @@ export class DriveApp {
       this.render();
       return;
     }
+    if (action === "loose-more") {
+      // Phones: Loose pieces (and UnixFS children) launch their actions from the same ⋮ sheet as files.
+      const btn = actionEl;
+      if (!btn) return;
+      const cid = btn.dataset.cid || "";
+      const path = btn.dataset.path || "";
+      const name = btn.dataset.name || "Piece";
+      const items: { action?: string; href?: string; icon: string; label: string; cid?: string; path?: string }[] = [];
+      if (btn.dataset.download) {
+        items.push(path
+          ? { action: "loose-entry-download", icon: "download", label: "Download", cid, path }
+          : { action: "loose-download", icon: "download", label: "Download", cid });
+      }
+      if (btn.dataset.adopt) items.push({ action: "loose-adopt", icon: "create_new_folder", label: "Add to folders", cid });
+      if (btn.dataset.open) items.push({ action: "loose-open", icon: "open_in_new", label: "Open", cid });
+      if (btn.dataset.gateway) items.push({ href: btn.dataset.gateway, icon: "travel_explore", label: "Gateway" });
+      const box = btn.getBoundingClientRect();
+      this.drawerOpen = false;
+      this.context = { x: Math.max(8, box.right - 220), y: box.bottom, paths: [], target: cid, items, title: name };
+      this.render();
+      return;
+    }
     if (action === "row-more") {
       // Phones: the row's ⋮ opens the same actions as right-click, as a bottom sheet.
       const row = actionEl?.closest<HTMLElement>("[data-testid=entry]");
@@ -2926,7 +2950,8 @@ export class DriveApp {
             trash: this.nav === "trash" || isTrashPath(this.context.target),
             directory: target?.type === "dir",
             starred: this.context.paths.every((path) => this.stars.has(path)),
-            title: this.context.paths.length > 1 ? `${this.context.paths.length} items` : baseName(this.context.target),
+            title: this.context.title || (this.context.paths.length > 1 ? `${this.context.paths.length} items` : baseName(this.context.target)),
+            ...(this.context.items ? { items: this.context.items } : {}),
           }
         : null,
       dialog,

@@ -348,7 +348,7 @@ button:disabled { cursor: default; opacity: 0.45; }
   .entry.list .name-cell { grid-area: name; font-size: 15px; }
   .entry.list .meta-line { display: block; grid-area: meta; font-size: 12px; padding-left: 32px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .entry.list .owner, .entry.list .mtime, .entry.list .size { display: none; }
-  .loose-drive.entry.list, .unixfs-entry.entry.list, [data-testid=loose-row].entry.list { grid-template-columns: minmax(0, 1fr); grid-template-areas: none; }
+  .loose-drive.entry.list, .unixfs-entry.entry.list, [data-testid=loose-row].entry.list { grid-template-columns: minmax(0, 1fr) 44px; grid-template-areas: "name more" "meta more"; }
   .row-more { display: grid; place-items: center; grid-area: more; width: 44px; height: 44px; border-radius: 50%; color: var(--muted); }
   .row-more:active { background: var(--hover); }
   .entry:hover { background: transparent; }
@@ -389,10 +389,9 @@ button:disabled { cursor: default; opacity: 0.45; }
   }
   .account-line { font-size: 11px; }
   .identity-line a { min-height: 44px; display: inline-flex; align-items: center; }
-  .loose-drive.entry.list, .unixfs-entry.entry.list, [data-testid=loose-row].entry.list { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 8px; min-height: 0; }
-  .entry.list .name-cell:has(+ .owner + .mtime + .size + .loose-actions) { flex: 1 1 100%; }
-  .loose-actions { display: flex; flex-wrap: wrap; gap: 6px; padding-left: 32px; }
-  .loose-actions button, .loose-actions a { min-height: 36px; padding: 0 12px; border: 1px solid var(--line); border-radius: 999px; display: inline-flex; align-items: center; font-size: 13px; margin: 0; color: var(--accent-dark); text-decoration: none; }
+  .loose-drive.entry.list, .unixfs-entry.entry.list, [data-testid=loose-row].entry.list { min-height: 64px; padding: 6px 0 6px 8px; }
+  .loose-actions { display: none; } /* phones use the ⋮ sheet; desktop keeps the chip buttons */
+  .menu.floating[data-menu="context"] a.menu-link { display: flex; align-items: center; min-height: 52px; padding: 0 24px; font-size: 15px; gap: 20px; color: inherit; text-decoration: none; }
   .loose-folder { flex-wrap: wrap; }
   .loose-folder .text-button { min-height: 36px; padding: 0 8px; }
   .loose-adopt-all .primary { width: 100%; min-height: 44px; }
