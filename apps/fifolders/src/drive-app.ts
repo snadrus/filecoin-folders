@@ -2456,6 +2456,27 @@ export class DriveApp {
       this.accountMenu = false;
       this.context = null;
       this.root?.querySelectorAll("[data-menu], .sheet-scrim").forEach((node) => node.remove());
+      // Removing the scrim mid-gesture would otherwise click whatever sat under it
+      // (on a phone, the top-left of the scrim is the nav Menu button). Eat only
+      // this pointer's remaining events so a follow-up tap is not swallowed.
+      const pointerId = (event as PointerEvent).pointerId;
+      const eatPointer = (ev: Event) => {
+        if ((ev as PointerEvent).pointerId !== pointerId) return;
+        ev.preventDefault();
+        ev.stopPropagation();
+      };
+      const eatClick = (ev: Event) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        cleanup();
+      };
+      const cleanup = () => {
+        document.removeEventListener("pointerup", eatPointer, true);
+        document.removeEventListener("click", eatClick, true);
+      };
+      document.addEventListener("pointerup", eatPointer, true);
+      document.addEventListener("click", eatClick, true);
+      window.setTimeout(cleanup, 400);
     });
     document.addEventListener("keydown", (event) => {
       if (event.key !== "Escape") return;
