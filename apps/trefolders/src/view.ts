@@ -384,7 +384,7 @@ function renderSetup(model: ViewModel): string {
     )
     .join("");
   const create = `<button class="${panel.createPrimary ? "primary" : ""}" type="button" data-testid="create-dataset" data-action="create-dataset">Create new dataset</button>
-        <button type="button" data-testid="create-private-dataset" data-action="create-private-dataset" title="Only people you share a link or key with can read it. Wallet sign-in only.">Create private dataset</button>
+        ${privateCreateButton()}
         <p class="note">${escapeHtml(model.costs.datasetNote)}</p>`;
   const open =
     panel.selectedDatasetId && panel.paymentsReady && panel.sessionReady
@@ -986,7 +986,7 @@ function renderAccount(model: ViewModel): string {
            <p class="note" data-testid="session-lazy-note">Not needed to browse. Your first save asks for it (1 signature).</p>`}
       ${step && step.action !== "fix-payments" && step.action !== "authorize" ? `<button type="button" class="primary slim" data-action="${step.action}" data-testid="setup-step">${escapeHtml(step.label)}</button>` : ""}
       <button type="button" data-action="create-dataset" data-testid="create-dataset">Create new dataset</button>
-      <button type="button" data-action="create-private-dataset" data-testid="create-private-dataset" title="Only people you share a link or key with can read it. Wallet sign-in only.">Create private dataset</button>
+      ${privateCreateButton()}
       <p class="note">${escapeHtml(model.costs.datasetNote)}</p>
       <div class="chain-toggle" role="group" aria-label="Network">
         ${chainButton("calibration", "Calibration", model.chain)}
@@ -1110,4 +1110,11 @@ function renderParticipantCopies(model: ViewModel): string {
     <h3>Participant copies</h3>
     <ul>${rows}</ul>
   </section>`;
+}
+
+/** Private data sets need a wallet that signs its own encryption key; sponsored (gasless) accounts cannot yet. */
+function privateCreateButton(): string {
+  return isSponsored()
+    ? ""
+    : `<button type="button" data-testid="create-private-dataset" data-action="create-private-dataset" title="Only people you share a link or key with can read it. Wallet sign-in only.">Create private dataset</button>`;
 }
