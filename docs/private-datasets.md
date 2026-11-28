@@ -54,3 +54,36 @@ Notes:
 
 Only wallet (EOA) owners can make private folders: passkey and sponsored accounts cannot sign the `GroupKey`
 message deterministically.
+
+## Club folders (FiClub + FiClubVault)
+
+FiClub already had membership: clubs with member and admin lists, `clubsOf(wallet)`, the `/ficlub/` page,
+and "Find all my Clubs" in `/identity/` (`fiperson/clubs`). What it lacked was a shared private folder and
+a way to hand its key to members. `FiClubVault` adds that next to FiClub, without changing it:
+
+- Calibration: [`0x935009a6a3Bee6BbF86BF352c0FE16c4689b7CF3`](https://filecoin-testnet.blockscout.com/address/0x935009a6a3Bee6BbF86BF352c0FE16c4689b7CF3)
+  (bound to FiClub `0x412B…2A55A03`; Sourcify exact match; `deployments/ficlubvault-calibration.json`).
+- `setFolder(clubId, descriptor)` — admins point the club at its private folder (owner, group key id,
+  group, volume, data set, providers; public JSON).
+- `grant(clubId, member, memberKey, delivery, entry)` — the Accept step. `delivery` is a Keysmith Delivery:
+  an owner-signed read claim on the folder's group naming `memberKey` as bearer, plus the group's key wrapped
+  to the member's published wrap key. `entry` is the member's directory entry (their FiPerson link),
+  encrypted under the folder key so only members can read the directory.
+- `revoke(clubId, member)` drops the stored delivery. It cannot take back a key the member already read:
+  to cut someone off, move the folder to a new group and Accept the remaining members again.
+
+The flow:
+
+1. A person sets up FiPerson. Their profile publishes `memberKey: { address, wrapKey }`, derived from a
+   deterministic wallet signature (`deriveMemberKey`), so any device with the wallet can derive it again.
+2. They give their person link (`/person/?id=0x…`) to a club admin.
+3. The admin clicks **Accept**: FiClub `addMember`, FiClubVault `grant` (one ReadGrant signature + one
+   transaction), and a SessionKeyRegistry login from the folder owner's wallet authorizing the member key to
+   add pieces to the folder's data set and commit the folder.
+4. The person's **Find my groups** (`findMyGroups`) lists their clubs, each club's folder, and whether a key
+   is waiting; opening it derives the member key, opens the delivery (`openMemberDelivery`) and reads and
+   writes the folder with it.
+
+The wallet itself never decrypts anything: wallets no longer expose an encryption key, so the "encrypted to
+the wallet's public key" step is done to a key derived from a wallet signature, which only that wallet can
+reproduce.

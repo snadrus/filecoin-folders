@@ -34,6 +34,10 @@ Schema and on-chain layout: [docs/identity.md](../../docs/identity.md).
 
 - `findMyClubs(address, { call?, contract? })` scans FiClub (`clubsOf`, `getClub`, `listMembers`, `listAdmins`; default Calibration `0x412B9363019591588073B3489CB09d28d2a55A03`) and caches `{ clubs, coworkers }` under `fiperson:clubs:v1:<addr>`. `cachedClubs`, `cachedCoworkers` read it back synchronously.
 
+## `fiperson/groups`
+
+- Club shared private folders in FiClubVault (Calibration `0x935009a6a3Bee6BbF86BF352c0FE16c4689b7CF3`): `findMyGroups(address)` (my clubs + each club's folder + my stored key), `readFolder`, `readGrants`, calldata builders `encodeSetFolder` / `encodeGrant` / `encodeRevoke`, `memberKeyOf(identity)` / `withMemberKey(identity, key)` (the `memberKey` profile field), `personFromLink(link)`. Crypto is in `fil-folders/private`. See [docs/private-datasets.md](../../docs/private-datasets.md).
+
 ## `fiperson/people`
 
 - `suggest(query, { participants? })` → `{ id, name, iconUrl, hint }[]`: your club-mates (from the cache above) plus the people the app passes (doc participants), ranked by name prefix. `needsClubScan()` is true until Find all my Clubs ran; apps then show a link to `findClubsUrl()`.

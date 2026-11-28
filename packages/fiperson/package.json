@@ -33,6 +33,10 @@
     "./people": {
       "types": "./dist/people/index.d.ts",
       "import": "./dist/people/index.js"
+    },
+    "./groups": {
+      "types": "./dist/groups/index.d.ts",
+      "import": "./dist/groups/index.js"
     }
   },
   "scripts": {
@@ -45,5 +49,8 @@
     "typescript": "^5.9.3",
     "viem": "^2.38.3",
     "vitest": "^3.2.4"
+  },
+  "peerDependencies": {
+    "viem": "^2.38.3"
   }
 }

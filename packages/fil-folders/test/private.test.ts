@@ -264,3 +264,32 @@ describe("private data sets", () => {
     await expect(deriveMemberKey(flaky, CHAIN_ID)).rejects.toThrow(/deterministic/);
   });
 });
+
+describe("club shared folders", () => {
+  it("admin accepts a member; member opens the folder key and reads the directory", async () => {
+    const { makeMemberDelivery, openMemberDelivery, sealDirectoryEntry, openDirectoryEntry, decodeFolderDescriptor, encodeFolderDescriptor } = await import(
+      "../src/private/club.js"
+    );
+    const key = await groupKey();
+    const folder = { v: 1 as const, owner: OWNER, groupKeyId: descriptor.groupKeyId, group: volumeGroup("Club files"), volume: "Club files", chainId: CHAIN_ID };
+    expect(decodeFolderDescriptor(encodeFolderDescriptor(folder))?.group).toBe(folder.group);
+    const memberWallet = privateKeyToAccount(generatePrivateKey());
+    const memberKey = await deriveMemberKey(memberWallet, CHAIN_ID);
+    const { delivery, folderKey } = await makeMemberDelivery({ wallet: ownerAccount, groupKey: key, folder, member: { address: memberKey.address, wrapKey: memberKey.wrapKey } });
+    const entry = await sealDirectoryEntry(folderKey, { member: memberWallet.address, name: "Ada", identityLink: "https://x/person/#v=pg1&k=…" });
+
+    const opened = await openMemberDelivery(memberKey.privateKey, delivery, folder);
+    expect(opened.folderKey).toEqual(folderKey);
+    expect((await openDirectoryEntry(opened.folderKey, memberWallet.address, entry))?.name).toBe("Ada");
+    expect(await openDirectoryEntry(opened.folderKey, OWNER, entry)).toBeNull();
+    // The member writes into the folder's group; the owner (group key) reads it.
+    const sealed = await sealPiece(opened.target, text("member wrote this"));
+    expect(decode((await openPiece(sealed.car, key)).plaintext)).toBe("member wrote this");
+    // Another wallet cannot open the delivery.
+    const stranger = await deriveMemberKey(privateKeyToAccount(generatePrivateKey()), CHAIN_ID);
+    await expect(openMemberDelivery(stranger.privateKey, delivery, folder)).rejects.toThrow();
+    // The member's key does not reach the owner's other groups.
+    const other = await sealPiece(Keysmith.writeTarget(Keysmith.grantDescriptor(descriptor, "groupKey"), key, volumeGroup("private")), text("x"));
+    await expect(openPiece(other.car, opened.folderKey, opened.grant)).rejects.toThrow();
+  });
+});
