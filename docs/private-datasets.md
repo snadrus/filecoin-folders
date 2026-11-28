@@ -102,11 +102,24 @@ reproduce.
 - Verified on Calibration (`e2e-stories/live-private.spec.ts`, dataset 58383 on ezpdpz): upload, link,
   guest open; anonymous `/piece/` of the same piece returns 404 and `/download/` without a grant returns 401.
 
-### Limitation: sponsored (gasless) accounts
+### Sponsored (gasless) accounts
 
-When the site runs with the sponsor for a network (`VITE_SPONSOR_URL` + `VITE_SPONSOR_NETWORKS`, on for
-Calibration at fifolders.scionbase.ai), every sign-in, including a wallet, stores through the sponsored payer account.
-That account cannot sign the Keysmith GroupKey / ReadGrant, and the sponsor worker creates its data sets without
-`read=restricted`, so **Create private dataset** is hidden there. Private data sets work in direct-wallet mode (no
-sponsor for that network; verified on Calibration with a local build, dataset 58383). Badges and private share links
-still work everywhere.
+With the sponsor on (`VITE_SPONSOR_URL` + `VITE_SPONSOR_NETWORKS`, Calibration at fifolders.scionbase.ai) the payer is
+the user's sponsored smart account, which cannot sign Keysmith messages. The Keysmith owner (`foc/own`) is therefore a
+separate key that only the browser holds; Curio checks grants against `foc/own`, not against the payer.
+
+- **Wallet sign-in:** the wallet itself is the owner (same group key as filecoin-pin and Filecoin Drive).
+- **Passkey sign-in:** a secp256k1 key derived in the tab from the passkey's WebAuthn PRF output
+  (`keccak256("trefolders/private-owner/v1" ‖ prf)`, PRF input `"trefolders/private-owner/v1"`). Only the public
+  address is stored (`trefolders:private-owner:<credentialId>`); the key lives in memory for the page. Passkeys without
+  PRF are refused with a message suggesting a PRF-capable passkey or a wallet; there are no device-only keys.
+- **New devices:** a synced passkey (iCloud Keychain, Google Password Manager) or the same wallet gives the same key,
+  so private folders open anywhere. A hardware security key has to be present. Losing the passkey (or wallet) loses
+  the private folders; nothing server-side can recover them.
+
+The sponsor worker (`apps/trefolders/sponsor/private-dataset.ts`) accepts on `POST /dataset` exactly `read=restricted`,
+`foc/enc=1`, `foc/gkid=0x<32 hex>`, `foc/kc=v2.<32 hex>` (plus the descriptive `app`/`volume`/`created` it always
+ignored), opens the data set for the caller's own funded account, at most 3 per account; any other key or value is a
+400. It never sees a key. Pieces are added, removed (`schedulePieceRemovals`) and the data set terminated
+(`terminateService` through `/execute`) with the account's session key, exactly like public ones; the account
+contract and FWSS check ownership. **Delete dataset #N** in the account menu terminates the selected data set.

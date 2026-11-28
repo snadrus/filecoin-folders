@@ -259,6 +259,7 @@ describe("sponsor server (fake chain)", () => {
     };
     let datasets = 1000;
     const opened: Address[] = [];
+    const openedMetadata: Record<string, string>[] = [];
     const sponsor = createSponsor(
       {
         network: "calibration",
@@ -283,8 +284,9 @@ describe("sponsor server (fake chain)", () => {
               return { channel: "resend" as const };
             }
           : undefined,
-        openDataset: async (account) => {
+        openDataset: async (account, metadata) => {
           opened.push(account);
+          openedMetadata.push(metadata);
           return { dataSetId: String(++datasets), txHash: `0x${"d".repeat(64)}` as Hex };
         },
         terminatePoolDataset: async (account, dataSetId) => {
@@ -309,7 +311,7 @@ describe("sponsor server (fake chain)", () => {
       const response = await fetch(`${base}${path}`);
       return { status: response.status, json: (await response.json()) as Record<string, unknown> };
     };
-    return { pub, sponsor, sends, post, get, as, pay, opened, factoryAccounts, sponsorUsdfc, sponsorFil, payAccounts, terminated, clock, onChainUnassigned, droppedReceipts, revertedReceipts, receiptsHidden, blockTxs, block, holdInclusion, relayer, emails };
+    return { pub, sponsor, sends, post, get, as, pay, opened, openedMetadata, factoryAccounts, sponsorUsdfc, sponsorFil, payAccounts, terminated, clock, onChainUnassigned, droppedReceipts, revertedReceipts, receiptsHidden, blockTxs, block, holdInclusion, relayer, emails };
   }
 
   const newUser = () => {
@@ -408,6 +410,76 @@ describe("sponsor server (fake chain)", () => {
     expect(opened).toHaveLength(1);
     expect(sponsor.state.users[user.id]).toMatchObject({ via: "create", dataSetId: "1001" });
     expect(sponsor.state.credits[String(checkout.json.id)]).toMatchObject({ path: "create", depositUsdfc: (205n * E).toString() });
+  });
+
+  it("private folders: /dataset opens read=restricted data sets for the caller's own account, and nothing wider", async () => {
+    const { sponsor, as, pay, opened, openedMetadata, payAccounts } = await start({ pool: 0 });
+    const user = newUser();
+    const gkid = `0x${"ab".repeat(16)}`;
+    const kc = `v2.${"cd".repeat(16)}`;
+    let n = 0; // requests are signed and replay-protected: vary the (ignored) `created` so each one is new
+    const fresh = () => `2026-11-28T00:00:${String(n++).padStart(2, "0")}Z`;
+    const privateMeta = { app: "fifolders", volume: "My Folders", created: "2026-11-28T00:00:00Z", read: "restricted", "foc/enc": "1", "foc/gkid": gkid, "foc/kc": kc };
+    const priv = () => ({ ...privateMeta, created: fresh() });
+    // Before any purchase: no account, nothing opened.
+    expect((await as(user.signed)("dataset", { metadata: priv() })).status).toBe(402);
+    const checkout = await as(user.signed)("checkout", checkoutBody(5));
+    await pay(String(checkout.json.id), user.id, 500);
+    await sponsor.settled();
+    const account = sponsor.state.users[user.id]!.account;
+    expect(opened).toHaveLength(1);
+
+    // Public request (the descriptive keys the app always sent): unchanged, returns the existing data set.
+    expect(await as(user.signed)("dataset", { metadata: { app: "fifolders", volume: "x", created: "y" } })).toMatchObject({ status: 200, json: { dataSetId: "1001" } });
+    expect(opened).toHaveLength(1);
+
+    // Private request: one new data set, sponsor's own descriptive keys plus exactly the four private keys.
+    const made = await as(user.signed)("dataset", { metadata: priv() });
+    expect(made).toMatchObject({ status: 200, json: { dataSetId: "1002" } });
+    expect(opened.at(-1)).toBe(account);
+    const meta = openedMetadata.at(-1)!;
+    expect(Object.keys(meta).sort()).toEqual(["app", "created", "foc/enc", "foc/gkid", "foc/kc", "read", "volume"]);
+    expect(meta).toMatchObject({ app: "fifolders", volume: "FiFolders", read: "restricted", "foc/enc": "1", "foc/gkid": gkid, "foc/kc": kc });
+    expect(sponsor.state.users[user.id]!.privateDataSets).toEqual([expect.objectContaining({ dataSetId: "1002" })]);
+
+    // Everything else is still refused: other keys, other values, partial private sets, non-strings, arrays.
+    const refused: unknown[] = [
+      { ...privateMeta, withCDN: "" },
+      { ...privateMeta, "foc/own": user.key.address.toLowerCase() },
+      { ...privateMeta, read: "public" },
+      { ...privateMeta, read: "Restricted" },
+      { ...privateMeta, "foc/enc": "2" },
+      { ...privateMeta, "foc/gkid": gkid.toUpperCase().replace("0X", "0x") },
+      { ...privateMeta, "foc/gkid": `${gkid}00` },
+      { ...privateMeta, "foc/kc": `v1.${"cd".repeat(16)}` },
+      { read: "restricted" },
+      { app: "fifolders", source: "evil" },
+      { withIPFSIndexing: "" },
+      { ...privateMeta, volume: "x".repeat(129) },
+      { ...privateMeta, created: 5 },
+      [privateMeta],
+      "read=restricted",
+    ];
+    for (const metadata of refused) {
+      const response = await as(user.signed)("dataset", { metadata });
+      expect(response.status, JSON.stringify(metadata)).toBe(400);
+    }
+    expect(opened).toHaveLength(2);
+
+    // A session key of the same account may ask (same identity rules as before); a stranger has no account.
+    const stranger = newUser();
+    expect((await as(stranger.signed)("dataset", { metadata: priv() })).status).toBe(402);
+
+    // Capped per account, and still needs funds.
+    expect((await as(user.signed)("dataset", { metadata: priv() })).status).toBe(200);
+    expect((await as(user.signed)("dataset", { metadata: priv() })).status).toBe(200);
+    expect((await as(user.signed)("dataset", { metadata: priv() })).status).toBe(429);
+    const broke = newUser();
+    const c2 = await as(broke.signed)("checkout", checkoutBody(5));
+    await pay(String(c2.json.id), broke.id, 500);
+    await sponsor.settled();
+    payAccounts.set(sponsor.state.users[broke.id]!.account.toLowerCase(), [0n, 0n, 0n, 0n]);
+    expect((await as(broke.signed)("dataset", { metadata: priv() })).status).toBe(402);
   });
 
   it("a first purchase from a ready pool account needs only the USDFC above its seed", async () => {

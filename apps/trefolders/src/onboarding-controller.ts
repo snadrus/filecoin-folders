@@ -88,6 +88,25 @@ export async function prepareOnboarding(app: DriveApp, io: OnboardingIO): Promis
         throw error;
       }
     }
+    else if (action === "terminate-dataset") {
+      const id = (await io.snapshot({ chain, volumeName })).selectedDatasetId;
+      if (!id || !/^\d+$/.test(id) || !io.terminateDataset) return;
+      const ok = typeof globalThis.confirm !== "function" || globalThis.confirm(`Delete dataset #${id}? The provider stops storing it and its files can no longer be read. This can't be undone.`);
+      if (!ok) return;
+      const op = app.beginOp({ kind: "dataset", label: `Delete dataset #${id}`, stage: "pending" });
+      try {
+        await app.ensureSession();
+        await io.terminateDataset(chain, id);
+        app.finishOp(op);
+      } catch (error) {
+        app.failOp(op, error instanceof Error ? error.message : "Dataset was not deleted.");
+        throw error;
+      }
+      const picked = await io.snapshot({ chain, volumeName });
+      if (canEnter(picked)) await openDrive(app, io, { chain, volumeName, encrypt });
+      else app.showPanel(picked);
+      return;
+    }
     else if (action === "select-dataset" && value) {
       io.selectDataset(value, chain);
       const picked = await io.snapshot({ chain, volumeName });
