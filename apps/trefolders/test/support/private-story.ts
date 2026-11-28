@@ -34,8 +34,10 @@ async function waitFor(p: Page, ms: number, label: string, fn: () => Promise<boo
 async function datasetsOnChain(payer: string) {
   const { Synapse } = await import("@filoz/synapse-sdk");
   const { calibration } = await import("@filoz/synapse-core/chains");
-  const { http } = await import("viem");
-  const synapse = Synapse.create({ account: payer as `0x${string}`, chain: calibration as never, transport: http(RPC), source: "fifolders" } as never);
+  const { createPublicClient, custom, http } = await import("viem");
+  const client = createPublicClient({ transport: http(RPC) });
+  const transport = custom({ request: (args: { method: string; params?: unknown }) => client.request(args as never) });
+  const synapse = Synapse.create({ account: payer as `0x${string}`, chain: calibration as never, transport, source: "fifolders" } as never);
   return (await synapse.storage.findDataSets({ address: payer as `0x${string}` })) as Array<{ dataSetId: bigint; pdpEndEpoch: bigint; isLive: boolean; metadata?: Record<string, string>; activePieceCount?: bigint }>;
 }
 
@@ -49,7 +51,16 @@ export async function runPrivateStory(io: StoryIO): Promise<void> {
   await page.getByTestId("create-private-dataset").first().click();
   say("clicked create-private-dataset");
   let id = "";
+  let lastTry = Date.now();
   const secCreate = await waitFor(page, 12 * 60_000, "private dataset on chain", async () => {
+    const text = (await page.locator("body").innerText().catch(() => "")).replace(/\s+/g, " ");
+    if (/can't make an encryption key|Dataset was not created|not allowed/.test(text)) throw new Error(`create refused: ${text.slice(0, 300)}`);
+    if (/session key not authorized/.test(text) && Date.now() - lastTry > 45_000) {
+      lastTry = Date.now();
+      say("create hit the session-key race; clicking again");
+      await openMenu(page);
+      await page.getByTestId("create-private-dataset").first().click().catch(() => undefined);
+    }
     const now = await datasetsOnChain(io.payer).catch(() => []);
     const made = now.find((d) => !before.has(d.dataSetId.toString()) && d.metadata?.read === "restricted");
     if (made) id = made.dataSetId.toString();

@@ -894,7 +894,12 @@ export function createLiveOnboarding(options: LiveOnboardingOptions = {}): Onboa
         const privateMetadata = input.visibility === "private"
           ? await privateCreateMetadata(await privateSigner(input.chain), chainId, base, (intent, run) => withWalletIntent(intent as never, run))
           : null;
-        const made = await createSponsoredDataset(await sponsorSigner(input.chain), chainId, privateMetadata ?? base);
+        const metadata = privateMetadata ?? base;
+        const made = await createSponsoredDataset(await sponsorSigner(input.chain), chainId, metadata).catch(async (error: unknown) => {
+          // Right after a handover the new session key may not be on chain yet: sign this one request as the owner.
+          if (!/session key not authorized/i.test(error instanceof Error ? error.message : String(error))) throw error;
+          return createSponsoredDataset(await sponsorSigner(input.chain, false), chainId, metadata);
+        });
         if (privateMetadata) noteVisibility(chainId, made.dataSetId, privateMetadata);
         saveLastDataset(chainId, account, made.dataSetId);
         selectedDataset = made.dataSetId;
