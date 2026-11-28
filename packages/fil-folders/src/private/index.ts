@@ -7,3 +7,4 @@ export * from "./storage.js";
 export * from "./share.js";
 export * from "./member-key.js";
 export { fileKeyBytes, volumeKeyFromGroupKey } from "./file-keys.js";
+export * from "./club.js";

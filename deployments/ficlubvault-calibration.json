@@ -1,0 +1,14 @@
+{
+  "network": "filecoin-calibration",
+  "chainId": 314159,
+  "contract": "FiClubVault",
+  "version": "1 (shared private folders + per-member Keysmith deliveries for FiClub)",
+  "address": "0x935009a6a3Bee6BbF86BF352c0FE16c4689b7CF3",
+  "club": "0x412B9363019591588073B3489CB09d28d2a55A03",
+  "deployer": "0x2d633437f7E2138B400AF6882bee2d79C81CF401",
+  "txHash": "0x4ed2dc11ac337b6fdd80e5909725ed8ec940ae8eae39294b54239d658eba3735",
+  "block": 4283393,
+  "gasUsed": 68757790,
+  "verified": { "sourcify": "exact_match", "blockscout": "https://filecoin-testnet.blockscout.com/address/0x935009a6a3Bee6BbF86BF352c0FE16c4689b7CF3" },
+  "date": "2026-11-27"
+}
